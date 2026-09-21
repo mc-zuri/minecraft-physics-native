@@ -1,0 +1,34 @@
+{
+    "name": "minecraft-physics-native",
+    "version": "1.0.0",
+    "description": "Minecraft physics engine with version-aware physics behavior.",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "scripts": {
+        "lint": "eslint src --ext .ts,.tsx",
+        "build": "tsc",
+        "native:build": "pnpm generate:block-registries && pnpm generate:block-states && pnpm generate:native-data && napi build --manifest-path native/Cargo.toml --release --platform --output-dir native/artifacts --js native.js --dts native.d.ts",
+        "generate:versions": "node scripts/generate-version-manifest.cjs",
+        "generate:block-registries": "node scripts/generate-block-registry-manifest.cjs",
+        "generate:block-states": "node scripts/generate-block-state-manifest.cjs",
+        "generate:native-data": "node scripts/generate-native-data.cjs",
+        "verify:version-coverage": "node scripts/verify-version-coverage.cjs",
+        "extract:physics-methods": "node scripts/extract-physics-methods.cjs",
+        "report:physics-breakpoints": "node scripts/report-physics-breakpoints.cjs",
+        "compare:tick-traces": "node scripts/compare-tick-traces.cjs",
+        "native:test": "pnpm native:build && node scripts/native-smoke.cjs",
+        "native:verify-package": "pnpm native:build && node scripts/verify-native-package.cjs"
+    },
+    "devDependencies": {
+        "@eslint/js": "^9.23.0",
+        "@napi-rs/cli": "^3.9.0",
+        "@types/node": "^22.20.1",
+        "@typescript-eslint/eslint-plugin": "^8.27.0",
+        "@typescript-eslint/parser": "^8.27.0",
+        "eslint": "^9.23.0",
+        "globals": "^16.0.0",
+        "mineflayer": "github:GenerelSchwerz/mineflayer#dev",
+        "typescript": "^5.8.2",
+        "typescript-eslint": "^8.27.0"
+    }
+}

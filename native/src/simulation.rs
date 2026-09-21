@@ -1,0 +1,1564 @@
+use crate::collision::{resolve_motion, resolve_step_motion, vanilla_equal};
+use crate::entity::{Dimensions, EntityFlags, EntityState};
+use crate::math::{java_float, Aabb, Vec3};
+use crate::world::WorldSnapshot;
+use crate::world::{BlockEffect, FluidState};
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PhysicsConfig {
+    pub gravity: f64,
+    pub drag: f64,
+    pub movement_speed: f64,
+    pub sprint_multiplier: f64,
+    pub jump_velocity: f64,
+    pub step_height: f64,
+    pub negligible_velocity: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VersionPhysicsRules {
+    pub gravity: f64,
+    pub water_gravity_divisor: f64,
+    pub lava_gravity_divisor: f64,
+    pub water_drag: f64,
+    pub water_sprint_drag: f64,
+    pub lava_drag: f64,
+    pub air_drag: f64,
+    pub vertical_drag: f64,
+    pub fluid_vertical_drag: f64,
+    pub water_flow_scale: f64,
+    pub lava_flow_scale: f64,
+    pub ultra_warm_lava_flow_scale: f64,
+    pub fluid_travel_split: bool,
+    pub fluid_falling_checks_gravity_argument: bool,
+    pub water_input_speed: f64,
+    pub lava_input_speed: f64,
+    pub step_height: f64,
+    pub swimming_vertical_steering: f64,
+    pub swimming_downward_steering: f64,
+    pub water_movement_efficiency_divisor: f64,
+    pub water_movement_efficiency_attribute: bool,
+}
+
+pub trait VersionPhysicsProfile {
+    fn rules() -> VersionPhysicsRules;
+    fn landing_damage_rounding() -> LandingDamageRounding;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LandingDamageRounding {
+    Ceil,
+    Floor,
+}
+
+pub(crate) fn landing_damage(
+    fall_distance: f64,
+    safe_fall_distance: f64,
+    multiplier: f64,
+    jump_boost_amplifier: Option<u8>,
+    rounding: LandingDamageRounding,
+) -> f64 {
+    let jump_boost = jump_boost_amplifier.map_or(0.0, |amplifier| f64::from(amplifier) + 1.0);
+    if fall_distance <= 3.0 + safe_fall_distance + jump_boost {
+        return 0.0;
+    }
+    let damage = (fall_distance - 3.0 - safe_fall_distance - jump_boost) * multiplier;
+    match rounding {
+        LandingDamageRounding::Ceil => damage.ceil(),
+        LandingDamageRounding::Floor => damage.floor(),
+    }
+}
+
+pub fn tick_with_profile<P: VersionPhysicsProfile>(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    config: PhysicsConfig,
+) -> TickResult {
+    tick_with_rules_and_rounding_and_restitution(
+        state,
+        world,
+        config,
+        P::rules(),
+        P::landing_damage_rounding(),
+        false,
+        P::rules().water_movement_efficiency_attribute,
+    )
+}
+
+pub fn tick_with_profile_and_restitution<P: VersionPhysicsProfile>(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    config: PhysicsConfig,
+) -> TickResult {
+    tick_with_rules_and_rounding_and_restitution(
+        state,
+        world,
+        config,
+        P::rules(),
+        P::landing_damage_rounding(),
+        true,
+        true,
+    )
+}
+
+pub fn tick_with_profile_and_modern_fall_damage<P: VersionPhysicsProfile>(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    config: PhysicsConfig,
+) -> TickResult {
+    tick_with_rules_and_rounding_and_restitution(
+        state,
+        world,
+        config,
+        P::rules(),
+        P::landing_damage_rounding(),
+        false,
+        true,
+    )
+}
+
+impl Default for VersionPhysicsRules {
+    fn default() -> Self {
+        Self {
+            gravity: 0.08,
+            water_gravity_divisor: 5.0,
+            lava_gravity_divisor: 4.0,
+            water_drag: 0.8,
+            water_sprint_drag: 0.9,
+            lava_drag: 0.5,
+            air_drag: 0.98,
+            vertical_drag: 0.98,
+            fluid_vertical_drag: 0.8,
+            water_flow_scale: 0.014,
+            lava_flow_scale: 0.0023333333333333335,
+            ultra_warm_lava_flow_scale: 0.007,
+            fluid_travel_split: false,
+            fluid_falling_checks_gravity_argument: false,
+            water_input_speed: 0.02,
+            lava_input_speed: 0.02,
+            step_height: 0.6,
+            swimming_vertical_steering: 0.06,
+            swimming_downward_steering: 0.085,
+            water_movement_efficiency_divisor: 3.0,
+            water_movement_efficiency_attribute: false,
+        }
+    }
+}
+
+impl Default for PhysicsConfig {
+    fn default() -> Self {
+        Self {
+            gravity: 0.08,
+            drag: 0.98,
+            movement_speed: 0.1,
+            sprint_multiplier: 1.3,
+            jump_velocity: 0.42,
+            step_height: 0.6,
+            negligible_velocity: 0.003,
+        }
+    }
+
+}
+
+impl PhysicsConfig {
+    pub fn validate(self) -> std::result::Result<(), &'static str> {
+        let finite = self.gravity.is_finite()
+            && self.drag.is_finite()
+            && self.movement_speed.is_finite()
+            && self.sprint_multiplier.is_finite()
+            && self.jump_velocity.is_finite()
+            && self.step_height.is_finite()
+            && self.negligible_velocity.is_finite();
+        if !finite {
+            return Err("simulation config contains non-finite values");
+        }
+        if !(0.0..=10.0).contains(&self.gravity)
+            || !(0.0..=2.0).contains(&self.drag)
+            || !(0.0..=100.0).contains(&self.movement_speed)
+            || !(0.0..=10.0).contains(&self.sprint_multiplier)
+            || !(0.0..=10.0).contains(&self.jump_velocity)
+            || !(0.0..=10.0).contains(&self.step_height)
+            || !(0.0..=1.0).contains(&self.negligible_velocity)
+        {
+            return Err("simulation config contains out-of-range values");
+        }
+        Ok(())
+    }
+}
+
+/// Returns the combined `ADD_MULTIPLIED_TOTAL` movement-speed modifier.
+///
+/// Vanilla installs speed, slowness, and sprinting as modifiers on the same
+/// movement-speed attribute. They are summed before the attribute value is
+/// used, rather than multiplied in effect/sprint application order.
+#[must_use]
+pub(crate) fn movement_speed_multiplier(
+    speed_effect_amplifier: Option<u8>,
+    slowness_effect_amplifier: Option<u8>,
+    sprint_active: bool,
+    sprint_multiplier: f64,
+) -> f64 {
+    let speed = speed_effect_amplifier.map_or(0.0, |amplifier| 0.2 * (f64::from(amplifier) + 1.0));
+    let slowness =
+        slowness_effect_amplifier.map_or(0.0, |amplifier| 0.15 * (f64::from(amplifier) + 1.0));
+    let sprint = if sprint_active {
+        sprint_multiplier - 1.0
+    } else {
+        0.0
+    };
+    (1.0 + speed - slowness + sprint).max(0.0)
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SimulationState {
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub yaw: f64,
+    pub half_width: f64,
+    pub height: f64,
+    pub on_ground: bool,
+    pub collided_horizontally: bool,
+    pub minor_horizontal_collision: bool,
+    pub minor_horizontal_collision_supported: bool,
+    pub collided_vertically: bool,
+    pub vertical_collision_below: bool,
+    pub block_fall_callback: bool,
+    pub entity_bounciness: f64,
+    pub block_bounciness: f64,
+    pub input: Vec3,
+    pub jump_requested: bool,
+    pub jump_ticks: u32,
+    pub sprinting: bool,
+    pub in_water: bool,
+    pub in_lava: bool,
+    pub ultra_warm: bool,
+    pub is_player: bool,
+    pub controlled_by_local_instance: bool,
+    pub passenger: bool,
+    pub in_web: bool,
+    pub weaving: bool,
+    pub sweet_berry_bush_immune: bool,
+    pub powder_snow_immune: bool,
+    pub powder_snow_walkable: bool,
+    pub in_powder_snow: bool,
+    pub ticks_frozen: u32,
+    pub ticks_required_to_freeze: u32,
+    pub tick_count: u32,
+    pub freeze_damage: f64,
+    pub contact_damage: f64,
+    pub inside_wall: bool,
+    pub eye_height: Option<f64>,
+    pub eye_in_water: bool,
+    pub eye_in_lava: bool,
+    pub slow_falling: bool,
+    pub levitation: bool,
+    pub levitation_amplifier: Option<u8>,
+    pub fall_distance: f64,
+    pub safe_fall_distance: f64,
+    pub fall_damage_immune: bool,
+    pub fall_damage_multiplier: Option<f64>,
+    pub sneaking: bool,
+    pub stepping_carefully: bool,
+    pub using_item: bool,
+    pub swimming: bool,
+    pub flying: bool,
+    pub flying_speed: f64,
+    pub climbing: bool,
+    pub no_physics: bool,
+    pub no_gravity: bool,
+    pub gravity: Option<f64>,
+    pub step_height: Option<f64>,
+    pub movement_speed: f64,
+    pub jump_strength: f64,
+    pub speed_effect_amplifier: Option<u8>,
+    pub slowness_effect_amplifier: Option<u8>,
+    pub jump_boost_amplifier: Option<u8>,
+    pub dolphins_grace: u8,
+    pub depth_strider: u8,
+    pub soul_speed: u8,
+    pub water_movement_efficiency: f64,
+    pub movement_efficiency: f64,
+    pub air_drag_modifier: f64,
+    pub friction_modifier: f64,
+    pub air_drag_modifier_present: bool,
+    pub friction_modifier_present: bool,
+    pub sneaking_speed: f64,
+    pub fall_damage: f64,
+    pub fall_flying: bool,
+    pub look: Vec3,
+    pub firework_boost: Vec3,
+}
+
+impl From<EntityState> for SimulationState {
+    fn from(value: EntityState) -> Self {
+        Self {
+            position: value.position,
+            velocity: value.velocity,
+            yaw: 0.0,
+            half_width: value.dimensions.half_width,
+            height: value.dimensions.height,
+            on_ground: value.flags.on_ground,
+            collided_horizontally: value.flags.horizontal_collision,
+            minor_horizontal_collision: false,
+            minor_horizontal_collision_supported: false,
+            collided_vertically: value.flags.vertical_collision,
+            vertical_collision_below: value.flags.vertical_collision_below,
+            block_fall_callback: false,
+            entity_bounciness: 0.0,
+            block_bounciness: 0.0,
+            input: Vec3::ZERO,
+            jump_requested: false,
+            jump_ticks: 0,
+            sprinting: false,
+            in_water: value.flags.in_water,
+            in_lava: value.flags.in_lava,
+            ultra_warm: false,
+            is_player: false,
+            controlled_by_local_instance: false,
+            passenger: false,
+            in_web: false,
+            weaving: false,
+            sweet_berry_bush_immune: false,
+            powder_snow_immune: false,
+            powder_snow_walkable: false,
+            in_powder_snow: false,
+            ticks_frozen: 0,
+            ticks_required_to_freeze: 140,
+            tick_count: 0,
+            freeze_damage: 0.0,
+            contact_damage: 0.0,
+            inside_wall: false,
+            eye_height: None,
+            eye_in_water: false,
+            eye_in_lava: false,
+            slow_falling: false,
+            levitation: false,
+            levitation_amplifier: None,
+            fall_distance: 0.0,
+            safe_fall_distance: 0.0,
+            fall_damage_immune: false,
+            fall_damage_multiplier: Some(1.0),
+            sneaking: false,
+            stepping_carefully: false,
+            using_item: false,
+            swimming: false,
+            flying: false,
+            flying_speed: 0.02,
+            climbing: false,
+            no_physics: false,
+            no_gravity: false,
+            gravity: None,
+            step_height: None,
+            movement_speed: 0.0,
+            jump_strength: 0.0,
+            speed_effect_amplifier: None,
+            slowness_effect_amplifier: None,
+            jump_boost_amplifier: None,
+            dolphins_grace: 0,
+            depth_strider: 0,
+            soul_speed: 0,
+            water_movement_efficiency: 0.0,
+            movement_efficiency: 0.0,
+            air_drag_modifier: 0.0,
+            friction_modifier: 0.0,
+            air_drag_modifier_present: false,
+            friction_modifier_present: false,
+            sneaking_speed: 0.0,
+            fall_damage: 0.0,
+            fall_flying: false,
+            look: Vec3::new(0.0, 0.0, 1.0),
+            firework_boost: Vec3::ZERO,
+        }
+    }
+}
+
+impl From<SimulationState> for EntityState {
+    fn from(value: SimulationState) -> Self {
+        Self {
+            position: value.position,
+            velocity: value.velocity,
+            dimensions: Dimensions::new(value.half_width, value.height),
+            flags: EntityFlags {
+                on_ground: value.on_ground,
+                horizontal_collision: value.collided_horizontally,
+                vertical_collision: value.collided_vertically,
+                vertical_collision_below: value.vertical_collision_below,
+                in_water: value.in_water,
+                in_lava: value.in_lava,
+                ..EntityFlags::default()
+            },
+        }
+    }
+}
+
+impl SimulationState {
+    #[must_use]
+    pub fn bounds(self) -> Aabb {
+        Aabb::new(
+            Vec3::new(
+                self.position.x - self.half_width,
+                self.position.y,
+                self.position.z - self.half_width,
+            ),
+            Vec3::new(
+                self.position.x + self.half_width,
+                self.position.y + self.height,
+                self.position.z + self.half_width,
+            ),
+        )
+    }
+
+    pub fn check_fall_distance_accumulation(&mut self) {
+        if self.velocity.y > -0.5 && self.fall_distance > 1.0 {
+            self.fall_distance = 1.0;
+        }
+    }
+
+    pub fn add_delta_movement(&mut self, impulse: Vec3) {
+        if impulse.is_finite() {
+            let candidate = self.velocity + impulse;
+            if candidate.is_finite() {
+                self.velocity = candidate;
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TickResult {
+    pub displacement: Vec3,
+    pub collided_horizontally: bool,
+    pub collided_vertically: bool,
+    pub block_fall_callback: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct TickInputSnapshot {
+    pub state: SimulationState,
+    pub world: WorldSnapshot,
+    pub config: PhysicsConfig,
+    pub rules: VersionPhysicsRules,
+    pub landing_damage_rounding: LandingDamageRounding,
+    pub restitution_enabled: bool,
+    pub modern_fall_damage: bool,
+    pub water_movement_efficiency_attribute: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TickOutputSnapshot {
+    pub state: SimulationState,
+    pub result: TickResult,
+}
+
+impl TickInputSnapshot {
+    #[must_use]
+    pub fn new(
+        state: SimulationState,
+        world: WorldSnapshot,
+        config: PhysicsConfig,
+        rules: VersionPhysicsRules,
+        landing_damage_rounding: LandingDamageRounding,
+        restitution_enabled: bool,
+        modern_fall_damage: bool,
+        water_movement_efficiency_attribute: bool,
+    ) -> Self {
+        Self {
+            state,
+            world,
+            config,
+            rules,
+            landing_damage_rounding,
+            restitution_enabled,
+            modern_fall_damage,
+            water_movement_efficiency_attribute,
+        }
+    }
+
+    #[must_use]
+    pub fn execute(&self) -> TickOutputSnapshot {
+        let mut state = self.state;
+        let result = tick_with_rules_and_rounding_and_restitution(
+            &mut state,
+            &self.world,
+            self.config,
+            self.rules,
+            self.landing_damage_rounding,
+            self.restitution_enabled,
+            self.modern_fall_damage,
+        );
+        TickOutputSnapshot { state, result }
+    }
+}
+
+#[cfg(test)]
+pub fn tick(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    config: PhysicsConfig,
+) -> TickResult {
+    tick_with_rules(state, world, config, VersionPhysicsRules::default())
+}
+
+#[cfg(test)]
+pub fn tick_with_rules(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    config: PhysicsConfig,
+    rules: VersionPhysicsRules,
+) -> TickResult {
+    tick_with_rules_and_rounding_and_restitution(
+        state,
+        world,
+        config,
+        rules,
+        LandingDamageRounding::Ceil,
+        false,
+        false,
+    )
+}
+
+fn legacy_travel_fluid_flow(world: &WorldSnapshot, fluid: FluidState, bounds: Aabb) -> Vec3 {
+    world.fluid_flow_in_bounds(fluid, bounds)
+}
+
+fn travel_in_fluid_flow(world: &WorldSnapshot, fluid: FluidState, bounds: Aabb) -> Vec3 {
+    world.fluid_flow_in_bounds(fluid, bounds)
+}
+
+fn apply_legacy_fluid_travel_vertical(
+    state: &mut SimulationState,
+    fluid: FluidState,
+    fluid_height: f64,
+    fluid_jump_threshold: f64,
+    rules: VersionPhysicsRules,
+    falling_in_fluid: bool,
+    sprint_active: bool,
+) {
+    match fluid {
+        FluidState::Water | FluidState::Waterlogged => {
+            state.velocity.y *= java_float(rules.fluid_vertical_drag);
+            if fluid_falling_gravity_enabled(state, rules, sprint_active) {
+                state.velocity.y =
+                    fluid_falling_adjusted_y(rules.gravity, falling_in_fluid, state.velocity.y);
+            }
+        }
+        FluidState::Lava => {
+            if fluid_height <= fluid_jump_threshold {
+                state.velocity.y *= java_float(rules.fluid_vertical_drag);
+                if fluid_falling_gravity_enabled(state, rules, sprint_active) {
+                    state.velocity.y =
+                        fluid_falling_adjusted_y(rules.gravity, falling_in_fluid, state.velocity.y);
+                }
+            } else {
+                state.velocity.y *= 0.5;
+            }
+            if !state.no_gravity {
+                state.velocity.y -= rules.gravity / rules.lava_gravity_divisor;
+            }
+        }
+        FluidState::Empty => {}
+    }
+}
+
+fn apply_split_fluid_travel_vertical(
+    state: &mut SimulationState,
+    fluid: FluidState,
+    fluid_height: f64,
+    fluid_jump_threshold: f64,
+    rules: VersionPhysicsRules,
+    falling_in_fluid: bool,
+    sprint_active: bool,
+) {
+    // 1.21.4+ moves this logic into LivingEntity.travelInFluid. Keep the
+    // source-equivalent water/lava branches isolated from the legacy path.
+    match fluid {
+        FluidState::Water | FluidState::Waterlogged => {
+            state.velocity.y *= java_float(rules.fluid_vertical_drag);
+            if fluid_falling_gravity_enabled(state, rules, sprint_active) {
+                state.velocity.y =
+                    fluid_falling_adjusted_y(rules.gravity, falling_in_fluid, state.velocity.y);
+            }
+        }
+        FluidState::Lava => {
+            if fluid_height <= fluid_jump_threshold {
+                state.velocity.y *= java_float(rules.fluid_vertical_drag);
+                if fluid_falling_gravity_enabled(state, rules, sprint_active) {
+                    state.velocity.y =
+                        fluid_falling_adjusted_y(rules.gravity, falling_in_fluid, state.velocity.y);
+                }
+            } else {
+                state.velocity.y *= 0.5;
+            }
+            if !state.no_gravity {
+                state.velocity.y -= rules.gravity / rules.lava_gravity_divisor;
+            }
+        }
+        FluidState::Empty => {}
+    }
+}
+
+fn fluid_falling_adjusted_y(gravity: f64, falling: bool, current_y: f64) -> f64 {
+    if falling && (current_y - 0.005).abs() >= 0.003 && (current_y - gravity / 16.0).abs() < 0.003 {
+        -0.003
+    } else {
+        current_y - gravity / 16.0
+    }
+}
+
+fn fluid_falling_gravity_enabled(
+    state: &SimulationState,
+    rules: VersionPhysicsRules,
+    sprint_active: bool,
+) -> bool {
+    if sprint_active {
+        return false;
+    }
+
+    if rules.fluid_falling_checks_gravity_argument {
+        rules.gravity != 0.0
+    } else {
+        !state.no_gravity
+    }
+}
+
+fn compute_modified_friction(friction: f64, modifier: f64) -> f64 {
+    (1.0 - (1.0 - friction) * modifier).clamp(0.0, 1.0)
+}
+
+fn effective_modifier(modifier: f64, present: bool) -> f64 {
+    if present || modifier != 0.0 {
+        modifier
+    } else {
+        1.0
+    }
+}
+
+fn back_off_from_edge(
+    state: &SimulationState,
+    world: &WorldSnapshot,
+    delta: Vec3,
+    max_down_step: f64,
+) -> Vec3 {
+    if !state.is_player || !state.sneaking || state.flying || delta.y > 0.0 || max_down_step <= 0.0
+    {
+        return delta;
+    }
+    let bounds = state.bounds();
+    let above_ground = state.on_ground
+        || (state.fall_distance < max_down_step
+            && !world.no_collision(bounds.translated(Vec3::new(
+                0.0,
+                -max_down_step + state.fall_distance,
+                0.0,
+            ))));
+    if !above_ground {
+        return delta;
+    }
+    let mut x = delta.x;
+    let mut z = delta.z;
+    let step_x = x.signum() * 0.05;
+    let step_z = z.signum() * 0.05;
+    let can_fall = |x: f64, z: f64| {
+        let lowered = Aabb::new(
+            Vec3::new(
+                bounds.min.x + 1.0e-7 + x,
+                bounds.min.y - max_down_step - 1.0e-7,
+                bounds.min.z + 1.0e-7 + z,
+            ),
+            Vec3::new(
+                bounds.max.x - 1.0e-7 + x,
+                bounds.min.y,
+                bounds.max.z - 1.0e-7 + z,
+            ),
+        );
+        world.no_collision(lowered)
+    };
+    while x != 0.0 && can_fall(x, 0.0) {
+        if x.abs() <= 0.05 {
+            x = 0.0;
+        } else {
+            x -= step_x;
+        }
+    }
+    while z != 0.0 && can_fall(0.0, z) {
+        if z.abs() <= 0.05 {
+            z = 0.0;
+        } else {
+            z -= step_z;
+        }
+    }
+    while x != 0.0 && z != 0.0 && can_fall(x, z) {
+        if x.abs() <= 0.05 {
+            x = 0.0;
+        } else {
+            x -= step_x;
+        }
+        if z.abs() <= 0.05 {
+            z = 0.0;
+        } else {
+            z -= step_z;
+        }
+    }
+    Vec3::new(x, delta.y, z)
+}
+
+pub(crate) fn tick_with_rules_and_rounding_and_restitution(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    config: PhysicsConfig,
+    rules: VersionPhysicsRules,
+    landing_damage_rounding: LandingDamageRounding,
+    restitution_enabled: bool,
+    modern_fall_damage: bool,
+) -> TickResult {
+    let mut rules = rules;
+    state.tick_count = state.tick_count.saturating_add(1);
+    let old_position = state.position;
+    state.contact_damage = 0.0;
+    state.block_fall_callback = false;
+    if !state.velocity.is_finite() {
+        state.velocity = Vec3::ZERO;
+    }
+    rules.gravity = config.gravity;
+    // Keep source-generated version drag when callers use the default config;
+    // an explicitly customized runtime drag remains an override.
+    if config.drag != PhysicsConfig::default().drag {
+        rules.air_drag = config.drag;
+    }
+    rules.step_height = config.step_height;
+    if let Some(gravity) = state.gravity {
+        rules.gravity = gravity;
+    }
+    if let Some(step_height) = state.step_height {
+        rules.step_height = step_height;
+    }
+    if state.velocity.x.abs() < config.negligible_velocity {
+        state.velocity.x = 0.0;
+    }
+    if state.velocity.y.abs() < config.negligible_velocity {
+        state.velocity.y = 0.0;
+    }
+    if state.velocity.z.abs() < config.negligible_velocity {
+        state.velocity.z = 0.0;
+    }
+    if state.slow_falling || state.levitation {
+        state.fall_distance = 0.0;
+    }
+    state.jump_ticks = state.jump_ticks.saturating_sub(1);
+    let mut fluid = world.fluid_at((
+        state.position.x.floor() as i32,
+        state.position.y.floor() as i32,
+        state.position.z.floor() as i32,
+    ));
+    let feet_position = (
+        state.position.x.floor() as i32,
+        (state.position.y - 0.01).floor() as i32,
+        state.position.z.floor() as i32,
+    );
+    let body_position = (
+        state.position.x.floor() as i32,
+        state.position.y.floor() as i32,
+        state.position.z.floor() as i32,
+    );
+    let body_fluid_height = world.fluid_height_at(body_position);
+    let body_fluid = world.fluid_at(body_position);
+    let bounds = state.bounds();
+    let eye_height = state.eye_height.unwrap_or(state.height * 0.85);
+    let eye_half_width = state.half_width * 0.8;
+    let eye_box = Aabb::new(
+        Vec3::new(
+            state.position.x - eye_half_width,
+            state.position.y + eye_height - 0.5e-6,
+            state.position.z - eye_half_width,
+        ),
+        Vec3::new(
+            state.position.x + eye_half_width,
+            state.position.y + eye_height + 0.5e-6,
+            state.position.z + eye_half_width,
+        ),
+    );
+    state.inside_wall = !state.no_physics
+        && world
+            .collision_shapes(eye_box)
+            .iter()
+            .any(|shape| shape.intersects(eye_box));
+    let water_height = world.fluid_height_in_bounds(FluidState::Water, bounds);
+    let lava_height = world.fluid_height_in_bounds(FluidState::Lava, bounds);
+    if fluid == FluidState::Empty {
+        if water_height > 0.0 {
+            fluid = FluidState::Water;
+        } else if lava_height > 0.0 {
+            fluid = FluidState::Lava;
+        }
+    }
+    // The source split introduced `travelInFluid` as a separate handler in
+    // 1.21.4, but its fluid-flow sampling is source-identical at this stage.
+    // Keep the handler boundary explicit so later source changes cannot
+    // accidentally alter the legacy pipeline.
+    let fluid_flow = if rules.fluid_travel_split {
+        travel_in_fluid_flow(world, fluid, bounds)
+    } else {
+        legacy_travel_fluid_flow(world, fluid, bounds)
+    };
+    let fluid_height = world
+        .fluid_height_in_bounds(fluid, bounds)
+        .max(body_fluid_height);
+    let fluid_jump_threshold = if state.height - 0.1 < 0.4 { 0.0 } else { 0.4 };
+    let head_position = (
+        state.position.x.floor() as i32,
+        (state.position.y + state.height - 0.1).floor() as i32,
+        state.position.z.floor() as i32,
+    );
+    let feet_effect = world.effect_at(feet_position);
+    let soul_speed_block = matches!(feet_effect, BlockEffect::SoulSand | BlockEffect::SoulSoil);
+    let body_effect = world.effect_at(body_position);
+    let inside_effects = world.effects_in_bounds(bounds);
+    let in_web = inside_effects.contains(&BlockEffect::Web);
+    state.in_web = in_web;
+    let in_powder_snow = inside_effects.contains(&BlockEffect::PowderSnow);
+    state.in_powder_snow = in_powder_snow;
+    if in_powder_snow && !state.powder_snow_immune {
+        state.ticks_frozen = state.ticks_frozen.saturating_add(1);
+    } else {
+        state.ticks_frozen = state.ticks_frozen.saturating_sub(2);
+    }
+
+    let required_to_freeze = state.ticks_required_to_freeze.max(140);
+    state.ticks_frozen = state.ticks_frozen.min(required_to_freeze);
+    if state.tick_count % 40 == 0
+        && state.ticks_frozen >= required_to_freeze
+        && !state.powder_snow_immune
+    {
+        state.freeze_damage += 1.0;
+    }
+    let in_sweet_berry_bush = inside_effects.contains(&BlockEffect::SweetBerryBush);
+    if inside_effects.contains(&BlockEffect::Cactus)
+        || inside_effects.contains(&BlockEffect::Campfire)
+    {
+        state.contact_damage += 1.0;
+    }
+    if inside_effects.contains(&BlockEffect::SoulCampfire) {
+        state.contact_damage += 2.0;
+    }
+    if inside_effects.contains(&BlockEffect::Fire) {
+        state.ticks_frozen = 0;
+        state.contact_damage += 1.0;
+    }
+    if inside_effects.contains(&BlockEffect::SoulFire) {
+        state.ticks_frozen = 0;
+        state.contact_damage += 2.0;
+    }
+    let ignores_stuck_block = state.is_player && state.flying;
+    let honey_block = (-1..=1)
+        .flat_map(|x| {
+            (-1..=1).map(move |z| (feet_position.0 + x, feet_position.1, feet_position.2 + z))
+        })
+        .find(|&(x, y, z)| world.effect_at((x, y, z)) == BlockEffect::Honey);
+    let honey_sliding = honey_block.is_some_and(|(x, y, z)| {
+        !state.on_ground
+            && state.position.y <= y as f64 + 0.9375 - 1.0e-7
+            && state.velocity.y / 0.98 + 0.08 < -0.08
+            && ((x as f64 + 0.5 - state.position.x).abs() + 1.0e-7 > 0.4375 + state.half_width
+                || (z as f64 + 0.5 - state.position.z).abs() + 1.0e-7 > 0.4375 + state.half_width)
+    });
+    let climbing = state.climbing
+        || body_effect == BlockEffect::Climbable
+        || feet_effect == BlockEffect::Climbable
+        || body_effect == BlockEffect::Scaffolding
+        || feet_effect == BlockEffect::Scaffolding;
+    let on_scaffolding =
+        body_effect == BlockEffect::Scaffolding || feet_effect == BlockEffect::Scaffolding;
+    state.in_water = matches!(body_fluid, FluidState::Water | FluidState::Waterlogged)
+        || (matches!(fluid, FluidState::Water | FluidState::Waterlogged) && water_height > 0.0);
+    state.in_lava =
+        body_fluid == FluidState::Lava || (fluid == FluidState::Lava && lava_height > 0.0);
+    if state.in_water {
+        state.fall_distance = 0.0;
+    }
+    let eye_y = state.position.y + state.height - 0.1;
+    let eye_fluid_height = world.fluid_height_at(head_position);
+    let eye_fluid_top = head_position.1 as f64 + eye_fluid_height;
+    let head_fluid = world.block(head_position);
+    let swimming_head_position = (
+        state.position.x.floor() as i32,
+        (state.position.y + 0.9).floor() as i32,
+        state.position.z.floor() as i32,
+    );
+    let swimming_head_in_water = matches!(
+        world.block(swimming_head_position).fluid,
+        FluidState::Water | FluidState::Waterlogged
+    );
+    state.eye_in_water = matches!(
+        head_fluid.fluid,
+        FluidState::Water | FluidState::Waterlogged
+    ) && eye_fluid_top > eye_y;
+    state.eye_in_lava = head_fluid.fluid == FluidState::Lava && eye_fluid_top > eye_y;
+    let fluid_flow_length =
+        (fluid_flow.x * fluid_flow.x + fluid_flow.y * fluid_flow.y + fluid_flow.z * fluid_flow.z)
+            .sqrt();
+    if (state.in_water || state.in_lava) && fluid_flow_length > 0.0 {
+        let flow_scale = if state.in_water {
+            rules.water_flow_scale
+        } else if state.ultra_warm {
+            rules.ultra_warm_lava_flow_scale
+        } else {
+            rules.lava_flow_scale
+        };
+        let normalized_flow = if state.is_player {
+            fluid_flow
+        } else {
+            Vec3::new(
+                fluid_flow.x / fluid_flow_length,
+                fluid_flow.y / fluid_flow_length,
+                fluid_flow.z / fluid_flow_length,
+            )
+        };
+        let mut applied_flow = Vec3::new(
+            normalized_flow.x * flow_scale,
+            normalized_flow.y * flow_scale,
+            normalized_flow.z * flow_scale,
+        );
+        let applied_length = (applied_flow.x * applied_flow.x
+            + applied_flow.y * applied_flow.y
+            + applied_flow.z * applied_flow.z)
+            .sqrt();
+        if state.velocity.x.abs() < 0.003
+            && state.velocity.z.abs() < 0.003
+            && applied_length < 0.0045
+        {
+            if applied_length > 0.0 {
+                let scale = 0.0045 / applied_length;
+                applied_flow.x *= scale;
+                applied_flow.y *= scale;
+                applied_flow.z *= scale;
+            }
+        }
+        state.velocity.x += applied_flow.x;
+        state.velocity.y += applied_flow.y;
+        state.velocity.z += applied_flow.z;
+    }
+    let gravity = match fluid {
+        FluidState::Water => rules.gravity / rules.water_gravity_divisor,
+        FluidState::Lava => rules.gravity / rules.lava_gravity_divisor,
+        FluidState::Waterlogged => rules.gravity / rules.water_gravity_divisor,
+        FluidState::Empty => rules.gravity,
+    };
+    let falling_in_fluid = state.velocity.y <= 0.0;
+    if state.flying {
+        let vertical_input =
+            if state.jump_requested { 1.0 } else { 0.0 } - if state.sneaking { 1.0 } else { 0.0 };
+        state.velocity.y += vertical_input * state.flying_speed * 3.0;
+    }
+    let flying_vertical_velocity = state.velocity.y;
+    let vertical_drag = match fluid {
+        FluidState::Water => rules.water_drag,
+        FluidState::Lava => rules.lava_drag,
+        FluidState::Waterlogged => rules.water_drag,
+        FluidState::Empty => rules.vertical_drag,
+    };
+    if state.is_player && !state.passenger && state.swimming && state.in_water {
+        let steering = if state.look.y < -0.2 {
+            rules.swimming_downward_steering
+        } else {
+            rules.swimming_vertical_steering
+        };
+        if state.look.y <= 0.0 || state.jump_requested || swimming_head_in_water {
+            state.velocity.y += (state.look.y - state.velocity.y) * steering;
+        }
+    }
+    if matches!(
+        fluid,
+        FluidState::Water | FluidState::Waterlogged | FluidState::Lava
+    ) && state.jump_requested
+    {
+        state.velocity.y += 0.03999999910593033;
+    } else if state.on_ground && state.jump_requested && state.jump_ticks == 0 {
+        let jump_boost = state
+            .jump_boost_amplifier
+            .map_or(1.0, |amplifier| f64::from(amplifier) + 1.0);
+        state.velocity.y = if state.jump_strength > 0.0 {
+            state.jump_strength
+        } else {
+            config.jump_velocity
+        } + 0.1 * (jump_boost - 1.0);
+        if state.sprinting {
+            state.velocity.x -= state.yaw.sin() * 0.2;
+            state.velocity.z += state.yaw.cos() * 0.2;
+        }
+        state.on_ground = false;
+        state.fall_distance = 0.0;
+        state.jump_ticks = 10;
+    }
+    if matches!(fluid, FluidState::Water | FluidState::Waterlogged)
+        && state.collided_horizontally
+        && climbing
+    {
+        // LivingEntity.travelInWater replaces the post-move Y component before
+        // applying water drag and the falling adjustment.
+        state.velocity.y = 0.2;
+    }
+    let mut base_speed = if state.flying && state.flying_speed > 0.0 {
+        state.flying_speed
+    } else if state.movement_speed > 0.0 {
+        state.movement_speed
+    } else {
+        config.movement_speed
+    };
+    if rules.fluid_travel_split && soul_speed_block && state.soul_speed > 0 {
+        let level = f64::from(state.soul_speed);
+        base_speed += 0.0405 + (level - 1.0) * 0.0105;
+    }
+    let mut fluid_input_speed = match fluid {
+        FluidState::Water | FluidState::Waterlogged => java_float(rules.water_input_speed),
+        FluidState::Lava => java_float(rules.lava_input_speed),
+        FluidState::Empty => base_speed,
+    };
+    if matches!(fluid, FluidState::Water | FluidState::Waterlogged) {
+        let mut water_efficiency = if rules.water_movement_efficiency_attribute {
+            state.water_movement_efficiency
+        } else {
+            f64::from(state.depth_strider.min(3)) / rules.water_movement_efficiency_divisor
+        };
+        if !state.on_ground {
+            water_efficiency *= 0.5;
+        }
+        if water_efficiency > 0.0 {
+            fluid_input_speed += (base_speed - fluid_input_speed) * water_efficiency;
+        }
+    }
+    let input_speed = if matches!(fluid, FluidState::Empty) {
+        let block_friction = if state.on_ground {
+            let friction = world.slipperiness_at((
+                state.position.x.floor() as i32,
+                (state.position.y - 0.01).floor() as i32,
+                state.position.z.floor() as i32,
+            ));
+            if rules.fluid_travel_split {
+                compute_modified_friction(
+                    friction,
+                    effective_modifier(state.friction_modifier, state.friction_modifier_present),
+                )
+            } else {
+                friction
+            }
+        } else {
+            1.0
+        };
+        if state.on_ground && block_friction > 0.6 {
+            let friction = java_float(block_friction);
+            java_float(
+                java_float(base_speed)
+                    * java_float(
+                        java_float(0.21600002) / java_float(friction * friction * friction),
+                    ),
+            )
+        } else {
+            base_speed
+        }
+    } else {
+        fluid_input_speed
+    };
+    let sprint_active = state.sprinting && !state.sneaking && !state.using_item;
+    let sneaking_speed = if state.sneaking && state.sneaking_speed > 0.0 {
+        state.sneaking_speed
+    } else if state.sneaking {
+        0.3
+    } else {
+        1.0
+    };
+    let input_speed = input_speed
+        * movement_speed_multiplier(
+            state.speed_effect_amplifier,
+            state.slowness_effect_amplifier,
+            sprint_active,
+            config.sprint_multiplier,
+        )
+        * sneaking_speed;
+    let input_speed = input_speed * if state.using_item { 0.2 } else { 1.0 };
+    let yaw_sin = state.yaw.sin();
+    let yaw_cos = state.yaw.cos();
+    let input_length = (state.input.x * state.input.x + state.input.z * state.input.z).sqrt();
+    let input_scale = if input_length > 1.0 {
+        1.0 / input_length
+    } else {
+        1.0
+    };
+    let normalized_input_x = state.input.x * input_scale;
+    let normalized_input_z = state.input.z * input_scale;
+    let input_x = normalized_input_x * yaw_cos - normalized_input_z * yaw_sin;
+    let input_z = normalized_input_x * yaw_sin + normalized_input_z * yaw_cos;
+    state.velocity.x += input_x * input_speed;
+    state.velocity.z += input_z * input_speed;
+    if in_web && !ignores_stuck_block {
+        let (horizontal, vertical) = if state.weaving {
+            (0.5, 0.25)
+        } else {
+            (0.25, 0.05)
+        };
+        state.velocity.x *= horizontal;
+        state.velocity.y *= vertical;
+        state.velocity.z *= horizontal;
+        state.fall_distance = 0.0;
+    }
+    if in_powder_snow && !ignores_stuck_block && !state.powder_snow_immune {
+        state.velocity.x *= 0.9;
+        state.velocity.y *= 1.5;
+        state.velocity.z *= 0.9;
+        state.fall_distance = 0.0;
+    }
+    if in_sweet_berry_bush && !ignores_stuck_block && !state.sweet_berry_bush_immune {
+        state.velocity.x *= 0.8;
+        state.velocity.y *= 0.75;
+        state.velocity.z *= 0.8;
+        state.fall_distance = 0.0;
+    }
+    let bubble_surface = world.is_air_at((body_position.0, body_position.1 + 1, body_position.2));
+    if body_effect == BlockEffect::BubbleUp {
+        let (acceleration, maximum) = if bubble_surface {
+            (0.1, 1.8)
+        } else {
+            (0.06, 0.7)
+        };
+        state.velocity.y = (state.velocity.y + acceleration).min(maximum);
+        state.fall_distance = 0.0;
+    } else if body_effect == BlockEffect::BubbleDown {
+        let minimum = if bubble_surface { -0.9 } else { -0.3 };
+        state.velocity.y = (state.velocity.y - 0.03).max(minimum);
+        state.fall_distance = 0.0;
+    }
+    state.add_delta_movement(state.firework_boost);
+    if state.fall_flying {
+        let look = state.look.normalized();
+        state.check_fall_distance_accumulation();
+        let look_horizontal = (look.x * look.x + look.z * look.z).sqrt();
+        let horizontal_velocity =
+            (state.velocity.x * state.velocity.x + state.velocity.z * state.velocity.z).sqrt();
+        let look_length = (look.x * look.x + look.y * look.y + look.z * look.z).sqrt();
+        let pitch_cosine = (1.0 - look.y * look.y).max(0.0).sqrt();
+        let pitch_factor = pitch_cosine * pitch_cosine * (look_length / 0.4).min(1.0);
+        state.velocity.y += gravity * (-1.0 + pitch_factor * 0.75);
+        if state.velocity.y < 0.0 && look_horizontal > 0.0 {
+            let correction = state.velocity.y * -0.1 * pitch_factor;
+            state.velocity.x += look.x * correction / look_horizontal;
+            state.velocity.y += correction;
+            state.velocity.z += look.z * correction / look_horizontal;
+        }
+        if look.y > 0.0 && look_horizontal > 0.0 {
+            let correction = horizontal_velocity * look.y * 0.04;
+            state.velocity.x -= look.x * correction / look_horizontal;
+            state.velocity.y += correction * 3.2;
+            state.velocity.z -= look.z * correction / look_horizontal;
+        }
+        if look_horizontal > 0.0 {
+            state.velocity.x +=
+                (look.x / look_horizontal * horizontal_velocity - state.velocity.x) * 0.1;
+            state.velocity.z +=
+                (look.z / look_horizontal * horizontal_velocity - state.velocity.z) * 0.1;
+        }
+    } else if state.flying {
+        state.velocity.y = flying_vertical_velocity;
+    } else if state.levitation {
+        let target = 0.05 * (f64::from(state.levitation_amplifier.unwrap_or(0)) + 1.0);
+        state.velocity.y += (target - state.velocity.y) * 0.2;
+    } else if climbing {
+        state.velocity.y = state.input.y.clamp(-0.15, 0.15);
+    } else if matches!(
+        fluid,
+        FluidState::Water | FluidState::Waterlogged | FluidState::Lava
+    ) {
+    } else if state.no_gravity {
+    } else {
+        state.velocity.y -= if state.slow_falling {
+            gravity.min(0.01)
+        } else {
+            gravity
+        };
+    }
+    if climbing {
+        state.fall_distance = 0.0;
+        state.velocity.x = state.velocity.x.clamp(-0.15, 0.15);
+        state.velocity.z = state.velocity.z.clamp(-0.15, 0.15);
+        state.velocity.y = state.velocity.y.max(-0.15);
+        if state.is_player && state.sneaking && !on_scaffolding && state.velocity.y < 0.0 {
+            state.velocity.y = 0.0;
+        }
+    }
+    let desired = back_off_from_edge(state, world, state.velocity, rules.step_height);
+    let bounds = state.bounds();
+    let (normal_displacement, normal_collisions, obstacles) = if state.no_physics {
+        (desired, [false; 3], Vec::new())
+    } else {
+        let target = bounds.translated(desired);
+        let query = Aabb::new(
+            Vec3::new(
+                bounds.min.x.min(target.min.x),
+                bounds.min.y.min(target.min.y),
+                bounds.min.z.min(target.min.z),
+            ),
+            Vec3::new(
+                bounds.max.x.max(target.max.x),
+                bounds
+                    .max
+                    .y
+                    .max(target.max.y)
+                    .max(bounds.max.y + rules.step_height),
+                bounds.max.z.max(target.max.z),
+            ),
+        );
+        let obstacles = world.collision_shapes_for_entity(
+            query,
+            state.powder_snow_walkable,
+            bounds,
+            state.sneaking,
+        );
+        let (displacement, collisions) = resolve_motion(bounds, desired, &obstacles);
+        (displacement, collisions, obstacles)
+    };
+    let can_step = state.on_ground || (normal_collisions[1] && desired.y < 0.0);
+    let (displacement, collisions) = if can_step
+        && !state.no_physics
+        && (normal_collisions[0] || normal_collisions[2])
+        && rules.step_height > 0.0
+    {
+        resolve_step_motion(
+            if desired.y < 0.0 {
+                bounds.translated(Vec3::new(0.0, normal_displacement.y, 0.0))
+            } else {
+                bounds
+            },
+            desired,
+            rules.step_height,
+            &obstacles,
+            normal_displacement,
+            normal_collisions,
+        )
+    } else {
+        (normal_displacement, normal_collisions)
+    };
+
+    state.position = state.position + displacement;
+    // Entity.checkFallDamage uses the post-movement fluid state. A landing
+    // into water must not accumulate the downward movement into fall distance.
+    let post_movement_bounds = state.bounds();
+    let post_movement_body = (
+        state.position.x.floor() as i32,
+        state.position.y.floor() as i32,
+        state.position.z.floor() as i32,
+    );
+    let post_movement_in_water =
+        matches!(
+            world.fluid_at(post_movement_body),
+            FluidState::Water | FluidState::Waterlogged
+        ) || world.fluid_height_in_bounds(FluidState::Water, post_movement_bounds) > 0.0;
+    let mut reset_fall_distance = false;
+    if state.fall_distance != 0.0
+        && displacement.length_squared() >= 1.0
+        && world.intersects_fall_damage_resetting_block(old_position, displacement)
+    {
+        state.fall_distance = 0.0;
+        reset_fall_distance = true;
+    }
+    state.collided_horizontally = !state.no_physics
+        && (!vanilla_equal(desired.x, displacement.x) || !vanilla_equal(desired.z, displacement.z));
+    state.minor_horizontal_collision = false;
+    if state.minor_horizontal_collision_supported && state.is_player && state.collided_horizontally
+    {
+        let input_length_squared = desired.x * desired.x + desired.z * desired.z;
+        let displacement_length_squared =
+            displacement.x * displacement.x + displacement.z * displacement.z;
+        if input_length_squared >= 1.0e-5 && displacement_length_squared >= 1.0e-5 {
+            let cosine = (desired.x * displacement.x + desired.z * displacement.z)
+                / (input_length_squared * displacement_length_squared).sqrt();
+            state.minor_horizontal_collision = cosine.clamp(-1.0, 1.0).acos() < 0.13962634;
+        }
+    }
+    if !state.no_physics {
+        if desired.y != 0.0 || state.controlled_by_local_instance {
+            state.collided_vertically = !vanilla_equal(desired.y, displacement.y);
+            state.vertical_collision_below = state.collided_vertically && desired.y < 0.0;
+            state.block_fall_callback =
+                state.vertical_collision_below && state.controlled_by_local_instance;
+            state.on_ground = state.collided_vertically && desired.y < 0.0;
+        }
+    } else {
+        state.collided_vertically = false;
+        state.vertical_collision_below = false;
+    }
+    let support_effect = world.supporting_block_effect(state.bounds());
+    if support_effect == BlockEffect::Magma && !state.stepping_carefully && !state.fall_flying {
+        state.contact_damage += 1.0;
+    }
+    let slime_bounce = collisions[1]
+        && support_effect == BlockEffect::Slime
+        && desired.y <= 0.0
+        && !state.sneaking;
+    if slime_bounce {
+        let bounce_scale = if state.is_player { 1.0 } else { 0.8 };
+        state.velocity.y = -desired.y * bounce_scale;
+        state.on_ground = false;
+        state.fall_distance = 0.0;
+        state.fall_damage = 0.0;
+    }
+    let bounced = slime_bounce;
+    if state.on_ground {
+        if state.on_ground {
+            state.fall_damage = if state.fall_damage_immune {
+                0.0
+            } else if modern_fall_damage {
+                let fall_power = state.fall_distance + 1.0e-6 - state.safe_fall_distance;
+                if fall_power > 0.0 {
+                    let damage = fall_power * state.fall_damage_multiplier.unwrap_or(1.0);
+                    match landing_damage_rounding {
+                        LandingDamageRounding::Ceil => damage.ceil(),
+                        LandingDamageRounding::Floor => damage.floor(),
+                    }
+                } else {
+                    0.0
+                }
+            } else if state.fall_distance > 3.0 + state.safe_fall_distance {
+                landing_damage(
+                    state.fall_distance,
+                    state.safe_fall_distance,
+                    state.fall_damage_multiplier.unwrap_or(1.0),
+                    state.jump_boost_amplifier,
+                    landing_damage_rounding,
+                )
+            } else {
+                0.0
+            };
+            state.fall_distance = 0.0;
+        }
+    } else if !bounced && !reset_fall_distance && displacement.y < 0.0 && !post_movement_in_water {
+        state.fall_distance += -displacement.y;
+    }
+
+    if restitution_enabled {
+        let current_movement = state.velocity;
+        let support_block = world.supporting_block_state(state.bounds());
+        let world_block_bounciness = if support_block.suppresses_bounce {
+            0.0
+        } else {
+            support_block.bounce_restitution * if state.is_player { 1.0 } else { 0.8 }
+        };
+        let entity_restitution = if state.sneaking {
+            0.0
+        } else {
+            state.entity_bounciness
+        };
+        let vertical_restitution = entity_restitution
+            .max(state.block_bounciness)
+            .max(world_block_bounciness);
+        if collisions[0] {
+            state.velocity.x = -current_movement.x * entity_restitution;
+        }
+        if collisions[2] {
+            state.velocity.z = -current_movement.z * entity_restitution;
+        }
+        if collisions[1] && !bounced {
+            let vertical_bounce_allowed = state.vertical_collision_below
+                && current_movement.y != 0.0
+                && -current_movement.y >= rules.gravity
+                && vertical_restitution > 0.0;
+            if vertical_bounce_allowed {
+                let portion_with_movement = displacement.y / current_movement.y;
+                let gravity_compensation = portion_with_movement * rules.gravity;
+                let effective_drag = 1.0 + portion_with_movement * (rules.air_drag - 1.0);
+                state.velocity.y = (gravity_compensation - current_movement.y)
+                    * effective_drag
+                    * vertical_restitution;
+                state.on_ground = false;
+            } else {
+                state.velocity.y = 0.0;
+            }
+        }
+    } else {
+        if collisions[0] {
+            state.velocity.x = 0.0;
+        }
+        if collisions[1] && !bounced {
+            state.velocity.y = 0.0;
+        }
+        if collisions[2] {
+            state.velocity.z = 0.0;
+        }
+    }
+    if support_effect == BlockEffect::Slime
+        && state.on_ground
+        && state.velocity.y.abs() < 0.1
+        && !state.stepping_carefully
+    {
+        let step_factor = 0.4 + state.velocity.y.abs() * 0.2;
+        state.velocity.x *= step_factor;
+        state.velocity.z *= step_factor;
+    }
+    if in_powder_snow && !ignores_stuck_block && !state.powder_snow_immune {
+        state.velocity = Vec3::ZERO;
+    }
+    if in_web && !ignores_stuck_block {
+        state.velocity = Vec3::ZERO;
+    }
+    if in_sweet_berry_bush && !ignores_stuck_block && !state.sweet_berry_bush_immune {
+        state.velocity = Vec3::ZERO;
+    }
+    if honey_sliding {
+        let old_delta_y = state.velocity.y / 0.98 + 0.08;
+        let scale = if old_delta_y < -0.13 {
+            -0.05 / old_delta_y
+        } else {
+            1.0
+        };
+        state.velocity.x *= scale;
+        state.velocity.y = (-0.05 - 0.08) * 0.98;
+        state.velocity.z *= scale;
+        state.fall_distance = 0.0;
+    }
+    if (matches!(feet_effect, BlockEffect::Honey)
+        || (soul_speed_block && (rules.fluid_travel_split || state.soul_speed == 0)))
+        && state.on_ground
+        && !state.fall_flying
+        && !(state.is_player && state.flying)
+    {
+        let block_slowdown = if soul_speed_block && rules.fluid_travel_split {
+            let efficiency = state
+                .movement_efficiency
+                .max(if state.soul_speed > 0 { 1.0 } else { 0.0 })
+                .clamp(0.0, 1.0);
+            java_float(0.4 + (1.0 - 0.4) * efficiency)
+        } else {
+            0.4
+        };
+        state.velocity.x *= block_slowdown;
+        state.velocity.z *= block_slowdown;
+    }
+    if matches!(fluid, FluidState::Empty)
+        && climbing
+        && (state.collided_horizontally || state.jump_requested)
+    {
+        state.velocity.y = 0.2;
+    }
+    let horizontal_drag = if state.fall_flying {
+        0.99
+    } else if state.on_ground {
+        let block_friction = world.slipperiness_at((
+            state.position.x.floor() as i32,
+            (state.position.y - 0.01).floor() as i32,
+            state.position.z.floor() as i32,
+        ));
+        let block_friction = if rules.fluid_travel_split {
+            compute_modified_friction(
+                block_friction,
+                effective_modifier(state.friction_modifier, state.friction_modifier_present),
+            )
+        } else {
+            block_friction
+        };
+        block_friction
+            * if rules.fluid_travel_split {
+                compute_modified_friction(
+                    rules.air_drag,
+                    effective_modifier(state.air_drag_modifier, state.air_drag_modifier_present),
+                )
+            } else {
+                rules.air_drag
+            }
+    } else {
+        if rules.fluid_travel_split {
+            compute_modified_friction(
+                rules.air_drag,
+                effective_modifier(state.air_drag_modifier, state.air_drag_modifier_present),
+            )
+        } else {
+            rules.air_drag
+        }
+    };
+    let liquid_horizontal_drag = if state.in_water {
+        let mut water_drag = if sprint_active {
+            java_float(rules.water_sprint_drag)
+        } else {
+            java_float(rules.water_drag)
+        };
+        let mut water_efficiency = if rules.water_movement_efficiency_attribute {
+            state.water_movement_efficiency
+        } else {
+            f64::from(state.depth_strider.min(3)) / rules.water_movement_efficiency_divisor
+        };
+        if !state.on_ground {
+            water_efficiency *= 0.5;
+        }
+        if water_efficiency > 0.0 {
+            water_drag += (java_float(0.54600006) - water_drag) * water_efficiency;
+        }
+        if state.dolphins_grace > 0 {
+            water_drag = java_float(0.96);
+        }
+        water_drag
+    } else if state.in_lava {
+        java_float(rules.lava_drag)
+    } else {
+        horizontal_drag
+    };
+    state.velocity.x *= liquid_horizontal_drag;
+    state.velocity.z *= liquid_horizontal_drag;
+    if rules.fluid_travel_split {
+        apply_split_fluid_travel_vertical(
+            state,
+            fluid,
+            fluid_height,
+            fluid_jump_threshold,
+            rules,
+            falling_in_fluid,
+            sprint_active,
+        );
+    } else {
+        apply_legacy_fluid_travel_vertical(
+            state,
+            fluid,
+            fluid_height,
+            fluid_jump_threshold,
+            rules,
+            falling_in_fluid,
+            sprint_active,
+        );
+    }
+    if !matches!(fluid, FluidState::Empty)
+        && state.collided_horizontally
+        && world.is_free(state.bounds().translated(Vec3::new(
+            state.velocity.x,
+            state.velocity.y + 0.6 - displacement.y,
+            state.velocity.z,
+        )))
+    {
+        state.velocity.y = 0.3;
+    }
+    if matches!(fluid, FluidState::Empty) {
+        let air_drag = if rules.fluid_travel_split {
+            compute_modified_friction(
+                rules.vertical_drag,
+                effective_modifier(state.air_drag_modifier, state.air_drag_modifier_present),
+            )
+        } else {
+            vertical_drag
+        };
+        state.velocity.y *= if state.flying {
+            0.6
+        } else if state.fall_flying {
+            0.98
+        } else {
+            air_drag
+        };
+    }
+
+    if in_web && !ignores_stuck_block {
+        state.velocity = Vec3::ZERO;
+    }
+    if state.flying {
+        state.fall_distance = 0.0;
+    }
+
+    TickResult {
+        displacement,
+        collided_horizontally: state.collided_horizontally,
+        collided_vertically: state.collided_vertically,
+        block_fall_callback: state.block_fall_callback,
+    }
+}

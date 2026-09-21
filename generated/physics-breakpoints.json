@@ -1,0 +1,158 @@
+{
+  "schema": 1,
+  "sourceAudit": "generated/physics-methods.json",
+  "comparedMethods": [
+    "Entity.java:move",
+    "LivingEntity.java:travel",
+    "Player.java:travel"
+  ],
+  "breakpoints": [
+    {
+      "previous": "1.14.4",
+      "current": "1.15",
+      "changed": [
+        "Entity.java:move",
+        "LivingEntity.java:travel",
+        "Player.java:travel"
+      ]
+    },
+    {
+      "previous": "1.15.2",
+      "current": "1.16",
+      "changed": [
+        "Entity.java:move",
+        "LivingEntity.java:travel"
+      ]
+    },
+    {
+      "previous": "1.16.1",
+      "current": "1.16.2",
+      "changed": [
+        "Entity.java:move"
+      ]
+    },
+    {
+      "previous": "1.16.5",
+      "current": "1.17",
+      "changed": [
+        "Entity.java:move",
+        "LivingEntity.java:travel"
+      ]
+    },
+    {
+      "previous": "1.17.1",
+      "current": "1.18",
+      "changed": [
+        "Entity.java:move",
+        "LivingEntity.java:travel",
+        "Player.java:travel"
+      ]
+    },
+    {
+      "previous": "1.18.1",
+      "current": "1.18.2",
+      "changed": [
+        "Entity.java:move",
+        "LivingEntity.java:travel"
+      ]
+    },
+    {
+      "previous": "1.18.2",
+      "current": "1.19",
+      "changed": [
+        "Entity.java:move"
+      ]
+    },
+    {
+      "previous": "1.19",
+      "current": "1.19.1",
+      "changed": [
+        "Entity.java:move"
+      ]
+    },
+    {
+      "previous": "1.19.2",
+      "current": "1.19.3",
+      "changed": [
+        "LivingEntity.java:travel"
+      ]
+    },
+    {
+      "previous": "1.19.3",
+      "current": "1.19.4",
+      "changed": [
+        "LivingEntity.java:travel",
+        "Player.java:travel"
+      ]
+    },
+    {
+      "previous": "1.19.4",
+      "current": "1.20",
+      "changed": [
+        "Entity.java:move",
+        "LivingEntity.java:travel",
+        "Player.java:travel"
+      ]
+    },
+    {
+      "previous": "1.20.2",
+      "current": "1.20.3",
+      "changed": [
+        "Player.java:travel"
+      ]
+    },
+    {
+      "previous": "1.20.4",
+      "current": "1.20.5",
+      "changed": [
+        "LivingEntity.java:travel"
+      ]
+    },
+    {
+      "previous": "1.20.6",
+      "current": "1.21.1",
+      "changed": [
+        "Entity.java:move",
+        "LivingEntity.java:travel"
+      ]
+    },
+    {
+      "previous": "1.21.1",
+      "current": "1.21.4",
+      "changed": [
+        "Entity.java:move",
+        "LivingEntity.java:travel",
+        "Player.java:travel"
+      ]
+    },
+    {
+      "previous": "1.21.4",
+      "current": "1.21.5",
+      "changed": [
+        "Entity.java:move",
+        "LivingEntity.java:travel"
+      ]
+    },
+    {
+      "previous": "1.21.5",
+      "current": "1.21.8",
+      "changed": [
+        "Entity.java:move"
+      ]
+    },
+    {
+      "previous": "1.21.8",
+      "current": "1.21.10",
+      "changed": [
+        "Entity.java:move"
+      ]
+    },
+    {
+      "previous": "1.21.10",
+      "current": "1.21.11",
+      "changed": [
+        "LivingEntity.java:travel"
+      ]
+    }
+  ]
+}
