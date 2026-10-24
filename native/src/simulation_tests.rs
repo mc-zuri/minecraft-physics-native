@@ -6,6 +6,7 @@ mod tests {
         VersionPhysicsRules,
     };
     use crate::world::{BlockEffect, BlockShape, BlockState, FluidState, WorldSnapshot};
+    use crate::math::java_float;
     use crate::{Aabb, Vec3};
 
     #[test]
@@ -42,11 +43,11 @@ mod tests {
 
         assert!(!result.collided_vertically);
         assert_eq!(state.position.y, 2.0);
-        assert_eq!(state.velocity.y, -0.08 * 0.98);
+        assert_eq!(state.velocity.y, -0.08 * java_float(0.98));
 
         tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
 
-        assert_eq!(state.position.y, 2.0 - 0.08 * 0.98);
+        assert_eq!(state.position.y, 2.0 - 0.08 * java_float(0.98));
     }
 
     #[test]
@@ -74,7 +75,7 @@ mod tests {
         tick(&mut state, &world, PhysicsConfig::default());
 
         assert!(state.on_ground);
-        assert_eq!(state.velocity.x, 0.5 * 0.98);
+        assert_eq!(state.velocity.x, 0.5 * java_float(0.98));
     }
 
     #[test]
@@ -90,7 +91,7 @@ mod tests {
 
         tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
 
-        assert_eq!(state.velocity.y, (0.3 - 0.08) * 0.98);
+        assert_eq!(state.velocity.y, (0.3 - 0.08) * java_float(0.98));
     }
 
     #[test]
@@ -291,7 +292,7 @@ mod tests {
 
         assert!(result.collided_vertically);
         assert!(state.on_ground);
-        assert_eq!(state.velocity.y, -0.08 * 0.98);
+        assert_eq!(state.velocity.y, -0.08 * java_float(0.98));
         assert_eq!(state.position.y, 1.0);
     }
 
@@ -321,7 +322,7 @@ mod tests {
 
         let horizontal_speed =
             (state.velocity.x * state.velocity.x + state.velocity.z * state.velocity.z).sqrt();
-        assert!((horizontal_speed - 0.1 * 0.98).abs() < 1e-12);
+        assert!((horizontal_speed - 0.1 * java_float(0.98)).abs() < 1e-12);
     }
 
     #[test]
@@ -345,7 +346,7 @@ mod tests {
         tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
 
         // Base 0.1 * (1 - 0.30), then the vanilla 0.98 air drag.
-        assert!((state.velocity.z - 0.0686).abs() < 1e-12);
+        assert!((state.velocity.z - 0.1 * 0.7 * java_float(0.98)).abs() < 1e-12);
     }
 
     #[test]
@@ -366,8 +367,9 @@ mod tests {
             rules,
         );
 
-        // clamp(1 - (1 - 0.98) * 0.5, 0, 1) == 0.99.
-        assert!((state.velocity.z - 0.099).abs() < 1e-12);
+        // clamp(1 - (1 - 0.98) * 0.5, 0, 1) == 0.99, in float.
+        let drag = f64::from(1.0_f32 - (1.0_f32 - 0.98_f32) * 0.5_f32);
+        assert!((state.velocity.z - 0.1 * drag).abs() < 1e-12);
     }
 
     #[test]
@@ -1061,7 +1063,7 @@ mod tests {
             PhysicsConfig::default(),
         );
 
-        assert_eq!(swimming.velocity.y, 0.98);
+        assert_eq!(swimming.velocity.y, java_float(0.98));
         assert_eq!(swimming.velocity.y, ordinary.velocity.y);
     }
 
@@ -1410,7 +1412,7 @@ mod tests {
 
         tick(&mut state, &WorldSnapshot::new(), config);
 
-        assert!((state.velocity.y + 0.0098).abs() < 1.0e-12);
+        assert!((state.velocity.y + 0.01 * java_float(0.98)).abs() < 1.0e-12);
     }
 
     #[test]
@@ -1444,7 +1446,7 @@ mod tests {
 
         tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
 
-        assert_eq!(state.velocity.y, 0.05 * 0.2 * 0.98);
+        assert_eq!(state.velocity.y, 0.05 * 0.2 * java_float(0.98));
 
         tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
 
@@ -1607,7 +1609,7 @@ mod tests {
 
         tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
 
-        assert_eq!(state.velocity.y, (0.2 - 0.08) * 0.98);
+        assert_eq!(state.velocity.y, (0.2 - 0.08) * java_float(0.98));
     }
 
     #[test]
@@ -2690,8 +2692,9 @@ mod tests {
 
         tick(&mut state, &world, PhysicsConfig::default());
 
-        assert!((state.position.x - 0.6).abs() < 1.0e-12);
-        assert!((state.velocity.x - 0.02352).abs() < 1.0e-12);
+        let ground_drag = java_float(java_float(0.6) * java_float(0.98));
+        assert!((state.position.x - (0.5 + java_float(0.1))).abs() < 1.0e-12);
+        assert!((state.velocity.x - java_float(0.1) * java_float(0.4) * ground_drag).abs() < 1.0e-12);
     }
 
     #[test]
@@ -2720,8 +2723,9 @@ mod tests {
 
         tick(&mut state, &world, PhysicsConfig::default());
 
-        assert!((state.position.x - 0.6).abs() < 1.0e-12);
-        assert!((state.velocity.x - 0.0588).abs() < 1.0e-12);
+        let ground_drag = java_float(java_float(0.6) * java_float(0.98));
+        assert!((state.position.x - (0.5 + java_float(0.1))).abs() < 1.0e-12);
+        assert!((state.velocity.x - java_float(0.1) * ground_drag).abs() < 1.0e-12);
     }
 
     #[test]
@@ -2783,7 +2787,8 @@ mod tests {
 
         tick(&mut state, &world, PhysicsConfig::default());
 
-        assert!((state.velocity.x - 0.01176).abs() < 1.0e-12);
+        let ground_drag = java_float(java_float(0.6) * java_float(0.98));
+        assert!((state.velocity.x - 0.05 * 0.4 * ground_drag).abs() < 1.0e-12);
     }
 
     #[test]
@@ -2812,7 +2817,8 @@ mod tests {
 
         tick(&mut state, &world, PhysicsConfig::default());
 
-        assert!((state.velocity.x - 0.0294).abs() < 1.0e-12);
+        let ground_drag = java_float(java_float(0.6) * java_float(0.98));
+        assert!((state.velocity.x - 0.05 * ground_drag).abs() < 1.0e-12);
     }
 
     #[test]
@@ -2845,8 +2851,8 @@ mod tests {
         tick(&mut player, &world, PhysicsConfig::default());
         tick(&mut item, &world, PhysicsConfig::default());
 
-        assert!((player.velocity.y - 0.196).abs() < 1.0e-12);
-        assert!((item.velocity.y - 0.1568).abs() < 1.0e-12);
+        assert!((player.velocity.y - 0.2 * java_float(0.98)).abs() < 1.0e-12);
+        assert!((item.velocity.y - 0.2 * 0.8 * java_float(0.98)).abs() < 1.0e-12);
     }
 
     #[test]
@@ -3042,6 +3048,6 @@ mod tests {
             VersionPhysicsRules::default(),
         );
 
-        assert!((state.velocity.y + 0.0196).abs() < 1e-12);
+        assert!((state.velocity.y + 0.02 * java_float(0.98)).abs() < 1e-12);
     }
 }

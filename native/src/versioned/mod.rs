@@ -1042,7 +1042,7 @@ mod tests {
 
         dispatch("1.14.4", &mut state, &world, PhysicsConfig::default()).unwrap();
 
-        assert!((state.velocity.x - 0.91).abs() < 1.0e-12);
+        assert!((state.velocity.x - crate::math::java_float(0.91)).abs() < 1.0e-12);
     }
 
     #[test]
@@ -1131,7 +1131,7 @@ mod tests {
 
         assert!(state.collided_horizontally);
         assert!(state.velocity.x < 0.0);
-        assert!((state.velocity.x + 0.455).abs() < 1.0e-12);
+        assert!((state.velocity.x + 0.5 * crate::math::java_float(0.91)).abs() < 1.0e-12);
 
         let mut patch_state = SimulationState {
             position: crate::math::Vec3::new(0.5, 0.0, 0.5),
@@ -1144,7 +1144,7 @@ mod tests {
         };
         dispatch("26.2", &mut patch_state, &world, PhysicsConfig::default()).unwrap();
         assert!(patch_state.collided_horizontally);
-        assert!((patch_state.velocity.x + 0.455).abs() < 1.0e-12);
+        assert!((patch_state.velocity.x + 0.5 * crate::math::java_float(0.91)).abs() < 1.0e-12);
 
         let mut pre_restitution_state = SimulationState {
             position: crate::math::Vec3::new(0.5, 0.0, 0.5),
@@ -1189,7 +1189,7 @@ mod tests {
         dispatch("26.2", &mut state, &world, PhysicsConfig::default()).unwrap();
 
         assert!(state.collided_vertically);
-        assert!((state.velocity.y - 0.784).abs() < 1.0e-12);
+        assert!((state.velocity.y - 0.8 * crate::math::java_float(0.98)).abs() < 1.0e-12);
     }
 
     #[test]

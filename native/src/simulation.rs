@@ -621,8 +621,34 @@ fn fluid_falling_gravity_enabled(
     }
 }
 
+fn friction_influenced_speed(speed: f64, friction: f64) -> f64 {
+    let friction = friction as f32;
+    f64::from(speed as f32 * (0.21600002_f32 / (friction * friction * friction)))
+}
+
+fn relative_movement(input: Vec3, speed: f64, yaw: f64) -> Vec3 {
+    let length_squared = input.x * input.x + input.y * input.y + input.z * input.z;
+    if length_squared < 1.0e-7 {
+        return Vec3::ZERO;
+    }
+    let direction = if length_squared > 1.0 {
+        let length = length_squared.sqrt();
+        Vec3::new(input.x / length, input.y / length, input.z / length)
+    } else {
+        input
+    };
+    let scaled = direction.scale(speed);
+    let sin = yaw.sin();
+    let cos = yaw.cos();
+    Vec3::new(
+        scaled.x * cos - scaled.z * sin,
+        scaled.y,
+        scaled.z * cos + scaled.x * sin,
+    )
+}
+
 fn compute_modified_friction(friction: f64, modifier: f64) -> f64 {
-    (1.0 - (1.0 - friction) * modifier).clamp(0.0, 1.0)
+    f64::from((1.0 - (1.0 - friction as f32) * modifier as f32).clamp(0.0, 1.0))
 }
 
 fn effective_modifier(modifier: f64, present: bool) -> f64 {
@@ -1055,19 +1081,13 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         rules.air_drag
     };
     let ground_inertia = if state.on_ground {
-        block_friction * air_inertia
+        java_float(java_float(block_friction) * java_float(air_inertia))
     } else {
-        air_inertia
+        java_float(air_inertia)
     };
     let input_speed = if matches!(fluid, FluidState::Empty) {
-        if state.on_ground && block_friction > 0.6 {
-            let friction = java_float(block_friction);
-            java_float(
-                java_float(base_speed)
-                    * java_float(
-                        java_float(0.21600002) / java_float(friction * friction * friction),
-                    ),
-            )
+        if state.on_ground {
+            friction_influenced_speed(base_speed, block_friction)
         } else {
             base_speed
         }
@@ -1091,20 +1111,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         )
         * sneaking_speed;
     let input_speed = input_speed * if state.using_item { 0.2 } else { 1.0 };
-    let yaw_sin = state.yaw.sin();
-    let yaw_cos = state.yaw.cos();
-    let input_length = (state.input.x * state.input.x + state.input.z * state.input.z).sqrt();
-    let input_scale = if input_length > 1.0 {
-        1.0 / input_length
-    } else {
-        1.0
-    };
-    let normalized_input_x = state.input.x * input_scale;
-    let normalized_input_z = state.input.z * input_scale;
-    let input_x = normalized_input_x * yaw_cos - normalized_input_z * yaw_sin;
-    let input_z = normalized_input_x * yaw_sin + normalized_input_z * yaw_cos;
-    state.velocity.x += input_x * input_speed;
-    state.velocity.z += input_z * input_speed;
+    state.velocity = state.velocity + relative_movement(state.input, input_speed, state.yaw);
     if in_web && !ignores_stuck_block {
         let (horizontal, vertical) = if state.weaving {
             (0.5, 0.25)
@@ -1423,10 +1430,10 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             let efficiency = state
                 .movement_efficiency
                 .max(if state.soul_speed > 0 { 1.0 } else { 0.0 })
-                .clamp(0.0, 1.0);
-            java_float(0.4 + (1.0 - 0.4) * efficiency)
+                .clamp(0.0, 1.0) as f32;
+            f64::from(0.4_f32 + efficiency * (1.0 - 0.4_f32))
         } else {
-            0.4
+            java_float(0.4)
         };
         state.velocity.x *= block_slowdown;
         state.velocity.z *= block_slowdown;
@@ -1523,7 +1530,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         } else if state.fall_flying {
             0.98
         } else {
-            air_drag
+            java_float(air_drag)
         };
     }
 
