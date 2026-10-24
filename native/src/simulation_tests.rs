@@ -1,13 +1,13 @@
 #[cfg(test)]
 mod tests {
+    use crate::math::java_float;
     use crate::simulation::{
         landing_damage, movement_speed_attribute, tick, tick_with_rules, LandingDamageRounding,
         PhysicsConfig, SimulationState, TickInputSnapshot, VersionPhysicsProfile,
         VersionPhysicsRules,
     };
-    use crate::world::{BlockEffect, BlockShape, BlockState, FluidState, WorldSnapshot};
-    use crate::math::java_float;
     use crate::version::MinecraftVersion;
+    use crate::world::{BlockEffect, BlockShape, BlockState, FluidState, WorldSnapshot};
     use crate::{Aabb, Vec3};
 
     #[test]
@@ -202,7 +202,10 @@ mod tests {
             moved(BlockEffect::SoulSand, hovering),
             0.1 * java_float(0.4) * java_float(0.98)
         );
-        assert_eq!(moved(BlockEffect::SoulSoil, hovering), 0.1 * java_float(0.98));
+        assert_eq!(
+            moved(BlockEffect::SoulSoil, hovering),
+            0.1 * java_float(0.98)
+        );
     }
 
     #[test]
@@ -330,7 +333,9 @@ mod tests {
                         / crate::math::java_float(0.98_f64 * 0.98 * 0.98),
                 ),
         );
-        assert!((state.position.x - (0.5 + crate::math::java_float(0.98) * expected)).abs() < 1.0e-7);
+        assert!(
+            (state.position.x - (0.5 + crate::math::java_float(0.98) * expected)).abs() < 1.0e-7
+        );
     }
 
     #[test]
@@ -373,8 +378,7 @@ mod tests {
             is_player: true,
             ..SimulationState::default()
         };
-        crate::versioned::dispatch("1.12.2", &mut state, &world, PhysicsConfig::default())
-            .unwrap();
+        crate::versioned::dispatch("1.12.2", &mut state, &world, PhysicsConfig::default()).unwrap();
         assert_eq!(state.position.z, 0.5 + f64::from(0.98_f32 * 0.02_f32));
     }
 
@@ -999,19 +1003,47 @@ mod tests {
             base * sprint
         );
         assert_eq!(
-            movement_speed_attribute(base, Some(0), Some(0), true, 1.3, MinecraftVersion::new(1, 21, 1)),
+            movement_speed_attribute(
+                base,
+                Some(0),
+                Some(0),
+                true,
+                1.3,
+                MinecraftVersion::new(1, 21, 1)
+            ),
             base * sprint * speed * slowness
         );
         assert_eq!(
-            movement_speed_attribute(base, Some(0), Some(0), true, 1.3, MinecraftVersion::new(1, 20, 5)),
+            movement_speed_attribute(
+                base,
+                Some(0),
+                Some(0),
+                true,
+                1.3,
+                MinecraftVersion::new(1, 20, 5)
+            ),
             base * sprint * slowness * speed
         );
         assert_eq!(
-            movement_speed_attribute(base, Some(0), Some(0), true, 1.3, MinecraftVersion::new(1, 20, 4)),
+            movement_speed_attribute(
+                base,
+                Some(0),
+                Some(0),
+                true,
+                1.3,
+                MinecraftVersion::new(1, 20, 4)
+            ),
             base * slowness * sprint * speed
         );
         assert_eq!(
-            movement_speed_attribute(base, None, Some(9), false, 1.3, MinecraftVersion::new(1, 21, 1)),
+            movement_speed_attribute(
+                base,
+                None,
+                Some(9),
+                false,
+                1.3,
+                MinecraftVersion::new(1, 21, 1)
+            ),
             0.0
         );
     }
@@ -1030,7 +1062,10 @@ mod tests {
 
         // Base 0.1 * (1 - 0.30), then the drag of the default 0.6 friction.
         let ground_drag = java_float(java_float(0.6) * java_float(0.98));
-        assert!((state.velocity.z - java_float(0.98) * java_float(0.1 * 0.7) * ground_drag).abs() < 1e-12);
+        assert!(
+            (state.velocity.z - java_float(0.98) * java_float(0.1 * 0.7) * ground_drag).abs()
+                < 1e-12
+        );
     }
 
     #[test]
@@ -1117,7 +1152,12 @@ mod tests {
             release,
             ..VersionPhysicsRules::default()
         };
-        tick_with_rules(&mut state, &WorldSnapshot::new(), PhysicsConfig::default(), rules);
+        tick_with_rules(
+            &mut state,
+            &WorldSnapshot::new(),
+            PhysicsConfig::default(),
+            rules,
+        );
         state.position.x
     }
 
@@ -1134,7 +1174,10 @@ mod tests {
         let modern = MinecraftVersion::new(1, 21, 1);
 
         let input = java_float(0.98);
-        assert_eq!(airborne_displacement(player, modern), input * java_float(0.02));
+        assert_eq!(
+            airborne_displacement(player, modern),
+            input * java_float(0.02)
+        );
         assert_eq!(
             airborne_displacement(sprinting, modern),
             input * f64::from(0.025999999_f32)
@@ -1223,7 +1266,10 @@ mod tests {
 
     #[test]
     fn input_rotation_uses_the_mth_sine_table_of_the_release() {
-        for release in [MinecraftVersion::new(1, 21, 1), MinecraftVersion::new(1, 21, 11)] {
+        for release in [
+            MinecraftVersion::new(1, 21, 1),
+            MinecraftVersion::new(1, 21, 11),
+        ] {
             let mut state = SimulationState {
                 position: Vec3::new(0.5, 2.0, 0.5),
                 yaw: f64::from(270.0_f32 * 0.017453292_f32),
@@ -1239,7 +1285,12 @@ mod tests {
                 ..VersionPhysicsRules::default()
             };
 
-            tick_with_rules(&mut state, &WorldSnapshot::new(), PhysicsConfig::default(), rules);
+            tick_with_rules(
+                &mut state,
+                &WorldSnapshot::new(),
+                PhysicsConfig::default(),
+                rules,
+            );
 
             assert_eq!(state.position.z, 0.5);
             assert_eq!(state.position.x, 0.5 + java_float(0.98) * java_float(0.1));
@@ -2129,7 +2180,12 @@ mod tests {
             release,
             ..VersionPhysicsRules::default()
         };
-        tick_with_rules(&mut state, &WorldSnapshot::new(), PhysicsConfig::default(), rules);
+        tick_with_rules(
+            &mut state,
+            &WorldSnapshot::new(),
+            PhysicsConfig::default(),
+            rules,
+        );
         state.position.y
     }
 
@@ -2165,8 +2221,14 @@ mod tests {
             ..SimulationState::default()
         };
 
-        assert_eq!(jump_height(rising, MinecraftVersion::new(1, 21, 1)), 1.0 + java_float(0.42));
-        assert_eq!(jump_height(rising, MinecraftVersion::new(1, 21, 2)), 1.0 + 0.6);
+        assert_eq!(
+            jump_height(rising, MinecraftVersion::new(1, 21, 1)),
+            1.0 + java_float(0.42)
+        );
+        assert_eq!(
+            jump_height(rising, MinecraftVersion::new(1, 21, 2)),
+            1.0 + 0.6
+        );
     }
 
     #[test]
@@ -2388,7 +2450,10 @@ mod tests {
             state.velocity.y
         };
 
-        assert_eq!(sinking(MinecraftVersion::new(26, 1, 0)), -0.3 * 0.5 - 0.08 / 4.0);
+        assert_eq!(
+            sinking(MinecraftVersion::new(26, 1, 0)),
+            -0.3 * 0.5 - 0.08 / 4.0
+        );
         assert_eq!(
             sinking(MinecraftVersion::new(1, 21, 11)),
             -0.3 * java_float(0.8) - 0.08 / 16.0 - 0.08 / 4.0
@@ -2667,8 +2732,7 @@ mod tests {
             ..legacy_water_player(Vec3::new(0.5, 0.5, 0.5), Vec3::ZERO)
         };
 
-        crate::versioned::dispatch("1.12.2", &mut state, &world, PhysicsConfig::default())
-            .unwrap();
+        crate::versioned::dispatch("1.12.2", &mut state, &world, PhysicsConfig::default()).unwrap();
 
         assert!(state.in_water);
         assert_eq!(state.velocity.y, 0.03999999910593033 * 0.6);
@@ -2688,9 +2752,15 @@ mod tests {
         };
 
         let height = f64::from(8.0_f32 / 9.0) - (0.7 + 0.001);
-        assert_eq!(pushed("1.13.2"), 100.0 * height * 0.5 * 0.014 * f64::from(0.8_f32));
+        assert_eq!(
+            pushed("1.13.2"),
+            100.0 * height * 0.5 * 0.014 * f64::from(0.8_f32)
+        );
         let height = 1.0 - (0.7 + 0.001);
-        assert_eq!(pushed("1.14.4"), 100.0 * height * 0.5 * 0.014 * f64::from(0.8_f32));
+        assert_eq!(
+            pushed("1.14.4"),
+            100.0 * height * 0.5 * 0.014 * f64::from(0.8_f32)
+        );
     }
 
     #[test]
@@ -2774,9 +2844,18 @@ mod tests {
         let beside = lava_world((1, 1, 0));
 
         for version in ["1.8.8", "1.12.2", "1.13.2"] {
-            assert!(!in_lava(version, &below, Vec3::new(0.5, 0.6, 0.5)), "{version}");
-            assert!(in_lava(version, &below, Vec3::new(0.5, 0.5, 0.5)), "{version}");
-            assert!(!in_lava(version, &beside, Vec3::new(0.75, 1.0, 0.5)), "{version}");
+            assert!(
+                !in_lava(version, &below, Vec3::new(0.5, 0.6, 0.5)),
+                "{version}"
+            );
+            assert!(
+                in_lava(version, &below, Vec3::new(0.5, 0.5, 0.5)),
+                "{version}"
+            );
+            assert!(
+                !in_lava(version, &beside, Vec3::new(0.75, 1.0, 0.5)),
+                "{version}"
+            );
         }
     }
 
@@ -3095,7 +3174,9 @@ mod tests {
 
         tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
 
-        assert!((state.position.x - f64::from(0.98_f32 * 0.45_f32) * java_float(0.1)).abs() < 1.0e-12);
+        assert!(
+            (state.position.x - f64::from(0.98_f32 * 0.45_f32) * java_float(0.1)).abs() < 1.0e-12
+        );
     }
 
     #[test]
@@ -3443,7 +3524,10 @@ mod tests {
         for version in ["1.17", "1.21.1"] {
             let walker = walking_east(&world, version, 29999983.5);
             assert!(walker.collided_horizontally, "{version}");
-            assert_eq!(walker.position.x, 29999983.5 + (29999984.0 - (29999983.5 + 0.3)));
+            assert_eq!(
+                walker.position.x,
+                29999983.5 + (29999984.0 - (29999983.5 + 0.3))
+            );
         }
     }
 
@@ -3643,7 +3727,11 @@ mod tests {
             };
             crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
                 .unwrap();
-            assert_eq!(state.velocity.y, (rise - 0.08) * f64::from(0.98_f32), "{version}");
+            assert_eq!(
+                state.velocity.y,
+                (rise - 0.08) * f64::from(0.98_f32),
+                "{version}"
+            );
         }
     }
 
@@ -3796,9 +3884,18 @@ mod tests {
         let jumped = java_float(0.42) * java_float(0.8) - 0.08 / 16.0;
         let swam = 0.03999999910593033 * java_float(0.8) - 0.08 / 16.0;
 
-        assert_eq!(jump_on_ground_in_fluid(FluidState::Water, 6, 1.62, release), jumped);
-        assert_eq!(jump_on_ground_in_fluid(FluidState::Water, 0, 1.62, release), swam);
-        assert_eq!(jump_on_ground_in_fluid(FluidState::Water, 6, 0.3, release), swam);
+        assert_eq!(
+            jump_on_ground_in_fluid(FluidState::Water, 6, 1.62, release),
+            jumped
+        );
+        assert_eq!(
+            jump_on_ground_in_fluid(FluidState::Water, 0, 1.62, release),
+            swam
+        );
+        assert_eq!(
+            jump_on_ground_in_fluid(FluidState::Water, 6, 0.3, release),
+            swam
+        );
     }
 
     #[test]
@@ -3834,7 +3931,10 @@ mod tests {
         };
         let modern = MinecraftVersion::new(1, 21, 1);
 
-        assert_eq!(sink(true, false, modern), -0.03999999910593033 * java_float(0.8));
+        assert_eq!(
+            sink(true, false, modern),
+            -0.03999999910593033 * java_float(0.8)
+        );
         assert_eq!(sink(false, false, modern), 0.0);
         assert_eq!(sink(true, true, modern), 0.0);
         assert!(sink(true, true, MinecraftVersion::new(1, 15, 2)) < 0.0);
@@ -4769,8 +4869,14 @@ mod tests {
             flying: true,
             ..submerged
         };
-        assert_eq!(bubble_push(&world, flying, MinecraftVersion::new(1, 21, 1)), 0.0);
-        assert_eq!(bubble_push(&world, flying, MinecraftVersion::new(1, 21, 2)), 0.0);
+        assert_eq!(
+            bubble_push(&world, flying, MinecraftVersion::new(1, 21, 1)),
+            0.0
+        );
+        assert_eq!(
+            bubble_push(&world, flying, MinecraftVersion::new(1, 21, 2)),
+            0.0
+        );
     }
 
     #[test]
@@ -4829,8 +4935,14 @@ mod tests {
             ..SimulationState::default()
         };
 
-        assert_eq!(bubble_push(&world, sinking, MinecraftVersion::new(1, 21, 4)), -0.3 - 0.03);
-        assert_eq!(bubble_push(&world, sinking, MinecraftVersion::new(1, 21, 9)), -0.3);
+        assert_eq!(
+            bubble_push(&world, sinking, MinecraftVersion::new(1, 21, 4)),
+            -0.3 - 0.03
+        );
+        assert_eq!(
+            bubble_push(&world, sinking, MinecraftVersion::new(1, 21, 9)),
+            -0.3
+        );
     }
 
     #[test]
@@ -4887,8 +4999,14 @@ mod tests {
             ..SimulationState::default()
         };
 
-        assert_eq!(bubble_push(&world, low, MinecraftVersion::new(1, 21, 4)), 0.06);
-        assert_eq!(bubble_push(&world, low, MinecraftVersion::new(1, 21, 5)), 0.1);
+        assert_eq!(
+            bubble_push(&world, low, MinecraftVersion::new(1, 21, 4)),
+            0.06
+        );
+        assert_eq!(
+            bubble_push(&world, low, MinecraftVersion::new(1, 21, 5)),
+            0.1
+        );
     }
 
     #[test]
@@ -4946,7 +5064,10 @@ mod tests {
 
         tick(&mut state, &world, PhysicsConfig::default());
 
-        assert_eq!(state.stuck_speed_multiplier, Vec3::new(java_float(0.9), 1.5, java_float(0.9)));
+        assert_eq!(
+            state.stuck_speed_multiplier,
+            Vec3::new(java_float(0.9), 1.5, java_float(0.9))
+        );
         assert_eq!(state.fall_distance, 0.0);
     }
 
@@ -5556,7 +5677,10 @@ mod tests {
 
         tick(&mut state, &world, PhysicsConfig::default());
 
-        assert_eq!(state.stuck_speed_multiplier, Vec3::new(java_float(0.8), 0.75, java_float(0.8)));
+        assert_eq!(
+            state.stuck_speed_multiplier,
+            Vec3::new(java_float(0.8), 0.75, java_float(0.8))
+        );
         assert_eq!(state.fall_distance, 0.0);
     }
 
@@ -6168,7 +6292,12 @@ mod tests {
                 release,
                 ..VersionPhysicsRules::default()
             };
-            tick_with_rules(&mut state, &WorldSnapshot::new(), PhysicsConfig::default(), rules);
+            tick_with_rules(
+                &mut state,
+                &WorldSnapshot::new(),
+                PhysicsConfig::default(),
+                rules,
+            );
             state.velocity.x
         };
 

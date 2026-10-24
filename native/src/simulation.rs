@@ -167,7 +167,6 @@ impl Default for PhysicsConfig {
             negligible_velocity: 0.003,
         }
     }
-
 }
 
 impl PhysicsConfig {
@@ -209,8 +208,8 @@ pub(crate) fn movement_speed_attribute(
     release: MinecraftVersion,
 ) -> f64 {
     let sprint = sprint_active.then(|| java_float(sprint_multiplier - 1.0));
-    let speed = speed_effect_amplifier
-        .map(|amplifier| 0.20000000298023224 * (f64::from(amplifier) + 1.0));
+    let speed =
+        speed_effect_amplifier.map(|amplifier| 0.20000000298023224 * (f64::from(amplifier) + 1.0));
     let slowness = slowness_effect_amplifier
         .map(|amplifier| -0.15000000596046448 * (f64::from(amplifier) + 1.0));
     let modifiers = if release.at_least(1, 21, 0) {
@@ -661,7 +660,10 @@ fn apply_fluid_travel_vertical(
     }
 }
 
-pub(crate) fn blocks_inside(state: &SimulationState, release: MinecraftVersion) -> Vec<(i32, i32, i32)> {
+pub(crate) fn blocks_inside(
+    state: &SimulationState,
+    release: MinecraftVersion,
+) -> Vec<(i32, i32, i32)> {
     let inset = if !release.at_least(1, 19, 3) {
         0.001
     } else if !release.at_least(1, 21, 2) {
@@ -865,13 +867,18 @@ pub(crate) fn apply_block_effects(
             }
             BlockEffect::Honey if sliding_down_honey(state, position, release) => {
                 let falling = honey_slide_falling(state.velocity.y, release);
-                let scale = if falling < -0.13 { -0.05 / falling } else { 1.0 };
+                let scale = if falling < -0.13 {
+                    -0.05 / falling
+                } else {
+                    1.0
+                };
                 let slide = if release.at_least(1, 21, 2) {
                     (-0.05 - 0.08) * java_float(0.98)
                 } else {
                     -0.05
                 };
-                state.velocity = Vec3::new(state.velocity.x * scale, slide, state.velocity.z * scale);
+                state.velocity =
+                    Vec3::new(state.velocity.x * scale, slide, state.velocity.z * scale);
                 state.fall_distance = 0.0;
             }
             _ => {}
@@ -1102,7 +1109,11 @@ fn fluid_jump(
             FluidJump::None
         };
     }
-    let height = if state.in_lava { lava_height } else { water_height };
+    let height = if state.in_lava {
+        lava_height
+    } else {
+        water_height
+    };
     let in_water = state.in_water && height > 0.0;
     let swims = !state.on_ground || height > threshold;
     if (in_water || state.in_lava) && swims {
@@ -1125,8 +1136,8 @@ fn jump_power(
     let boost = state
         .jump_boost_amplifier
         .map_or(0.0, |amplifier| 0.1_f32 * (f32::from(amplifier) + 1.0));
-    let boost_added_in_double = !release.at_least(1, 14, 0)
-        || (release.at_least(1, 17, 1) && !release.at_least(1, 20, 0));
+    let boost_added_in_double =
+        !release.at_least(1, 14, 0) || (release.at_least(1, 17, 1) && !release.at_least(1, 20, 0));
     if boost_added_in_double {
         f64::from(power) + f64::from(boost)
     } else {
@@ -1134,7 +1145,11 @@ fn jump_power(
     }
 }
 
-pub(crate) fn friction_influenced_speed(speed: f64, friction: f64, release: MinecraftVersion) -> f64 {
+pub(crate) fn friction_influenced_speed(
+    speed: f64,
+    friction: f64,
+    release: MinecraftVersion,
+) -> f64 {
     if !release.at_least(1, 14, 0) {
         let inertia = friction as f32 * 0.91;
         let acceleration = if release.at_least(1, 13, 0) {
@@ -1296,7 +1311,12 @@ pub(crate) fn mth_cos(radians: f64, release: MinecraftVersion) -> f64 {
     }
 }
 
-pub(crate) fn relative_movement(input: Vec3, speed: f64, yaw: f64, release: MinecraftVersion) -> Vec3 {
+pub(crate) fn relative_movement(
+    input: Vec3,
+    speed: f64,
+    yaw: f64,
+    release: MinecraftVersion,
+) -> Vec3 {
     if !release.at_least(1, 14, 0) {
         return relative_movement_in_float(input, speed as f32, yaw as f32);
     }
@@ -1738,10 +1758,9 @@ pub(crate) fn collide_with_world(
         ),
     );
     let mut obstacles = world.collision_shapes_for_entity(query, context);
-    obstacles.extend(world.entity_collisions(
-        entity_collision_query(swept, query, rules.release),
-        context,
-    ));
+    obstacles.extend(
+        world.entity_collisions(entity_collision_query(swept, query, rules.release), context),
+    );
     let border = world.world_border_collision_boxes();
     let collides_with_border = if rules.release.at_least(1, 18, 0) {
         world.is_inside_close_to_world_border(state.position, bounds.expand_towards(desired))
@@ -1761,7 +1780,14 @@ pub(crate) fn collide_with_world(
         border_always_collides: collides_with_border && !rules.release.at_least(1, 18, 0),
     };
     if rules.release.at_least(1, 14, 0) {
-        let movement = collide(bounds, desired, &obstacles, state.on_ground, max_step, collision);
+        let movement = collide(
+            bounds,
+            desired,
+            &obstacles,
+            state.on_ground,
+            max_step,
+            collision,
+        );
         return WorldCollision {
             movement,
             moved_bounds: None,
@@ -2190,7 +2216,11 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     } else {
         lava.height
     };
-    let fluid_jump_threshold = if java_float(eye_height) < 0.4 { 0.0 } else { 0.4 };
+    let fluid_jump_threshold = if java_float(eye_height) < 0.4 {
+        0.0
+    } else {
+        0.4
+    };
     let head_position = (
         state.position.x.floor() as i32,
         (state.position.y + state.height - 0.1).floor() as i32,
@@ -2265,7 +2295,13 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     let jumping = state.jump_requested
         && !(state.is_player && state.flying && rules.release.at_least(1, 16, 0));
     let jump = if jumping {
-        fluid_jump(state, water.height, lava.height, fluid_jump_threshold, rules.release)
+        fluid_jump(
+            state,
+            water.height,
+            lava.height,
+            fluid_jump_threshold,
+            rules.release,
+        )
     } else {
         FluidJump::None
     };

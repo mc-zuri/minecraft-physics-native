@@ -519,11 +519,12 @@ impl WorldSnapshot {
         if fluids_match(block.fluid, above.fluid) {
             return 1.0;
         }
-        let amount = if block.fluid_source || block.fluid_falling || !(1..8).contains(&block.fluid_level) {
-            8
-        } else {
-            8 - block.fluid_level
-        };
+        let amount =
+            if block.fluid_source || block.fluid_falling || !(1..8).contains(&block.fluid_level) {
+                8
+            } else {
+                8 - block.fluid_level
+            };
         f64::from(f32::from(amount) / 9.0)
     }
 
@@ -536,7 +537,11 @@ impl WorldSnapshot {
     ) -> FluidContact {
         let area = bounds.deflate(Vec3::new(0.001, 0.001, 0.001));
         let interaction = release.at_least(26, 1, 0);
-        let bottom = if interaction { bounds.min.y } else { area.min.y };
+        let bottom = if interaction {
+            bounds.min.y
+        } else {
+            area.min.y
+        };
         let mut contact = FluidContact::default();
         for x in area.min.x.floor() as i32..area.max.x.ceil() as i32 {
             for y in area.min.y.floor() as i32..area.max.y.ceil() as i32 {
@@ -930,8 +935,7 @@ impl WorldSnapshot {
         for z in cells_z.clone() {
             for y in cells_y.clone() {
                 for x in cells_x.clone() {
-                    let edges =
-                        on_edge(x, &cells_x) + on_edge(y, &cells_y) + on_edge(z, &cells_z);
+                    let edges = on_edge(x, &cells_x) + on_edge(y, &cells_y) + on_edge(z, &cells_z);
                     let position = (x, y, z);
                     let reachable =
                         edges == 0 || (edges == 1 && self.has_large_collision_shape(position));
@@ -1126,8 +1130,7 @@ impl WorldSnapshot {
                         let inside = distance == 0;
                         // As in vanilla's BlockCollisions, a block next to the queried cells only
                         // collides through a shape larger than a block (fences, walls).
-                        let bordering =
-                            distance == 1 && self.has_large_collision_shape((x, y, z));
+                        let bordering = distance == 1 && self.has_large_collision_shape((x, y, z));
                         if !inside && !bordering {
                             continue;
                         }
@@ -1165,11 +1168,7 @@ impl WorldSnapshot {
     }
 
     #[must_use]
-    pub fn supporting_block_position(
-        &self,
-        area: Aabb,
-        position: Vec3,
-    ) -> Option<BlockPosition> {
+    pub fn supporting_block_position(&self, area: Aabb, position: Vec3) -> Option<BlockPosition> {
         let min = (
             (area.min.x - 1.0e-7).floor() as i32 - 1,
             (area.min.y - 1.0e-7).floor() as i32 - 1,
@@ -1314,12 +1313,18 @@ mod tests {
             (0, 0, 0),
             block_with_box(Vec3::new(0.375, 0.0, 0.375), Vec3::new(0.625, 1.5, 0.625)),
         );
-        world.set_block((2, 0, 0), block_with_box(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0)));
+        world.set_block(
+            (2, 0, 0),
+            block_with_box(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0)),
+        );
 
         let above_fence = Aabb::new(Vec3::new(0.2, 1.2, 0.2), Vec3::new(0.8, 3.0, 0.8));
         assert_eq!(
             world.collision_shapes(above_fence),
-            vec![Aabb::new(Vec3::new(0.375, 0.0, 0.375), Vec3::new(0.625, 1.5, 0.625))]
+            vec![Aabb::new(
+                Vec3::new(0.375, 0.0, 0.375),
+                Vec3::new(0.625, 1.5, 0.625)
+            )]
         );
         let above_full_block = Aabb::new(Vec3::new(2.2, 1.2, 0.2), Vec3::new(2.8, 3.0, 0.8));
         assert!(world.collision_shapes(above_full_block).is_empty());
@@ -1748,7 +1753,10 @@ mod tests {
         let second = f64::from(2.0_f32 / 9.0) - 0.001;
         assert!(contact.touching);
         assert_eq!(contact.height, second);
-        assert_eq!(contact.flow, Vec3::new(1.0 * first + 3.0 * second, 0.0, 0.0));
+        assert_eq!(
+            contact.flow,
+            Vec3::new(1.0 * first + 3.0 * second, 0.0, 0.0)
+        );
         assert_eq!(contact.flowing_blocks, 2);
     }
 
