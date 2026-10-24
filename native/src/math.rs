@@ -330,6 +330,14 @@ pub fn fast_inv_sqrt(value: f64) -> f64 {
 }
 
 #[must_use]
+pub fn fast_inv_sqrt_f32(value: f32) -> f32 {
+    let half = 0.5 * value;
+    let bits = 1_597_463_007_i32.wrapping_sub(value.to_bits() as i32 >> 1);
+    let estimate = f32::from_bits(bits as u32);
+    estimate * (1.5 - half * estimate * estimate)
+}
+
+#[must_use]
 pub fn fast_inv_cube_root(value: f32) -> f32 {
     let mut bits = value.to_bits() as i32;
     bits = 1_419_967_116 - bits / 3;

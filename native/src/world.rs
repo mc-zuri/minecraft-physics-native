@@ -844,6 +844,75 @@ impl WorldSnapshot {
         self.collision_shapes_for_entity(bounds, context).is_empty()
     }
 
+    /// BlockState.getCollisionShape for an entity: the boxes of one block, relative to the block.
+    #[must_use]
+    pub fn block_collision_boxes_for_entity(
+        &self,
+        position: BlockPosition,
+        context: &EntityCollisionContext,
+    ) -> Vec<Aabb> {
+        let offset = Vec3::new(
+            f64::from(position.0),
+            f64::from(position.1),
+            f64::from(position.2),
+        );
+        match self.entity_collision_shape(position, context) {
+            EntityCollisionShape::Stored => self
+                .block_collision_shapes(position)
+                .filter(|shape| is_non_empty_shape(shape.bounds))
+                .map(|shape| shape.bounds)
+                .collect(),
+            EntityCollisionShape::Box(bounds) => vec![bounds.translated(offset.reverse())],
+            EntityCollisionShape::Empty => Vec::new(),
+        }
+    }
+
+    /// CollisionGetter.getBlockCollisions flattened to boxes, in the order BlockCollisions walks
+    /// the blocks (x fastest, then y, then z): every box of each block whose shape meets the query.
+    #[must_use]
+    pub fn block_collision_boxes_in_order(
+        &self,
+        query: Aabb,
+        context: &EntityCollisionContext,
+    ) -> Vec<Aabb> {
+        let cells = |min: f64, max: f64| {
+            ((min - 1.0e-7).floor() as i32 - 1)..=((max + 1.0e-7).floor() as i32 + 1)
+        };
+        let (cells_x, cells_y, cells_z) = (
+            cells(query.min.x, query.max.x),
+            cells(query.min.y, query.max.y),
+            cells(query.min.z, query.max.z),
+        );
+        let on_edge = |cell: i32, cells: &std::ops::RangeInclusive<i32>| {
+            i32::from(cell == *cells.start() || cell == *cells.end())
+        };
+        let mut boxes = Vec::new();
+        for z in cells_z.clone() {
+            for y in cells_y.clone() {
+                for x in cells_x.clone() {
+                    let edges =
+                        on_edge(x, &cells_x) + on_edge(y, &cells_y) + on_edge(z, &cells_z);
+                    let position = (x, y, z);
+                    let reachable =
+                        edges == 0 || (edges == 1 && self.has_large_collision_shape(position));
+                    if !reachable || !self.is_chunk_loaded(x.div_euclid(16), z.div_euclid(16)) {
+                        continue;
+                    }
+                    let offset = Vec3::new(f64::from(x), f64::from(y), f64::from(z));
+                    let shape: Vec<Aabb> = self
+                        .block_collision_boxes_for_entity(position, context)
+                        .into_iter()
+                        .map(|bounds| bounds.translated(offset))
+                        .collect();
+                    if shape.iter().any(|bounds| bounds.intersects(query)) {
+                        boxes.extend(shape);
+                    }
+                }
+            }
+        }
+        boxes
+    }
+
     fn entity_collision_shape(
         &self,
         position: BlockPosition,

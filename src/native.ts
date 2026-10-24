@@ -33,6 +33,10 @@ export interface NativeSimulationState {
     input?: NativeVec3;
     jumpRequested?: boolean;
     jumpTicks?: number;
+    /** The auto-jump option (1.10+): walking into a step jumps it the next tick. */
+    autoJump?: boolean;
+    /** LocalPlayer.autoJumpTime: a jump auto-jump queued for the next tick; pass back the one returned. */
+    autoJumpTime?: number;
     sprinting?: boolean;
     /** Sprinting at the end of the previous tick: the airborne speed before 1.19.4 follows it. */
     wasSprinting?: boolean;

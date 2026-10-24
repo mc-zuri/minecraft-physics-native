@@ -3104,6 +3104,89 @@ mod tests {
         assert!(walk(None) > 0.0);
     }
 
+    fn floor_with_step(step_height: f64) -> WorldSnapshot {
+        let mut world = WorldSnapshot::new();
+        let solid = |top: f64| BlockState {
+            id: 1,
+            shape: Some(BlockShape {
+                bounds: Aabb::new(Vec3::ZERO, Vec3::new(1.0, top, 1.0)),
+                ..BlockShape::full_block()
+            }),
+            ..BlockState::default()
+        };
+        for x in -1..=1 {
+            for z in -1..=3 {
+                world.set_block((x, 0, z), solid(1.0));
+            }
+        }
+        world.set_block((0, 1, 2), solid(step_height));
+        world
+    }
+
+    fn walking_to_step(auto_jump: bool) -> SimulationState {
+        SimulationState {
+            position: Vec3::new(0.5, 1.0, 1.5),
+            velocity: Vec3::new(0.0, -0.08 * java_float(0.98), 0.0),
+            input: Vec3::new(0.0, 0.0, 1.0),
+            on_ground: true,
+            is_player: true,
+            auto_jump,
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        }
+    }
+
+    #[test]
+    fn auto_jump_jumps_a_block_high_step_the_tick_after_walking_towards_it() {
+        let world = floor_with_step(1.0);
+        let mut state = walking_to_step(true);
+
+        tick(&mut state, &world, PhysicsConfig::default());
+
+        assert_eq!(state.auto_jump_time, 1);
+        assert!(state.on_ground);
+
+        state.jump_requested = false;
+        tick(&mut state, &world, PhysicsConfig::default());
+
+        assert_eq!(state.auto_jump_time, 0);
+        assert!(!state.on_ground);
+        assert_eq!(
+            state.velocity.y,
+            (f64::from(0.42_f32) - 0.08) * java_float(0.98)
+        );
+    }
+
+    #[test]
+    fn auto_jump_needs_the_option_a_step_it_cannot_climb_and_release_1_10() {
+        let queued = |auto_jump: bool, step_height: f64, release| {
+            let mut state = walking_to_step(auto_jump);
+            tick_release(&mut state, &floor_with_step(step_height), release);
+            state.auto_jump_time
+        };
+        let release = MinecraftVersion::new(26, 2, 0);
+
+        assert_eq!(queued(true, 1.0, release), 1);
+        assert_eq!(queued(false, 1.0, release), 0);
+        assert_eq!(queued(true, 0.5, release), 0);
+        assert_eq!(queued(true, 1.5, release), 0);
+        assert_eq!(queued(true, 1.0, MinecraftVersion::new(1, 10, 0)), 1);
+        assert_eq!(queued(true, 1.0, MinecraftVersion::new(1, 9, 4)), 0);
+    }
+
+    #[test]
+    fn auto_jump_waits_while_sneaking() {
+        let mut state = SimulationState {
+            sneaking: true,
+            ..walking_to_step(true)
+        };
+
+        tick(&mut state, &floor_with_step(1.0), PhysicsConfig::default());
+
+        assert_eq!(state.auto_jump_time, 0);
+    }
+
     fn ice_edge_beside(lower: BlockShape) -> WorldSnapshot {
         let mut world = WorldSnapshot::new();
         world.set_block((0, 0, 0), ice());

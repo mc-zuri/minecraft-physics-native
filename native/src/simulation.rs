@@ -2,7 +2,10 @@ use crate::block_traversal::{blocks_visited, Movement};
 use crate::collision::{collide, collide_legacy, vanilla_equal, CollisionRules, StepUp};
 use crate::entity::{Dimensions, EntityFlags, EntityState};
 use crate::legacy_fluid;
-use crate::math::{java_cos, java_cos_legacy, java_float, java_sin, java_sin_legacy, Aabb, Vec3};
+use crate::math::{
+    fast_inv_sqrt, fast_inv_sqrt_f32, java_cos, java_cos_legacy, java_float, java_sin,
+    java_sin_legacy, lerp, Aabb, Vec3,
+};
 use crate::version::MinecraftVersion;
 use crate::world::WorldSnapshot;
 use crate::world::{BlockEffect, EntityCollisionContext, FluidContact, FluidState};
@@ -244,6 +247,8 @@ pub struct SimulationState {
     pub input: Vec3,
     pub jump_requested: bool,
     pub jump_ticks: u32,
+    pub auto_jump: bool,
+    pub auto_jump_time: u32,
     pub sprinting: bool,
     pub was_sprinting: bool,
     pub in_water: bool,
@@ -331,6 +336,8 @@ impl From<EntityState> for SimulationState {
             input: Vec3::ZERO,
             jump_requested: false,
             jump_ticks: 0,
+            auto_jump: false,
+            auto_jump_time: 0,
             sprinting: false,
             was_sprinting: false,
             in_water: value.flags.in_water,
@@ -1185,41 +1192,54 @@ fn glide(state: &mut SimulationState, gravity: f64, release: MinecraftVersion) {
 }
 
 fn movement_input(state: &SimulationState, release: MinecraftVersion) -> Vec3 {
-    let keys = [state.input.x as f32, state.input.z as f32];
     let [strafe, forward] = if !state.is_player {
-        scale_input(keys, 0.98)
+        scale_input([state.input.x as f32, state.input.z as f32], 0.98)
     } else if release.at_least(1, 21, 5) {
-        modified_input(keys, state)
+        modified_input(input_move_vector(state, release), state)
     } else {
-        let item_slows_first = release.at_least(1, 21, 4);
-        let mut input = keys;
-        if state.using_item && item_slows_first {
-            input = scale_input(input, 0.2);
-        }
-        if state.moving_slowly.unwrap_or(state.sneaking) {
-            input = if release.at_least(1, 19, 0) {
-                scale_input(input, sneaking_speed(state))
-            } else {
-                input.map(|impulse| (f64::from(impulse) * 0.3) as f32)
-            };
-        }
-        if state.using_item && !item_slows_first {
-            input = scale_input(input, 0.2);
-        }
-        if state.flying && state.sneaking && !release.at_least(1, 15, 0) {
-            input = input.map(|impulse| (f64::from(impulse) / 0.3) as f32);
-        }
-        scale_input(input, 0.98)
+        scale_input(input_move_vector(state, release), 0.98)
     };
     Vec3::new(f64::from(strafe), state.input.y, f64::from(forward))
 }
 
-fn modified_input(keys: [f32; 2], state: &SimulationState) -> [f32; 2] {
-    let length = (keys[0] * keys[0] + keys[1] * keys[1]).sqrt();
-    if length < 1.0e-4 {
-        return [0.0, 0.0];
+/// The player's Input.getMoveVector during the move: the keys normalized from 1.21.5, before it
+/// the impulses LocalPlayer scaled for sneaking and using an item.
+fn input_move_vector(state: &SimulationState, release: MinecraftVersion) -> [f32; 2] {
+    let keys = [state.input.x as f32, state.input.z as f32];
+    if release.at_least(1, 21, 5) {
+        let length = (keys[0] * keys[0] + keys[1] * keys[1]).sqrt();
+        return if length < 1.0e-4 {
+            [0.0, 0.0]
+        } else {
+            [keys[0] / length, keys[1] / length]
+        };
     }
-    let mut input = scale_input([keys[0] / length, keys[1] / length], 0.98);
+    let item_slows_first = release.at_least(1, 21, 4);
+    let mut input = keys;
+    if state.using_item && item_slows_first {
+        input = scale_input(input, 0.2);
+    }
+    if state.moving_slowly.unwrap_or(state.sneaking) {
+        input = if release.at_least(1, 19, 0) {
+            scale_input(input, sneaking_speed(state))
+        } else {
+            input.map(|impulse| (f64::from(impulse) * 0.3) as f32)
+        };
+    }
+    if state.using_item && !item_slows_first {
+        input = scale_input(input, 0.2);
+    }
+    if state.flying && state.sneaking && !release.at_least(1, 15, 0) {
+        input = input.map(|impulse| (f64::from(impulse) / 0.3) as f32);
+    }
+    input
+}
+
+fn modified_input(move_vector: [f32; 2], state: &SimulationState) -> [f32; 2] {
+    if move_vector == [0.0, 0.0] {
+        return move_vector;
+    }
+    let mut input = scale_input(move_vector, 0.98);
     if state.using_item {
         input = scale_input(input, 0.2);
     }
@@ -1651,6 +1671,186 @@ fn restitute_movement_after_collisions(
     state.velocity.y = (gravity_compensation - current.y) * effective_drag * restitution;
 }
 
+/// Block.getJumpFactor of the block at the feet, else of the block below that affects movement.
+fn block_jump_factor(world: &WorldSnapshot, body: BlockPosition, below: BlockPosition) -> f32 {
+    if world.effect_at(body) == BlockEffect::Honey || world.effect_at(below) == BlockEffect::Honey {
+        0.5
+    } else {
+        1.0
+    }
+}
+
+/// Entity.getForward, horizontally: Vec3.directionFromRotation of the pitch and yaw.
+fn forward_direction(state: &SimulationState, release: MinecraftVersion) -> (f32, f32) {
+    let yaw = -(state.yaw as f32) - 3.1415927;
+    let pitch = -(state.pitch as f32);
+    let horizontal = -(mth_cos(f64::from(pitch), release) as f32);
+    (
+        mth_sin(f64::from(yaw), release) as f32 * horizontal,
+        mth_cos(f64::from(yaw), release) as f32 * horizontal,
+    )
+}
+
+/// The inverse square root updateAutoJump normalizes the move with: Mth.fastInvSqrt in double
+/// before 1.15, in float until 1.19.4, then Mth.invSqrt.
+fn auto_jump_inverse_length(length_squared: f32, release: MinecraftVersion) -> f32 {
+    if release.at_least(1, 19, 4) {
+        1.0 / length_squared.sqrt()
+    } else if release.at_least(1, 15, 0) {
+        fast_inv_sqrt_f32(length_squared)
+    } else {
+        fast_inv_sqrt(f64::from(length_squared)) as f32
+    }
+}
+
+/// LocalPlayer.updateAutoJump (1.10+, with the auto-jump option on), after a move by `moved`: a
+/// player walking on the ground towards a step 0.5 to 1.2 high (more with jump boost) with room
+/// above jumps the next tick. The step is the first block box that one of the two lines half a
+/// width to each side, 0.51 above the feet, crosses within 7 ticks of speed (at least the move).
+fn update_auto_jump(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    moved: Vec3,
+    speed: f32,
+    jump_factor: f32,
+    release: MinecraftVersion,
+) {
+    if !state.auto_jump
+        || !state.is_player
+        || !release.at_least(1, 10, 0)
+        || state.auto_jump_time > 0
+        || !state.on_ground
+        || state.sneaking
+        || state.passenger
+        || jump_factor < 1.0
+    {
+        return;
+    }
+    let move_vector = input_move_vector(state, release);
+    if move_vector == [0.0, 0.0] {
+        return;
+    }
+    let bounds = state.bounds();
+    let feet_y = if release.at_least(1, 16, 0) {
+        state.position.y
+    } else {
+        bounds.min.y
+    };
+    let begin = Vec3::new(state.position.x, feet_y, state.position.z);
+    let (moved_x, moved_z) = (moved.x as f32, moved.z as f32);
+    let mut direction = Vec3::new(f64::from(moved_x), 0.0, f64::from(moved_z));
+    let mut length_squared = direction.length_squared() as f32;
+    if length_squared <= 0.001 {
+        let input_x = speed * move_vector[0];
+        let input_z = speed * move_vector[1];
+        let sin = mth_sin(state.yaw, release) as f32;
+        let cos = mth_cos(state.yaw, release) as f32;
+        direction = Vec3::new(
+            f64::from(input_x * cos - input_z * sin),
+            0.0,
+            f64::from(input_z * cos + input_x * sin),
+        );
+        length_squared = direction.length_squared() as f32;
+        if length_squared <= 0.001 {
+            return;
+        }
+    }
+    let inverse_length = auto_jump_inverse_length(length_squared, release);
+    let direction = direction.scale(f64::from(inverse_length));
+    let (forward_x, forward_z) = forward_direction(state, release);
+    if ((f64::from(forward_x) * direction.x + f64::from(forward_z) * direction.z) as f32) < -0.15 {
+        return;
+    }
+    let context = EntityCollisionContext {
+        bottom: state.position.y,
+        descending: state.sneaking,
+        fall_distance: state.fall_distance,
+        walks_on_powder_snow: state.powder_snow_walkable,
+    };
+    let empty = |position| {
+        world
+            .block_collision_boxes_for_entity(position, &context)
+            .is_empty()
+    };
+    let mut ceiling = block_position(Vec3::new(state.position.x, bounds.max.y, state.position.z));
+    if !empty(ceiling) {
+        return;
+    }
+    ceiling.1 += 1;
+    if !empty(ceiling) {
+        return;
+    }
+    let mut jump_height = 1.2_f32;
+    if let Some(amplifier) = state.jump_boost_amplifier {
+        jump_height += (f32::from(amplifier) + 1.0) * 0.75;
+    }
+    let look_ahead = (speed * 7.0).max(1.0 / inverse_length);
+    let end = begin + Vec3::new(f64::from(moved_x), 0.0, f64::from(moved_z));
+    let end = end + direction.scale(f64::from(look_ahead));
+    let width = (state.half_width * 2.0) as f32;
+    let top = end + Vec3::new(0.0, f64::from(state.height as f32), 0.0);
+    let area = Aabb::new(
+        Vec3::new(begin.x.min(top.x), begin.y.min(top.y), begin.z.min(top.z)),
+        Vec3::new(begin.x.max(top.x), begin.y.max(top.y), begin.z.max(top.z)),
+    )
+    .inflate(Vec3::new(f64::from(width), 0.0, f64::from(width)));
+    let lift = Vec3::new(0.0, 0.5099999904632568, 0.0);
+    let (line_begin, line_end) = (begin + lift, end + lift);
+    let side = direction
+        .cross(Vec3::new(0.0, 1.0, 0.0))
+        .scale(f64::from(width * 0.5));
+    let lines = [
+        (line_begin - side, line_end - side),
+        (line_begin + side, line_end + side),
+    ];
+    let crosses = |bounds: Aabb, (from, to): (Vec3, Vec3)| {
+        bounds.min.x < from.x.max(to.x)
+            && bounds.max.x > from.x.min(to.x)
+            && bounds.min.y < from.y.max(to.y)
+            && bounds.max.y > from.y.min(to.y)
+            && bounds.min.z < from.z.max(to.z)
+            && bounds.max.z > from.z.min(to.z)
+    };
+    let unset = f32::from_bits(1);
+    let mut step_top = unset;
+    for obstacle in world.block_collision_boxes_in_order(area, &context) {
+        if !lines.iter().any(|&line| crosses(obstacle, line)) {
+            continue;
+        }
+        step_top = obstacle.max.y as f32;
+        let center = block_position(Vec3::new(
+            lerp(0.5, obstacle.min.x, obstacle.max.x),
+            lerp(0.5, obstacle.min.y, obstacle.max.y),
+            lerp(0.5, obstacle.min.z, obstacle.max.z),
+        ));
+        let mut steps = 1;
+        while (steps as f32) < jump_height {
+            let above = (center.0, center.1 + steps, center.2);
+            let shape = world.block_collision_boxes_for_entity(above, &context);
+            if let Some(shape_top) = shape.iter().map(|bounds| bounds.max.y).reduce(f64::max) {
+                step_top = shape_top as f32 + above.1 as f32;
+                if f64::from(step_top) - feet_y > f64::from(jump_height) {
+                    return;
+                }
+            }
+            if steps > 1 {
+                ceiling.1 += 1;
+                if !empty(ceiling) {
+                    return;
+                }
+            }
+            steps += 1;
+        }
+        break;
+    }
+    if step_top != unset {
+        let rise = (f64::from(step_top) - feet_y) as f32;
+        if !(rise <= 0.5) && !(rise > jump_height) {
+            state.auto_jump_time = 1;
+        }
+    }
+}
+
 pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     state: &mut SimulationState,
     world: &WorldSnapshot,
@@ -1691,6 +1891,10 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.fall_distance = 0.0;
     }
     state.jump_ticks = state.jump_ticks.saturating_sub(1);
+    if state.auto_jump_time > 0 {
+        state.auto_jump_time -= 1;
+        state.jump_requested = true;
+    }
     let body_position = (
         state.position.x.floor() as i32,
         state.position.y.floor() as i32,
@@ -1880,14 +2084,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     if jump == FluidJump::Swim {
         state.velocity.y += 0.03999999910593033;
     } else if jump == FluidJump::Ground && state.jump_ticks == 0 {
-        let block_jump_factor = if world.effect_at(body_position) == BlockEffect::Honey
-            || world.effect_at(below_position) == BlockEffect::Honey
-        {
-            0.5
-        } else {
-            1.0
-        };
-        let power = jump_power(state, config, rules.release, block_jump_factor);
+        let jump_factor = block_jump_factor(world, body_position, below_position);
+        let power = jump_power(state, config, rules.release, jump_factor);
         if !rules.release.at_least(1, 20, 5) || power as f32 > 1.0e-5 {
             state.velocity.y = if rules.release.at_least(1, 21, 2) {
                 power.max(state.velocity.y)
@@ -2289,6 +2487,19 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     if rules.release.at_least(1, 14, 0) && !rules.release.at_least(1, 16, 0) && !state.no_physics {
         state.in_lava = world.has_fluid_block_inside(FluidState::Lava, state.bounds());
     }
+    let jump_factor = block_jump_factor(
+        world,
+        block_position(state.position),
+        block_below_affecting_movement(state, support, rules.release),
+    );
+    update_auto_jump(
+        state,
+        world,
+        state.position - old_position,
+        movement_speed as f32,
+        jump_factor,
+        rules.release,
+    );
     if !rules.release.at_least(1, 21, 2) {
         let inside: Vec<_> = blocks_inside(state, rules.release)
             .into_iter()
