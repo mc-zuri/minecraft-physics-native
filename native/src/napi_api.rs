@@ -550,7 +550,7 @@ impl From<NativeSimulationState> for SimulationState {
             no_gravity: value.no_gravity.unwrap_or(false),
             gravity: value.gravity,
             step_height: value.step_height,
-            movement_speed: value.movement_speed.unwrap_or(0.0),
+            movement_speed: value.movement_speed,
             jump_strength: value.jump_strength,
             speed_effect_amplifier: value.speed_effect_amplifier,
             slowness_effect_amplifier: value.slowness_effect_amplifier,
@@ -564,7 +564,7 @@ impl From<NativeSimulationState> for SimulationState {
             friction_modifier: value.friction_modifier.unwrap_or(0.0),
             air_drag_modifier_present: value.air_drag_modifier.is_some(),
             friction_modifier_present: value.friction_modifier.is_some(),
-            sneaking_speed: value.sneaking_speed.unwrap_or(0.0),
+            sneaking_speed: value.sneaking_speed,
             fall_damage: value.fall_damage.unwrap_or(0.0),
             fall_flying: value.fall_flying.unwrap_or(false),
             look: value
@@ -644,7 +644,7 @@ impl From<SimulationState> for NativeSimulationState {
             no_gravity: Some(value.no_gravity),
             gravity: value.gravity,
             step_height: value.step_height,
-            movement_speed: Some(value.movement_speed),
+            movement_speed: value.movement_speed,
             jump_strength: value.jump_strength,
             speed_effect_amplifier: value.speed_effect_amplifier,
             slowness_effect_amplifier: value.slowness_effect_amplifier,
@@ -660,7 +660,7 @@ impl From<SimulationState> for NativeSimulationState {
             friction_modifier: value
                 .friction_modifier_present
                 .then_some(value.friction_modifier),
-            sneaking_speed: Some(value.sneaking_speed),
+            sneaking_speed: value.sneaking_speed,
             fall_damage: Some(value.fall_damage),
             fall_flying: Some(value.fall_flying),
             look: Some(value.look.into()),
@@ -1725,7 +1725,7 @@ pub fn create_simulation_state(
     state.slow_falling = descriptor.slow_falling.unwrap_or(false);
     state.levitation = descriptor.levitation.unwrap_or(false);
     state.levitation_amplifier = descriptor.levitation_amplifier;
-    state.movement_speed = descriptor.movement_speed.unwrap_or(0.0);
+    state.movement_speed = descriptor.movement_speed;
     state.jump_strength = descriptor.jump_strength;
     state.speed_effect_amplifier = descriptor.speed_effect_amplifier;
     state.slowness_effect_amplifier = descriptor.slowness_effect_amplifier;
@@ -2487,7 +2487,7 @@ fn valid_state(state: SimulationState) -> bool {
         && state.step_height.map_or(true, |value| {
             value.is_finite() && (0.0..=10.0).contains(&value)
         })
-        && state.movement_speed.is_finite()
+        && state.movement_speed.map_or(true, f64::is_finite)
         && state.jump_strength.map_or(true, f64::is_finite)
         && state.flying_speed.is_finite()
         && state.firework_boost.is_finite()

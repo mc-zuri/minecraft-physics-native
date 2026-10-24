@@ -286,7 +286,7 @@ pub struct SimulationState {
     pub no_gravity: bool,
     pub gravity: Option<f64>,
     pub step_height: Option<f64>,
-    pub movement_speed: f64,
+    pub movement_speed: Option<f64>,
     pub jump_strength: Option<f64>,
     pub speed_effect_amplifier: Option<u8>,
     pub slowness_effect_amplifier: Option<u8>,
@@ -300,7 +300,7 @@ pub struct SimulationState {
     pub friction_modifier: f64,
     pub air_drag_modifier_present: bool,
     pub friction_modifier_present: bool,
-    pub sneaking_speed: f64,
+    pub sneaking_speed: Option<f64>,
     pub fall_damage: f64,
     pub fall_flying: bool,
     pub look: Vec3,
@@ -373,7 +373,7 @@ impl From<EntityState> for SimulationState {
             no_gravity: false,
             gravity: None,
             step_height: None,
-            movement_speed: 0.0,
+            movement_speed: None,
             jump_strength: None,
             speed_effect_amplifier: None,
             slowness_effect_amplifier: None,
@@ -387,7 +387,7 @@ impl From<EntityState> for SimulationState {
             friction_modifier: 0.0,
             air_drag_modifier_present: false,
             friction_modifier_present: false,
-            sneaking_speed: 0.0,
+            sneaking_speed: None,
             fall_damage: 0.0,
             fall_flying: false,
             look: Vec3::new(0.0, 0.0, 1.0),
@@ -1241,11 +1241,7 @@ fn scale_input(input: [f32; 2], factor: f32) -> [f32; 2] {
 }
 
 fn sneaking_speed(state: &SimulationState) -> f32 {
-    if state.sneaking_speed > 0.0 {
-        state.sneaking_speed as f32
-    } else {
-        0.3
-    }
+    state.sneaking_speed.map_or(0.3, |speed| speed as f32)
 }
 
 fn mth_sin(radians: f64, release: MinecraftVersion) -> f64 {
@@ -1933,13 +1929,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     } else {
         rules.gravity
     };
-    let base_speed = if state.movement_speed > 0.0 {
-        state.movement_speed
-    } else {
-        config.movement_speed
-    };
     let movement_speed = movement_speed_attribute(
-        base_speed,
+        state.movement_speed.unwrap_or(config.movement_speed),
         state.speed_effect_amplifier,
         state.slowness_effect_amplifier,
         state.sprinting,

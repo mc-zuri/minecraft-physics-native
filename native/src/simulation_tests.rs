@@ -1567,7 +1567,7 @@ mod tests {
         let mut state = SimulationState {
             position: Vec3::new(0.5, 0.0, 0.5),
             depth_strider: 3,
-            movement_speed: 0.1,
+            movement_speed: Some(0.1),
             input: Vec3::new(0.0, 0.0, 1.0),
             on_ground: true,
             ..SimulationState::default()
@@ -1616,7 +1616,7 @@ mod tests {
             position: Vec3::new(0.5, 0.0, 0.5),
             depth_strider: 0,
             water_movement_efficiency: 3.0,
-            movement_speed: 0.1,
+            movement_speed: Some(0.1),
             input: Vec3::new(0.0, 0.0, 1.0),
             on_ground: true,
             ..SimulationState::default()
@@ -3025,7 +3025,7 @@ mod tests {
             input: Vec3::new(1.0, 0.0, 0.0),
             is_player: true,
             moving_slowly: Some(true),
-            sneaking_speed: 0.45,
+            sneaking_speed: Some(0.45),
             on_ground: true,
             no_gravity: true,
             half_width: 0.3,
@@ -3036,6 +3036,49 @@ mod tests {
         tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
 
         assert!((state.position.x - f64::from(0.98_f32 * 0.45_f32) * java_float(0.1)).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn a_zero_sneaking_speed_attribute_stops_a_sneaking_player() {
+        let mut state = SimulationState {
+            position: Vec3::new(0.0, 2.0, 0.0),
+            input: Vec3::new(1.0, 0.0, 0.0),
+            is_player: true,
+            moving_slowly: Some(true),
+            sneaking_speed: Some(0.0),
+            on_ground: true,
+            no_gravity: true,
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+
+        tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
+
+        assert_eq!(state.position.x, 0.0);
+    }
+
+    #[test]
+    fn a_zero_movement_speed_attribute_walks_nowhere() {
+        let walk = |movement_speed| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.0, 2.0, 0.0),
+                input: Vec3::new(1.0, 0.0, 0.0),
+                is_player: true,
+                sprinting: true,
+                movement_speed,
+                on_ground: true,
+                no_gravity: true,
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
+            state.position.x
+        };
+
+        assert_eq!(walk(Some(0.0)), 0.0);
+        assert!(walk(None) > 0.0);
     }
 
     fn ice_edge_beside(lower: BlockShape) -> WorldSnapshot {
@@ -3595,7 +3638,7 @@ mod tests {
                 on_ground: true,
                 is_player: true,
                 input: Vec3::new(0.0, 0.0, 1.0),
-                movement_speed: 0.1,
+                movement_speed: Some(0.1),
                 depth_strider,
                 ..SimulationState::default()
             };
@@ -3621,7 +3664,7 @@ mod tests {
         let mut state = SimulationState {
             position: Vec3::new(0.0, 2.0, 0.0),
             input: Vec3::new(1.0, 0.0, 0.0),
-            movement_speed: 0.2,
+            movement_speed: Some(0.2),
             speed_effect_amplifier: Some(0),
             slowness_effect_amplifier: Some(0),
             on_ground: true,
@@ -3930,7 +3973,7 @@ mod tests {
         let mut state = SimulationState {
             flying: true,
             flying_speed: 0.05,
-            movement_speed: 0.2,
+            movement_speed: Some(0.2),
             input: Vec3::new(1.0, 0.0, 0.0),
             ..SimulationState::default()
         };
@@ -4128,7 +4171,7 @@ mod tests {
             is_player: true,
             flying: true,
             flying_speed: java_float(0.05),
-            movement_speed: 0.1,
+            movement_speed: Some(0.1),
             input: Vec3::new(0.0, 0.0, 1.0),
             position: Vec3::new(0.5, 1.0, 0.5),
             half_width: 0.3,
