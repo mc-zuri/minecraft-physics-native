@@ -2096,7 +2096,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.fall_distance = 0.0;
         state.fall_damage = 0.0;
     }
-    let landing_fall_distance = if landed_on == BlockEffect::Bed {
+    let landed_on_bed = landed_on == BlockEffect::Bed && rules.release.at_least(1, 12, 0);
+    let landing_fall_distance = if landed_on_bed {
         state.fall_distance * 0.5
     } else {
         state.fall_distance
@@ -2155,7 +2156,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             state.velocity.x = 0.0;
         }
         if y_collision && !bounced {
-            if landed_on == BlockEffect::Bed && !state.sneaking {
+            if landed_on_bed && !state.sneaking {
                 if state.velocity.y < 0.0 {
                     state.velocity.y = -state.velocity.y * 0.6600000262260437 * bounce_scale;
                 }

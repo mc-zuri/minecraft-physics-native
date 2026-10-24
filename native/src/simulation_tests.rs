@@ -5212,6 +5212,30 @@ mod tests {
     }
 
     #[test]
+    fn beds_bounce_only_from_1_12() {
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), bed());
+        let falling = SimulationState {
+            position: Vec3::new(0.5, 0.8, 0.5),
+            velocity: Vec3::new(0.0, -0.5, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            is_player: true,
+            no_gravity: true,
+            ..SimulationState::default()
+        };
+        let mut before = falling;
+        let mut after = falling;
+
+        crate::versioned::dispatch("1.11.2", &mut before, &world, PhysicsConfig::default())
+            .unwrap();
+        crate::versioned::dispatch("1.12.2", &mut after, &world, PhysicsConfig::default()).unwrap();
+
+        assert_eq!(before.velocity.y, 0.0);
+        assert!(after.velocity.y > 0.0);
+    }
+
+    #[test]
     fn bed_halves_the_fall_distance_that_hurts() {
         let mut world = WorldSnapshot::new();
         world.set_block((0, 0, 0), bed());
