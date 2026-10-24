@@ -48,6 +48,7 @@ export interface NativeSimulationState {
     sweetBerryBushImmune?: boolean;
     powderSnowImmune?: boolean;
     powderSnowWalkable?: boolean;
+    /** Entity.isInPowderSnow after the tick; given back, it is the tick before's (wasInPowderSnow, 1.21.5+ climbing). */
     inPowderSnow?: boolean;
     ticksFrozen?: number;
     ticksRequiredToFreeze?: number;

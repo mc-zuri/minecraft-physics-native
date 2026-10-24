@@ -1506,8 +1506,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     };
     let in_web = inside_effects.contains(&BlockEffect::Web);
     state.in_web = in_web;
+    let was_in_powder_snow = state.in_powder_snow;
     let in_powder_snow = inside_effects.contains(&BlockEffect::PowderSnow);
-    state.in_powder_snow = in_powder_snow;
     if in_powder_snow && !state.powder_snow_immune {
         state.ticks_frozen = state.ticks_frozen.saturating_add(1);
     } else {
@@ -1970,7 +1970,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     }
     let climbs_powder_snow = state.powder_snow_walkable
         && if rules.release.at_least(1, 21, 5) {
-            in_powder_snow
+            was_in_powder_snow
         } else {
             world.effect_at(block_position(state.position)) == BlockEffect::PowderSnow
         };
@@ -2052,6 +2052,11 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     }
     state.was_sprinting = state.sprinting;
     state.previous_position = Some(old_position);
+    let ends_in_powder_snow = world
+        .effects_in_bounds(state.bounds())
+        .contains(&BlockEffect::PowderSnow);
+    state.in_powder_snow =
+        ends_in_powder_snow || (rules.release.at_least(1, 21, 2) && in_powder_snow);
 
     TickResult {
         displacement,

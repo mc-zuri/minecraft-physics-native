@@ -3641,6 +3641,35 @@ mod tests {
     }
 
     #[test]
+    fn powder_snow_walkers_climb_when_they_were_in_it_the_tick_before() {
+        let world = powder_snow_world();
+        let jumping_inside = SimulationState {
+            position: Vec3::new(0.5, 0.2, 0.5),
+            half_width: 0.3,
+            height: 1.8,
+            is_player: true,
+            jump_requested: true,
+            powder_snow_walkable: true,
+            no_gravity: true,
+            ..SimulationState::default()
+        };
+        let mut was_in = SimulationState {
+            in_powder_snow: true,
+            ..jumping_inside
+        };
+        let mut arrived = jumping_inside;
+
+        crate::versioned::dispatch("1.21.5", &mut was_in, &world, PhysicsConfig::default())
+            .unwrap();
+        crate::versioned::dispatch("1.21.5", &mut arrived, &world, PhysicsConfig::default())
+            .unwrap();
+
+        assert_eq!(was_in.velocity.y, 0.2 * java_float(0.98));
+        assert_eq!(arrived.velocity.y, 0.0);
+        assert!(arrived.in_powder_snow);
+    }
+
+    #[test]
     fn powder_snow_catches_a_long_fall_on_its_lower_shape() {
         let world = powder_snow_world();
         let falling = SimulationState {
