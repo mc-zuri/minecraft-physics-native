@@ -2569,6 +2569,35 @@ mod tests {
         assert_eq!(state.fall_distance, 1.2);
     }
 
+    #[test]
+    fn water_keeps_0_8_of_the_motion_and_sinks_by_0_02_before_1_13() {
+        let world = legacy_water_world(&[
+            ((0, 0, 0), Vec3::ZERO),
+            ((0, 1, 0), Vec3::ZERO),
+            ((0, 2, 0), Vec3::ZERO),
+        ]);
+        let travel = |version, sprinting| {
+            let mut state = SimulationState {
+                sprinting,
+                no_gravity: false,
+                ..legacy_water_player(Vec3::new(0.5, 0.5, 0.5), Vec3::new(0.1, 0.1, 0.0))
+            };
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            assert!(state.in_water, "{version}");
+            state.velocity
+        };
+
+        for sprinting in [false, true] {
+            let legacy = travel("1.12.2", sprinting);
+            assert_eq!(legacy.x, 0.1 * f64::from(0.8_f32));
+            assert_eq!(legacy.y, 0.1 * f64::from(0.8_f32) - 0.02);
+        }
+        let modern = travel("1.13.2", true);
+        assert_eq!(modern.x, 0.1 * f64::from(0.9_f32));
+        assert_eq!(modern.y, 0.1 * f64::from(0.8_f32));
+    }
+
     fn lava_world(position: (i32, i32, i32)) -> WorldSnapshot {
         let mut world = WorldSnapshot::new();
         world.set_block(

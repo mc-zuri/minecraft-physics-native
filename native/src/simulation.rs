@@ -1950,7 +1950,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     };
     let water_slowdown = if state.dolphins_grace > 0 {
         0.96
-    } else if state.sprinting {
+    } else if state.sprinting && !legacy_fluids {
         toward_water_efficiency(rules.water_sprint_drag as f32, 0.54600006)
     } else {
         toward_water_efficiency(rules.water_drag as f32, 0.54600006)
@@ -2328,24 +2328,33 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     };
     state.velocity.x *= liquid_horizontal_drag;
     state.velocity.z *= liquid_horizontal_drag;
-    apply_fluid_travel_vertical(
-        state,
-        fluid,
-        fluid_height,
-        fluid_jump_threshold,
-        rules,
-        travel_gravity,
-        going_down,
-    );
-    if !matches!(fluid, FluidState::Empty)
-        && state.collided_horizontally
-        && world.is_free(state.bounds().translated(Vec3::new(
+    if legacy_fluids && fluid == FluidState::Water {
+        legacy_fluid::sink_in_water(state);
+    } else {
+        apply_fluid_travel_vertical(
+            state,
+            fluid,
+            fluid_height,
+            fluid_jump_threshold,
+            rules,
+            travel_gravity,
+            going_down,
+        );
+    }
+    if !matches!(fluid, FluidState::Empty) && state.collided_horizontally {
+        let hop_bounds = state.bounds().translated(Vec3::new(
             state.velocity.x,
             state.velocity.y + 0.6000000238418579 - state.position.y + old_position.y,
             state.velocity.z,
-        )))
-    {
-        state.velocity.y = 0.30000001192092896;
+        ));
+        let free = if legacy_fluids {
+            legacy_fluid::is_free(world, hop_bounds, rules.release)
+        } else {
+            world.is_free(hop_bounds)
+        };
+        if free {
+            state.velocity.y = 0.30000001192092896;
+        }
     }
     if matches!(fluid, FluidState::Empty) {
         let air_drag = if rules.fluid_travel_split {
