@@ -179,6 +179,12 @@ export interface NativeNearbyEntity {
     tickBoundingBox?: NativeAabb;
 }
 
+export interface NativePistonPushResult {
+    state: NativeSimulationState;
+    /** How far the pistons of the tick have moved the player on each axis (Entity.pistonDeltas). */
+    pistonDeltas: NativeVec3;
+}
+
 export interface NativeEntityPushState {
     position: NativeVec3;
     velocity: NativeVec3;
@@ -409,6 +415,18 @@ export interface NativePhysicsBinding {
         state: NativeSimulationState,
         config: NativeSimulationConfig,
     ): NativeSimulationState;
+    /**
+     * The pushes of the state's movingPistons alone, as simulateVersionedTick applies them after the player's tick: for
+     * a caller that learns of the moving blocks only after the tick. The pistons pushed earlier in the same tick moved
+     * the player by `pistonDeltas`; pass on the ones returned.
+     */
+    simulateVersionedPistonPush(
+        version: string,
+        world: NativeWorld,
+        state: NativeSimulationState,
+        config: NativeSimulationConfig,
+        pistonDeltas?: NativeVec3,
+    ): NativePistonPushResult;
     simulateVersionedTicks(
         version: string,
         world: NativeWorld,

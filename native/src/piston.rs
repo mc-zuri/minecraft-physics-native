@@ -48,25 +48,27 @@ impl MovingPiston {
 }
 
 /// The pushes of the moving piston blocks, in the order the client ticks them: each goes 0.5F
-/// further this tick and moves the player out of its way. A spectator is not pushed.
+/// further this tick and moves the player out of its way. A spectator is not pushed. The pistons
+/// of the tick before these moved the player by `piston_deltas` on each axis (Entity.pistonDeltas),
+/// which are left with these pushes added.
 pub fn push_by_moving_pistons(
     state: &mut SimulationState,
     world: &WorldSnapshot,
     pistons: &[MovingPiston],
+    piston_deltas: &mut [f64; 3],
     config: PhysicsConfig,
     release: MinecraftVersion,
 ) {
     if state.no_physics {
         return;
     }
-    let mut piston_deltas = [0.0; 3];
     for piston in pistons {
         if !release.at_least(1, 9, 0) {
             push_before_1_9(state, world, piston, config, release);
         } else if !release.at_least(1, 11, 0) {
             push_before_1_11(state, world, piston, config, release);
         } else {
-            push(state, world, piston, &mut piston_deltas, config, release);
+            push(state, world, piston, piston_deltas, config, release);
         }
     }
 }
@@ -538,7 +540,14 @@ mod tests {
 
     fn push(state: &mut SimulationState, piston: MovingPiston, release: MinecraftVersion) {
         let world = WorldSnapshot::new();
-        push_by_moving_pistons(state, &world, &[piston], PhysicsConfig::default(), release);
+        push_by_moving_pistons(
+            state,
+            &world,
+            &[piston],
+            &mut [0.0; 3],
+            PhysicsConfig::default(),
+            release,
+        );
     }
 
     #[test]
@@ -579,6 +588,7 @@ mod tests {
             &mut state,
             &world,
             &[extending_head(0.0), further],
+            &mut [0.0; 3],
             PhysicsConfig::default(),
             MinecraftVersion::new(1, 21, 1),
         );

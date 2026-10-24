@@ -313,6 +313,13 @@ impl TryFrom<NativeMovingPiston> for MovingPiston {
 }
 
 #[napi(object)]
+pub struct NativePistonPushResult {
+    pub state: NativeSimulationState,
+    /// How far the pistons of the tick have moved the player on each axis (Entity.pistonDeltas).
+    pub piston_deltas: NativeVec3,
+}
+
+#[napi(object)]
 pub struct NativeNearbyEntity {
     /// "living", "boat", "shulker" or "happy_ghast"; other entities neither push nor collide.
     pub kind: String,
@@ -1543,53 +1550,135 @@ pub fn simulate_versioned_tick(
     let mut simulation_state: SimulationState = state.into();
     let minecraft_version = MinecraftVersion::parse(&version)
         .ok_or_else(|| Error::from_reason(format!("invalid Minecraft version: {version}")))?;
-    simulation_state.minor_horizontal_collision_supported =
-        minecraft_version.supports_minor_horizontal_collision();
     let config = validated_simulation_config(config)?;
-    boost_by_attached_rockets(
-        &mut simulation_state,
-        rockets_before_player,
+    tick_local_player(
+        &version,
         minecraft_version,
-    );
-    push_by_nearby_entities(
+        world,
         &mut simulation_state,
-        world.snapshot(),
         &nearby_entities,
-        true,
-        minecraft_version,
-    );
-    world
-        .inner
-        .set_entity_colliders(nearby_entity_colliders(&nearby_entities, false));
-    let result = versioned::dispatch(&version, &mut simulation_state, world.snapshot(), config);
-    world.inner.set_entity_colliders(Vec::new());
-    result.map_err(Error::from_reason)?;
-    boost_by_attached_rockets(
-        &mut simulation_state,
-        rockets - rockets_before_player,
-        minecraft_version,
-    );
-    push_by_nearby_entities(
-        &mut simulation_state,
-        world.snapshot(),
-        &nearby_entities,
-        false,
-        minecraft_version,
-    );
+        (rockets, rockets_before_player),
+        config,
+    )?;
     if !moving_pistons.is_empty() {
-        world
-            .inner
-            .set_entity_colliders(nearby_entity_colliders(&nearby_entities, true));
-        push_by_moving_pistons(
+        push_local_player_by_pistons(
+            world,
             &mut simulation_state,
-            world.snapshot(),
+            &nearby_entities,
             &moving_pistons,
+            &mut [0.0; 3],
             config,
             minecraft_version,
         );
-        world.inner.set_entity_colliders(Vec::new());
     }
     Ok(simulation_state.into())
+}
+
+/// simulateVersionedTick's tick before the pistons: the rockets and entities the client ticks
+/// before the player, its tick with the colliders among the entities in the world, then the
+/// rockets and entities after it. `rockets` counts all the attached rockets and those before.
+pub(crate) fn tick_local_player(
+    version: &str,
+    release: MinecraftVersion,
+    world: &mut NativeWorld,
+    state: &mut SimulationState,
+    nearby_entities: &[NearbyEntity],
+    (rockets, rockets_before_player): (u32, u32),
+    config: PhysicsConfig,
+) -> Result<()> {
+    state.minor_horizontal_collision_supported = release.supports_minor_horizontal_collision();
+    boost_by_attached_rockets(state, rockets_before_player, release);
+    push_by_nearby_entities(state, world.snapshot(), nearby_entities, true, release);
+    world
+        .inner
+        .set_entity_colliders(nearby_entity_colliders(nearby_entities, false));
+    let result = versioned::dispatch(version, state, world.snapshot(), config);
+    world.inner.set_entity_colliders(Vec::new());
+    result.map_err(Error::from_reason)?;
+    boost_by_attached_rockets(state, rockets - rockets_before_player, release);
+    push_by_nearby_entities(state, world.snapshot(), nearby_entities, false, release);
+    Ok(())
+}
+
+/// The moving pistons' pushes after the player's tick, with the colliders among the entities
+/// where their ticks left them.
+pub(crate) fn push_local_player_by_pistons(
+    world: &mut NativeWorld,
+    state: &mut SimulationState,
+    nearby_entities: &[NearbyEntity],
+    moving_pistons: &[MovingPiston],
+    piston_deltas: &mut [f64; 3],
+    config: PhysicsConfig,
+    release: MinecraftVersion,
+) {
+    world
+        .inner
+        .set_entity_colliders(nearby_entity_colliders(nearby_entities, true));
+    push_by_moving_pistons(
+        state,
+        world.snapshot(),
+        moving_pistons,
+        piston_deltas,
+        config,
+        release,
+    );
+    world.inner.set_entity_colliders(Vec::new());
+}
+
+/// The pushes of the state's movingPistons alone, as simulateVersionedTick applies them after the
+/// player's tick: for a caller that learns of the moving blocks only after the tick. The pistons
+/// pushed earlier in the same tick moved the player by `piston_deltas`.
+#[napi]
+pub fn simulate_versioned_piston_push(
+    version: String,
+    world: &mut NativeWorld,
+    mut state: NativeSimulationState,
+    config: NativeSimulationConfig,
+    piston_deltas: Option<NativeVec3>,
+) -> Result<NativePistonPushResult> {
+    if !versioned::is_supported(&version) {
+        return Err(Error::from_reason(format!(
+            "unsupported decompiled Minecraft version: {version}"
+        )));
+    }
+    let nearby_entities: Vec<NearbyEntity> = state
+        .nearby_entities
+        .take()
+        .unwrap_or_default()
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    let moving_pistons = state
+        .moving_pistons
+        .take()
+        .unwrap_or_default()
+        .into_iter()
+        .map(MovingPiston::try_from)
+        .collect::<Result<Vec<_>>>()?;
+    let mut simulation_state: SimulationState = state.into();
+    let minecraft_version = MinecraftVersion::parse(&version)
+        .ok_or_else(|| Error::from_reason(format!("invalid Minecraft version: {version}")))?;
+    simulation_state.minor_horizontal_collision_supported =
+        minecraft_version.supports_minor_horizontal_collision();
+    let config = validated_simulation_config(config)?;
+    let mut deltas = piston_deltas.map_or([0.0; 3], |delta| [delta.x, delta.y, delta.z]);
+    push_local_player_by_pistons(
+        world,
+        &mut simulation_state,
+        &nearby_entities,
+        &moving_pistons,
+        &mut deltas,
+        config,
+        minecraft_version,
+    );
+    Ok(NativePistonPushResult {
+        state: simulation_state.into(),
+        piston_deltas: NativeVec3 {
+            x: deltas[0],
+            y: deltas[1],
+            z: deltas[2],
+        },
+    })
 }
 
 #[napi]
@@ -2682,7 +2771,8 @@ fn valid_state(state: SimulationState) -> bool {
 mod tests {
     use super::{
         create_simulation_state, refresh_versioned_pose, simulate_versioned_entity_push,
-        simulate_versioned_entity_ticks, simulate_versioned_tick, simulate_versioned_ticks,
+        simulate_versioned_entity_ticks, simulate_versioned_piston_push, simulate_versioned_tick,
+        simulate_versioned_ticks,
         NativeAabb, NativeBlockShape, NativeBlockUpdate, NativeEntityDescriptor,
         NativeEntityPushState, NativeMovingPiston, NativeNearbyEntity, NativeSimulationConfig,
         NativeSimulationState, NativeVec3, NativeVersionedEntityState, NativeWorld,
@@ -2958,6 +3048,48 @@ mod tests {
             simulate_versioned_tick("1.21.1".to_string(), &mut world, state, default_config())
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_piston_push_after_the_tick_pushes_as_the_tick_does() {
+        let mut world = NativeWorld::new();
+        let mut state = pose_state();
+        state.moving_pistons = Some(vec![moving_head(5)]);
+        let in_tick =
+            simulate_versioned_tick("1.21.1".to_string(), &mut world, state, default_config())
+                .expect("1.21.1 is supported");
+
+        let mut ticked = simulate_versioned_tick(
+            "1.21.1".to_string(),
+            &mut world,
+            pose_state(),
+            default_config(),
+        )
+        .expect("1.21.1 is supported");
+        ticked.moving_pistons = Some(vec![moving_head(5)]);
+        let pushed = simulate_versioned_piston_push(
+            "1.21.1".to_string(),
+            &mut world,
+            ticked,
+            default_config(),
+            None,
+        )
+        .expect("1.21.1 is supported");
+        assert_eq!(pushed.state.position.x, in_tick.position.x);
+        assert_eq!(pushed.state.velocity.x, in_tick.velocity.x);
+        assert_eq!(pushed.piston_deltas.x, 0.51);
+
+        let mut again = pushed.state;
+        again.moving_pistons = Some(vec![moving_head(5)]);
+        let limited = simulate_versioned_piston_push(
+            "1.21.1".to_string(),
+            &mut world,
+            again,
+            default_config(),
+            Some(pushed.piston_deltas),
+        )
+        .expect("1.21.1 is supported");
+        assert_eq!(limited.state.position.x, in_tick.position.x);
     }
 
     #[test]
