@@ -488,6 +488,56 @@ export interface NativeHorseState {
     height?: number;
     collidedHorizontally?: boolean;
     collidedVertically?: boolean;
+    /**
+     * The mob a player rides and steers, which the versioned tick moves as vanilla's
+     * LivingEntity.travelRidden (a horse when unnamed): pig, strider, camel, camel_husk,
+     * happy_ghast, nautilus, zombie_nautilus, horse, donkey, mule, skeleton_horse,
+     * zombie_horse, llama, trader_llama. Its rider's xxa and zza after its aiStep of the tick
+     * before are `strafe` and `forward`, its jumping `jumpRequested`.
+     */
+    entityType?: string;
+    /** The mob's float yaw and pitch in degrees (the versioned tick turns them). */
+    yawDegrees?: number;
+    pitchDegrees?: number;
+    /** The rider's look this tick, in degrees, and its sprinting. */
+    riderYaw?: number;
+    riderPitch?: number;
+    riderSprinting?: boolean;
+    /** The riding jump the rider releases after the mob's tick, in percent of its charge. */
+    riderJump?: number;
+    inLava?: boolean;
+    fallDistance?: number;
+    /** The box the mob keeps before 1.17. */
+    boundingBox?: NativeAabb;
+    /** Where the last tick started, for the block that supports the mob (1.20+). */
+    previousPosition?: NativeVec3;
+    /** A happy ghast's FLYING_SPEED. */
+    flyingSpeed?: number;
+    /** Whether the rider steers the mob; one it does not goes on its own input. */
+    saddled?: boolean;
+    noAi?: boolean;
+    /** LivingEntity.speed: the ridden speed of the last tick. */
+    riddenSpeed?: number;
+    /** The mob's own forward input (LivingEntity.zza). */
+    ownForward?: number;
+    /** A pig's or strider's boost (ItemBasedSteering). */
+    boosting?: boolean;
+    boostTime?: number;
+    boostTimeTotal?: number;
+    /** A strider off the warm blocks. */
+    suffocating?: boolean;
+    /** A horse's, camel's or nautilus's pending riding jump, and a horse's jump and rearing. */
+    jumpPendingScale?: number;
+    horseJumping?: boolean;
+    standing?: boolean;
+    allowStandSliding?: boolean;
+    standCounter?: number;
+    /** A camel's or nautilus's dash and its cooldown. */
+    dashCooldown?: number;
+    dashing?: boolean;
+    /** A camel sitting, and the ticks since it last sat down or stood up. */
+    sitting?: boolean;
+    poseTime?: number;
 }
 
 export interface NativeProjectileState {

@@ -661,7 +661,7 @@ fn apply_fluid_travel_vertical(
     }
 }
 
-fn blocks_inside(state: &SimulationState, release: MinecraftVersion) -> Vec<(i32, i32, i32)> {
+pub(crate) fn blocks_inside(state: &SimulationState, release: MinecraftVersion) -> Vec<(i32, i32, i32)> {
     let inset = if !release.at_least(1, 19, 3) {
         0.001
     } else if !release.at_least(1, 21, 2) {
@@ -820,7 +820,7 @@ pub(crate) fn main_supporting_block(
         })
 }
 
-fn apply_block_effects(
+pub(crate) fn apply_block_effects(
     state: &mut SimulationState,
     world: &WorldSnapshot,
     support: Option<BlockPosition>,
@@ -882,7 +882,7 @@ fn apply_block_effects(
 /// The moves Entity.applyEffectsFromBlocks checks from 1.21.2: the tick's move, recorded by
 /// Entity.move from 1.21.5 with the movement whose axis order splits it (the collided one, the
 /// requested one from 1.21.9), and the rest of the way to the position.
-fn movements_this_tick(
+pub(crate) fn movements_this_tick(
     state: &SimulationState,
     old_position: Vec3,
     requested: Vec3,
@@ -967,7 +967,7 @@ fn sliding_down_honey(
             || (f64::from(z) + 0.5 - state.position.z).abs() + 1.0e-7 > reach)
 }
 
-fn climbable(world: &WorldSnapshot, state: &SimulationState) -> bool {
+pub(crate) fn climbable(world: &WorldSnapshot, state: &SimulationState) -> bool {
     !state.no_physics
         && (state.climbing
             || matches!(
@@ -1013,7 +1013,7 @@ pub(crate) fn block_position(position: Vec3) -> (i32, i32, i32) {
     )
 }
 
-fn fluid_falling_adjusted_y(gravity: f64, falling: bool, current_y: f64) -> f64 {
+pub(crate) fn fluid_falling_adjusted_y(gravity: f64, falling: bool, current_y: f64) -> f64 {
     if falling && (current_y - 0.005).abs() >= 0.003 && (current_y - gravity / 16.0).abs() < 0.003 {
         -0.003
     } else {
@@ -1124,7 +1124,7 @@ fn jump_power(
     }
 }
 
-fn friction_influenced_speed(speed: f64, friction: f64, release: MinecraftVersion) -> f64 {
+pub(crate) fn friction_influenced_speed(speed: f64, friction: f64, release: MinecraftVersion) -> f64 {
     if !release.at_least(1, 14, 0) {
         let inertia = friction as f32 * 0.91;
         let acceleration = if release.at_least(1, 13, 0) {
@@ -1286,7 +1286,7 @@ pub(crate) fn mth_cos(radians: f64, release: MinecraftVersion) -> f64 {
     }
 }
 
-fn relative_movement(input: Vec3, speed: f64, yaw: f64, release: MinecraftVersion) -> Vec3 {
+pub(crate) fn relative_movement(input: Vec3, speed: f64, yaw: f64, release: MinecraftVersion) -> Vec3 {
     if !release.at_least(1, 14, 0) {
         return relative_movement_in_float(input, speed as f32, yaw as f32);
     }

@@ -1,4 +1,3 @@
-use crate::collision::resolve_motion;
 use crate::collision::{clip_axis, collide, vanilla_equal, Axis, CollisionRules, StepUp};
 use crate::entity::EntityState;
 use crate::math::{atan2_vanilla, Aabb, Vec3};
@@ -699,6 +698,7 @@ pub(crate) struct MoveRules {
     pub gravity: f64,
     pub air_drag: f64,
     pub bounciness: f64,
+    pub stands_on_lava: bool,
 }
 
 impl MoveRules {
@@ -708,6 +708,7 @@ impl MoveRules {
         gravity: 0.04,
         air_drag: 1.0,
         bounciness: 0.0,
+        stands_on_lava: false,
     };
 }
 
@@ -742,7 +743,7 @@ pub(crate) fn move_vehicle(
     let bounds = body.bounds();
     let modern = release.at_least(1, 14, 0);
     let moved = if modern {
-        let moved = collide_vehicle(body, world, release, bounds, requested, rules.max_step);
+        let moved = collide_vehicle(body, world, release, bounds, requested, rules);
         if moves_position(requested, moved, release) {
             place_body(body, moved);
         }
@@ -835,15 +836,17 @@ fn place_body(body: &mut SimulationState, moved: Vec3) {
     }
 }
 
-/// Entity.collide from 1.14, with the world border's boxes where the entity is near it.
+/// Entity.collide from 1.14, with the world border's boxes where the entity is near it, and the
+/// still lava an entity that stands on it is above (LiquidBlock.getCollisionShape).
 fn collide_vehicle(
     body: &SimulationState,
     world: &WorldSnapshot,
     release: MinecraftVersion,
     bounds: Aabb,
     movement: Vec3,
-    max_step: f32,
+    rules: MoveRules,
 ) -> Vec3 {
+    let max_step = rules.max_step;
     let context = EntityCollisionContext {
         bottom: body.position.y,
         descending: false,
@@ -860,6 +863,9 @@ fn collide_vehicle(
         ),
     );
     let mut obstacles = world.collision_shapes_for_entity(query, &context);
+    if rules.stands_on_lava {
+        obstacles.extend(lava_surfaces(world, query, body.position.y));
+    }
     let border = world.world_border_collision_boxes();
     let collides_with_border = if release.at_least(1, 18, 0) {
         world.is_inside_close_to_world_border(body.position, swept)
@@ -888,6 +894,35 @@ fn collide_vehicle(
         max_step,
         rules,
     )
+}
+
+/// The top half of each still lava block in the cells of `query` under no lava, for an entity whose
+/// feet are above it (LiquidBlock.STABLE_SHAPE, EntityCollisionContext.isAbove).
+pub(crate) fn lava_surfaces(world: &WorldSnapshot, query: Aabb, bottom: f64) -> Vec<Aabb> {
+    let mut surfaces = Vec::new();
+    for x in query.min.x.floor() as i32..query.max.x.ceil() as i32 {
+        for y in query.min.y.floor() as i32..query.max.y.ceil() as i32 {
+            for z in query.min.z.floor() as i32..query.max.z.ceil() as i32 {
+                if is_lava_surface(world, (x, y, z), bottom) {
+                    let min = Vec3::new(f64::from(x), f64::from(y), f64::from(z));
+                    surfaces.push(Aabb::new(min, min + Vec3::new(1.0, 0.5, 1.0)));
+                }
+            }
+        }
+    }
+    surfaces
+}
+
+pub(crate) fn is_lava_surface(
+    world: &WorldSnapshot,
+    (x, y, z): BlockPosition,
+    bottom: f64,
+) -> bool {
+    let block = world.block((x, y, z));
+    block.fluid == FluidState::Lava
+        && block.fluid_source
+        && world.fluid_at((x, y + 1, z)) != FluidState::Lava
+        && bottom > f64::from(y) + 0.5 - 9.999999747378752e-6
 }
 
 /// Entity.move's collision before 1.14: the box moves on y, then x, then z against the boxes the
@@ -1171,47 +1206,11 @@ pub fn tick_horse(state: &mut HorseSimulationState) {
     state.jump_requested = false;
 }
 
-pub fn tick_horse_in_world(state: &mut HorseSimulationState, world: &WorldSnapshot) {
-    let start = state.position;
-    let bounds = Aabb::new(
-        Vec3::new(
-            state.position.x - state.half_width,
-            state.position.y,
-            state.position.z - state.half_width,
-        ),
-        Vec3::new(
-            state.position.x + state.half_width,
-            state.position.y + state.height,
-            state.position.z + state.half_width,
-        ),
-    );
-    state.in_water = world.fluid_height_in_bounds(FluidState::Water, bounds) > 0.0;
-    tick_horse(state);
-    state.on_ground = false;
-    state.position = start;
-    let obstacles = world.collision_shapes(bounds.expand_towards(state.velocity));
-    let (motion, collided) = resolve_motion(bounds, state.velocity, &obstacles);
-    state.position = state.position + motion;
-    state.collided_horizontally = collided[0] || collided[2];
-    state.collided_vertically = collided[1];
-    if collided[0] {
-        state.velocity.x = 0.0;
-    }
-    if collided[1] {
-        let descending = state.velocity.y <= 0.0;
-        state.velocity.y = 0.0;
-        state.on_ground = descending;
-    }
-    if collided[2] {
-        state.velocity.z = 0.0;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         passenger_position, tick_boat, tick_boat_in_world, tick_boat_with_passenger, tick_horse,
-        tick_horse_in_world, BoatSimulationState, BoatStatus, HorseSimulationState,
+        BoatSimulationState, BoatStatus, HorseSimulationState,
     };
     use crate::entity::{Dimensions, EntityFlags, EntityState};
     use crate::math::{Aabb, Vec3};
@@ -1604,99 +1603,5 @@ mod tests {
             vehicle.position.add_components(0.0, 1.0, 0.0)
         );
         assert!(passenger.position.z < 0.0);
-    }
-
-    #[test]
-    fn world_aware_horse_reports_ground_contact() {
-        let mut world = WorldSnapshot::new();
-        world.set_block((0, -1, 0), solid(0.6));
-        let mut horse = HorseSimulationState {
-            position: Vec3::new(0.5, 0.0, 0.5),
-            velocity: Vec3::new(0.0, -0.5, 0.0),
-            half_width: 0.7,
-            height: 1.6,
-            ..HorseSimulationState::default()
-        };
-        let query = Aabb::new(Vec3::new(-0.7, -0.08, -0.2), Vec3::new(3.7, 1.6, 1.2));
-        assert_eq!(world.collision_shapes(query).len(), 1);
-
-        tick_horse_in_world(&mut horse, &world);
-
-        assert!(horse.collided_vertically);
-        assert!(horse.on_ground);
-        assert_eq!(horse.velocity.y, 0.0);
-    }
-
-    #[test]
-    fn world_aware_horse_ceiling_collision_is_not_ground_contact() {
-        let mut world = WorldSnapshot::new();
-        world.set_block((0, 2, 0), solid(0.6));
-        let mut horse = HorseSimulationState {
-            position: Vec3::new(0.5, 0.0, 0.5),
-            velocity: Vec3::new(0.0, 0.5, 0.0),
-            half_width: 0.7,
-            height: 1.6,
-            ..HorseSimulationState::default()
-        };
-        tick_horse_in_world(&mut horse, &world);
-
-        assert!(horse.collided_vertically);
-        assert!(!horse.on_ground);
-        assert_eq!(horse.velocity.y, 0.0);
-    }
-
-    #[test]
-    fn world_aware_horse_sweeps_fast_motion_for_collisions() {
-        let mut world = WorldSnapshot::new();
-        world.set_block((1, 0, 0), solid(0.6));
-        let mut horse = HorseSimulationState {
-            position: Vec3::new(0.0, 0.0, 0.5),
-            velocity: Vec3::new(3.0, 0.0, 0.0),
-            half_width: 0.7,
-            height: 1.6,
-            ..HorseSimulationState::default()
-        };
-
-        tick_horse_in_world(&mut horse, &world);
-
-        assert!(horse.collided_horizontally);
-        assert!(
-            horse.position.x < 1.0,
-            "horse tunneled through swept collision: x={}",
-            horse.position.x
-        );
-    }
-
-    #[test]
-    fn world_aware_horse_clears_ground_contact_without_support() {
-        let world = WorldSnapshot::new();
-        let mut horse = HorseSimulationState {
-            position: Vec3::new(0.5, 2.0, 0.5),
-            on_ground: true,
-            half_width: 0.7,
-            height: 1.6,
-            ..HorseSimulationState::default()
-        };
-
-        tick_horse_in_world(&mut horse, &world);
-
-        assert!(!horse.on_ground);
-    }
-
-    #[test]
-    fn world_aware_horse_derives_water_status_from_snapshot() {
-        let mut world = WorldSnapshot::new();
-        world.set_block((0, 0, 0), water_source());
-        let mut horse = HorseSimulationState {
-            position: Vec3::new(0.5, 0.0, 0.5),
-            in_water: false,
-            half_width: 0.7,
-            height: 1.6,
-            ..HorseSimulationState::default()
-        };
-
-        tick_horse_in_world(&mut horse, &world);
-
-        assert!(horse.in_water);
     }
 }

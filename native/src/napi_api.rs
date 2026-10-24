@@ -8,10 +8,11 @@ use crate::projectile::{
     tick_arrow, tick_projectile, tick_projectile_with_bubble_column, tick_trident, ArrowState,
     ProjectileKind, ProjectileState, TridentState,
 };
+use crate::ridden::{tick_ridden_mob, RiddenMobKind, RiddenMobState, RiderInput};
 use crate::simulation::{PhysicsConfig, SimulationState};
 use crate::vehicle::{
-    tick_boat, tick_boat_in_world, tick_horse, tick_horse_in_world, BoatSimulationState,
-    BoatStatus, HorseSimulationState, LegacyBoatState,
+    tick_boat, tick_boat_in_world, tick_horse, BoatSimulationState, BoatStatus,
+    HorseSimulationState, LegacyBoatState,
 };
 use crate::version::MinecraftVersion;
 use crate::versioned;
@@ -424,6 +425,35 @@ pub struct NativeHorseState {
     pub height: Option<f64>,
     pub collided_horizontally: Option<bool>,
     pub collided_vertically: Option<bool>,
+    pub entity_type: Option<String>,
+    pub yaw_degrees: Option<f64>,
+    pub pitch_degrees: Option<f64>,
+    pub rider_yaw: Option<f64>,
+    pub rider_pitch: Option<f64>,
+    pub rider_sprinting: Option<bool>,
+    pub rider_jump: Option<i32>,
+    pub in_lava: Option<bool>,
+    pub fall_distance: Option<f64>,
+    pub bounding_box: Option<NativeAabb>,
+    pub previous_position: Option<NativeVec3>,
+    pub flying_speed: Option<f64>,
+    pub saddled: Option<bool>,
+    pub no_ai: Option<bool>,
+    pub ridden_speed: Option<f64>,
+    pub own_forward: Option<f64>,
+    pub boosting: Option<bool>,
+    pub boost_time: Option<i32>,
+    pub boost_time_total: Option<i32>,
+    pub suffocating: Option<bool>,
+    pub jump_pending_scale: Option<f64>,
+    pub horse_jumping: Option<bool>,
+    pub standing: Option<bool>,
+    pub allow_stand_sliding: Option<bool>,
+    pub stand_counter: Option<i32>,
+    pub dash_cooldown: Option<i32>,
+    pub dashing: Option<bool>,
+    pub sitting: Option<bool>,
+    pub pose_time: Option<i64>,
 }
 
 #[napi(object)]
@@ -2199,20 +2229,17 @@ pub fn simulate_horse_tick(state: NativeHorseState) -> Result<NativeHorseState> 
     Ok(native_horse_state(state))
 }
 
+/// The tick of a mob a player rides and steers (`entityType`: a horse when unnamed).
 #[napi]
 pub fn simulate_versioned_horse_tick(
     version: String,
     world: &NativeWorld,
     state: NativeHorseState,
 ) -> Result<NativeHorseState> {
-    if !versioned::is_supported(&version) {
-        return Err(Error::from_reason(format!(
-            "unsupported Minecraft version for horse simulation: {version}"
-        )));
-    }
-    let mut state = horse_state(state)?;
-    tick_horse_in_world(&mut state, world.snapshot());
-    Ok(native_horse_state(state))
+    let release = vehicle_release(&version, "ridden mob")?;
+    let mut mob = ridden_mob_state(state)?;
+    tick_ridden_mob(&mut mob, world.snapshot(), release);
+    Ok(native_ridden_mob_state(mob))
 }
 
 #[napi]
@@ -2222,22 +2249,18 @@ pub fn simulate_versioned_horse_ticks(
     states: Vec<NativeHorseState>,
     ticks: u32,
 ) -> Result<Vec<NativeHorseState>> {
-    if !versioned::is_supported(&version) {
-        return Err(Error::from_reason(format!(
-            "unsupported Minecraft version for horse simulation: {version}"
-        )));
-    }
+    let release = vehicle_release(&version, "ridden mob")?;
     let snapshot = world.snapshot();
-    let mut states: Vec<HorseSimulationState> = states
+    let mut states: Vec<RiddenMobState> = states
         .into_iter()
-        .map(horse_state)
+        .map(ridden_mob_state)
         .collect::<Result<Vec<_>>>()?;
     for _ in 0..ticks {
         for state in &mut states {
-            tick_horse_in_world(state, snapshot);
+            tick_ridden_mob(state, snapshot, release);
         }
     }
-    Ok(states.into_iter().map(native_horse_state).collect())
+    Ok(states.into_iter().map(native_ridden_mob_state).collect())
 }
 
 #[napi]
@@ -3229,6 +3252,166 @@ fn native_horse_state(state: HorseSimulationState) -> NativeHorseState {
         height: Some(state.height),
         collided_horizontally: Some(state.collided_horizontally),
         collided_vertically: Some(state.collided_vertically),
+        entity_type: None,
+        yaw_degrees: None,
+        pitch_degrees: None,
+        rider_yaw: None,
+        rider_pitch: None,
+        rider_sprinting: None,
+        rider_jump: None,
+        in_lava: None,
+        fall_distance: None,
+        bounding_box: None,
+        previous_position: None,
+        flying_speed: None,
+        saddled: None,
+        no_ai: None,
+        ridden_speed: None,
+        own_forward: None,
+        boosting: None,
+        boost_time: None,
+        boost_time_total: None,
+        suffocating: None,
+        jump_pending_scale: None,
+        horse_jumping: None,
+        standing: None,
+        allow_stand_sliding: None,
+        stand_counter: None,
+        dash_cooldown: None,
+        dashing: None,
+        sitting: None,
+        pose_time: None,
+    }
+}
+
+/// A ridden mob from the horse state: the rider's xxa and zza are `strafe` and `forward`, its
+/// jumping `jumpRequested`; an attribute given as 0 takes the mob's base.
+fn ridden_mob_state(value: NativeHorseState) -> Result<RiddenMobState> {
+    let name = value.entity_type.as_deref().unwrap_or("horse");
+    let kind = RiddenMobKind::parse(name)
+        .ok_or_else(|| Error::from_reason(format!("no ridden mob simulation for {name}")))?;
+    let defaults = RiddenMobState::new(kind, value.position.into());
+    let positive = |value: f64, default: f64| if value > 0.0 { value } else { default };
+    let mob = RiddenMobState {
+        velocity: value.velocity.into(),
+        yaw: value.yaw_degrees.unwrap_or_else(|| value.yaw.to_degrees()) as f32,
+        pitch: value.pitch_degrees.unwrap_or(0.0) as f32,
+        on_ground: value.on_ground,
+        collided_horizontally: value.collided_horizontally.unwrap_or(false),
+        collided_vertically: value.collided_vertically.unwrap_or(false),
+        in_water: value.in_water,
+        in_lava: value.in_lava.unwrap_or(false),
+        fall_distance: value.fall_distance.unwrap_or(0.0),
+        bounding_box: value.bounding_box.map(Into::into),
+        previous_position: value.previous_position.map(Into::into),
+        movement_speed: positive(value.movement_speed, defaults.movement_speed),
+        jump_strength: positive(value.jump_strength, defaults.jump_strength),
+        flying_speed: value.flying_speed.unwrap_or(defaults.flying_speed),
+        saddled: value.saddled.unwrap_or(true),
+        no_ai: value.no_ai.unwrap_or(false),
+        ridden_speed: value.ridden_speed.unwrap_or(0.0) as f32,
+        own_forward: value.own_forward.unwrap_or(0.0) as f32,
+        boosting: value.boosting.unwrap_or(false),
+        boost_time: value.boost_time.unwrap_or(0),
+        boost_time_total: value.boost_time_total.unwrap_or(0),
+        suffocating: value.suffocating.unwrap_or(false),
+        jump_pending_scale: value.jump_pending_scale.unwrap_or(0.0) as f32,
+        horse_jumping: value.horse_jumping.unwrap_or(false),
+        standing: value.standing.unwrap_or(false),
+        allow_stand_sliding: value.allow_stand_sliding.unwrap_or(false),
+        stand_counter: value.stand_counter.unwrap_or(0),
+        dash_cooldown: value.dash_cooldown.unwrap_or(0),
+        dashing: value.dashing.unwrap_or(false),
+        sitting: value.sitting.unwrap_or(false),
+        pose_time: value.pose_time.unwrap_or(defaults.pose_time),
+        rider: RiderInput {
+            yaw: value.rider_yaw.unwrap_or(0.0) as f32,
+            pitch: value.rider_pitch.unwrap_or(0.0) as f32,
+            strafe: value.strafe as f32,
+            forward: value.forward as f32,
+            sprinting: value.rider_sprinting.unwrap_or(false),
+            jumping: value.jump_requested,
+            released_jump: value.rider_jump,
+        },
+        ..defaults
+    };
+    let finite = mob.position.is_finite()
+        && mob.velocity.is_finite()
+        && mob.yaw.is_finite()
+        && mob.movement_speed.is_finite()
+        && mob.jump_strength.is_finite();
+    if !finite {
+        return Err(Error::from_reason(
+            "ridden mob simulation state contains invalid values",
+        ));
+    }
+    Ok(mob)
+}
+
+fn ridden_mob_name(kind: RiddenMobKind) -> &'static str {
+    match kind {
+        RiddenMobKind::Pig => "pig",
+        RiddenMobKind::Strider => "strider",
+        RiddenMobKind::Camel => "camel",
+        RiddenMobKind::HappyGhast => "happy_ghast",
+        RiddenMobKind::Nautilus => "nautilus",
+        RiddenMobKind::ZombieNautilus => "zombie_nautilus",
+        RiddenMobKind::Horse => "horse",
+        RiddenMobKind::Donkey => "donkey",
+        RiddenMobKind::Mule => "mule",
+        RiddenMobKind::SkeletonHorse => "skeleton_horse",
+        RiddenMobKind::ZombieHorse => "zombie_horse",
+        RiddenMobKind::Llama => "llama",
+        RiddenMobKind::TraderLlama => "trader_llama",
+    }
+}
+
+fn native_ridden_mob_state(mob: RiddenMobState) -> NativeHorseState {
+    let (width, height) = mob.kind.dimensions();
+    NativeHorseState {
+        position: mob.position.into(),
+        velocity: mob.velocity.into(),
+        yaw: f64::from(mob.yaw).to_radians(),
+        forward: f64::from(mob.rider.forward),
+        strafe: f64::from(mob.rider.strafe),
+        jump_requested: mob.rider.jumping,
+        on_ground: mob.on_ground,
+        in_water: mob.in_water,
+        movement_speed: mob.movement_speed,
+        jump_strength: mob.jump_strength,
+        half_width: Some(f64::from(width / 2.0)),
+        height: Some(f64::from(height)),
+        collided_horizontally: Some(mob.collided_horizontally),
+        collided_vertically: Some(mob.collided_vertically),
+        entity_type: Some(ridden_mob_name(mob.kind).to_string()),
+        yaw_degrees: Some(f64::from(mob.yaw)),
+        pitch_degrees: Some(f64::from(mob.pitch)),
+        rider_yaw: Some(f64::from(mob.rider.yaw)),
+        rider_pitch: Some(f64::from(mob.rider.pitch)),
+        rider_sprinting: Some(mob.rider.sprinting),
+        rider_jump: None,
+        in_lava: Some(mob.in_lava),
+        fall_distance: Some(mob.fall_distance),
+        bounding_box: mob.bounding_box.map(Into::into),
+        previous_position: mob.previous_position.map(Into::into),
+        flying_speed: Some(mob.flying_speed),
+        saddled: Some(mob.saddled),
+        no_ai: Some(mob.no_ai),
+        ridden_speed: Some(f64::from(mob.ridden_speed)),
+        own_forward: Some(f64::from(mob.own_forward)),
+        boosting: Some(mob.boosting),
+        boost_time: Some(mob.boost_time),
+        boost_time_total: Some(mob.boost_time_total),
+        suffocating: Some(mob.suffocating),
+        jump_pending_scale: Some(f64::from(mob.jump_pending_scale)),
+        horse_jumping: Some(mob.horse_jumping),
+        standing: Some(mob.standing),
+        allow_stand_sliding: Some(mob.allow_stand_sliding),
+        stand_counter: Some(mob.stand_counter),
+        dash_cooldown: Some(mob.dash_cooldown),
+        dashing: Some(mob.dashing),
+        sitting: Some(mob.sitting),
+        pose_time: Some(mob.pose_time),
     }
 }
 

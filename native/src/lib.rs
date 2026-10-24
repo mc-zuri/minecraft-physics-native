@@ -9,6 +9,7 @@ pub mod math;
 mod napi_api;
 pub mod player;
 pub mod projectile;
+pub mod ridden;
 pub mod simulation;
 mod simulation_tests;
 pub mod vehicle;
