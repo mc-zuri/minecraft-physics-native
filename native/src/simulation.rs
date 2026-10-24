@@ -1,5 +1,5 @@
 use crate::block_traversal::{blocks_visited, Movement};
-use crate::collision::{collide, vanilla_equal, StepUp};
+use crate::collision::{collide, vanilla_equal, CollisionRules, StepUp};
 use crate::entity::{Dimensions, EntityFlags, EntityState};
 use crate::math::{java_cos, java_cos_legacy, java_float, java_sin, java_sin_legacy, Aabb, Vec3};
 use crate::version::MinecraftVersion;
@@ -1988,12 +1988,15 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         if collides_with_border {
             obstacles.extend(border);
         }
-        let step_up = if rules.release.at_least(1, 21, 0) {
-            StepUp::CandidateHeights
-        } else {
-            StepUp::Lifted
+        let collision = CollisionRules {
+            step_up: if rules.release.at_least(1, 21, 0) {
+                StepUp::CandidateHeights
+            } else {
+                StepUp::Lifted
+            },
+            border_always_collides: collides_with_border && !rules.release.at_least(1, 18, 0),
         };
-        collide(bounds, desired, &obstacles, state.on_ground, max_step, step_up)
+        collide(bounds, desired, &obstacles, state.on_ground, max_step, collision)
     };
 
     if state.no_physics || moves_position(desired, displacement, rules.release) {
