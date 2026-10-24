@@ -3550,6 +3550,28 @@ mod tests {
     }
 
     #[test]
+    fn players_stop_by_their_horizontal_speed_from_1_21_5() {
+        let coasting = |is_player: bool, release: MinecraftVersion| {
+            let mut state = SimulationState {
+                velocity: Vec3::new(0.0025, 0.0, 0.0025),
+                is_player,
+                no_gravity: true,
+                ..SimulationState::default()
+            };
+            let rules = VersionPhysicsRules {
+                release,
+                ..VersionPhysicsRules::default()
+            };
+            tick_with_rules(&mut state, &WorldSnapshot::new(), PhysicsConfig::default(), rules);
+            state.velocity.x
+        };
+
+        assert!(coasting(true, MinecraftVersion::new(1, 21, 5)) > 0.0);
+        assert_eq!(coasting(true, MinecraftVersion::new(1, 21, 4)), 0.0);
+        assert_eq!(coasting(false, MinecraftVersion::new(1, 21, 5)), 0.0);
+    }
+
+    #[test]
     fn entity_gravity_and_step_height_override_version_rules() {
         let mut state = SimulationState {
             position: Vec3::new(0.5, 2.0, 0.5),

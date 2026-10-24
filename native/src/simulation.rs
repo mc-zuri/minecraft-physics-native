@@ -1243,14 +1243,23 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     } else {
         world.has_fluid_block_inside(FluidState::Lava, bounds)
     };
-    if state.velocity.x.abs() < config.negligible_velocity {
-        state.velocity.x = 0.0;
+    if state.is_player && rules.release.at_least(1, 21, 5) {
+        let horizontal_squared =
+            state.velocity.x * state.velocity.x + state.velocity.z * state.velocity.z;
+        if horizontal_squared < config.negligible_velocity * config.negligible_velocity {
+            state.velocity.x = 0.0;
+            state.velocity.z = 0.0;
+        }
+    } else {
+        if state.velocity.x.abs() < config.negligible_velocity {
+            state.velocity.x = 0.0;
+        }
+        if state.velocity.z.abs() < config.negligible_velocity {
+            state.velocity.z = 0.0;
+        }
     }
     if state.velocity.y.abs() < config.negligible_velocity {
         state.velocity.y = 0.0;
-    }
-    if state.velocity.z.abs() < config.negligible_velocity {
-        state.velocity.z = 0.0;
     }
     let fluid = if !affected_by_fluids {
         FluidState::Empty
