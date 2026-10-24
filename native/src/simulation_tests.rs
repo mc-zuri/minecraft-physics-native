@@ -3426,7 +3426,7 @@ mod tests {
 
         tick(&mut state, &world, PhysicsConfig::default());
 
-        assert!(!state.on_ground);
+        assert!(state.on_ground);
         assert!(state.velocity.y > 0.0);
         assert_eq!(state.fall_distance, 0.0);
         assert_eq!(state.fall_damage, 0.0);
@@ -3446,21 +3446,31 @@ mod tests {
                 ..BlockState::default()
             },
         );
-        let mut state = SimulationState {
-            position: Vec3::new(1.3, 0.5, 0.5),
-            velocity: Vec3::new(0.2, -0.2, 0.0),
-            half_width: 0.3,
-            height: 1.8,
-            on_ground: false,
-            no_gravity: true,
-            ..SimulationState::default()
+        let slide = |release: MinecraftVersion| {
+            let mut state = SimulationState {
+                position: Vec3::new(1.65, 0.5, 0.5),
+                velocity: Vec3::new(0.08, -0.2, 0.0),
+                half_width: 0.3,
+                height: 1.8,
+                fall_distance: 3.0,
+                no_gravity: true,
+                ..SimulationState::default()
+            };
+            let rules = VersionPhysicsRules {
+                release,
+                ..VersionPhysicsRules::default()
+            };
+            tick_with_rules(&mut state, &world, PhysicsConfig::default(), rules);
+            state
         };
 
-        tick(&mut state, &world, PhysicsConfig::default());
-
-        assert!(state.velocity.y < 0.0);
-        assert!(state.velocity.y > -0.2);
-        assert_eq!(state.fall_distance, 0.0);
+        let before_1_21_2 = slide(MinecraftVersion::new(1, 21, 1));
+        assert_eq!(before_1_21_2.velocity.y, -0.05 * java_float(0.98));
+        assert_eq!(before_1_21_2.fall_distance, 0.0);
+        assert_eq!(
+            slide(MinecraftVersion::new(1, 21, 2)).velocity.y,
+            (-0.05 - 0.08) * java_float(0.98)
+        );
     }
 
     #[test]

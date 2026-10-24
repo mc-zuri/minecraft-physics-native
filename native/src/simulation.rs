@@ -736,7 +736,23 @@ fn block_below_affecting_movement(
     if !release.at_least(1, 20, 0) {
         return below(0.5000001);
     }
-    let offset = f64::from(0.500001_f32);
+    on_position(world, state, 0.500001)
+}
+
+fn landing_position(
+    world: &WorldSnapshot,
+    state: &SimulationState,
+    release: MinecraftVersion,
+) -> (i32, i32, i32) {
+    if release.at_least(1, 20, 0) {
+        on_position(world, state, 0.2)
+    } else {
+        block_position(state.position - Vec3::new(0.0, f64::from(0.2_f32), 0.0))
+    }
+}
+
+fn on_position(world: &WorldSnapshot, state: &SimulationState, offset: f32) -> (i32, i32, i32) {
+    let below = block_position(state.position - Vec3::new(0.0, f64::from(offset), 0.0));
     let bounds = state.bounds();
     let support_area = Aabb::new(
         Vec3::new(bounds.min.x, bounds.min.y - 1.0e-6, bounds.min.z),
@@ -747,9 +763,77 @@ fn block_below_affecting_movement(
         .then(|| world.supporting_block_position(support_area, state.position))
         .flatten()
     {
-        Some((x, _, z)) => (x, below(offset).1, z),
-        None => below(offset),
+        Some((x, _, z)) => (x, below.1, z),
+        None => below,
     }
+}
+
+fn apply_block_effects(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    release: MinecraftVersion,
+) {
+    let stepping_carefully = state.stepping_carefully || state.sneaking;
+    if state.on_ground {
+        match world.effect_at(landing_position(world, state, release)) {
+            BlockEffect::Slime if !stepping_carefully && state.velocity.y.abs() < 0.1 => {
+                let step_factor = 0.4 + state.velocity.y.abs() * 0.2;
+                state.velocity.x *= step_factor;
+                state.velocity.z *= step_factor;
+            }
+            BlockEffect::Magma if !stepping_carefully && !state.fall_flying => {
+                state.contact_damage += 1.0;
+            }
+            _ => {}
+        }
+    }
+    if !(state.is_player && state.flying) {
+        if let Some(multiplier) = stuck_speed_multiplier_inside(state, world, release) {
+            state.stuck_speed_multiplier = multiplier;
+            state.fall_distance = 0.0;
+        }
+    }
+    for position in blocks_inside(state, release) {
+        match world.effect_at(position) {
+            BlockEffect::SoulSand if !release.at_least(1, 15, 0) => {
+                state.velocity.x *= 0.4;
+                state.velocity.z *= 0.4;
+            }
+            BlockEffect::Honey if sliding_down_honey(state, position, release) => {
+                let falling = honey_slide_falling(state.velocity.y, release);
+                let scale = if falling < -0.13 { -0.05 / falling } else { 1.0 };
+                let slide = if release.at_least(1, 21, 2) {
+                    (-0.05 - 0.08) * java_float(0.98)
+                } else {
+                    -0.05
+                };
+                state.velocity = Vec3::new(state.velocity.x * scale, slide, state.velocity.z * scale);
+                state.fall_distance = 0.0;
+            }
+            _ => {}
+        }
+    }
+}
+
+fn honey_slide_falling(velocity_y: f64, release: MinecraftVersion) -> f64 {
+    if release.at_least(1, 21, 2) {
+        velocity_y / java_float(0.98) + 0.08
+    } else {
+        velocity_y
+    }
+}
+
+fn sliding_down_honey(
+    state: &SimulationState,
+    (x, y, z): (i32, i32, i32),
+    release: MinecraftVersion,
+) -> bool {
+    let reach = 0.4375 + state.half_width;
+    !state.on_ground
+        && state.position.y <= f64::from(y) + 0.9375 - 1.0e-7
+        && honey_slide_falling(state.velocity.y, release) < -0.08
+        && ((f64::from(x) + 0.5 - state.position.x).abs() + 1.0e-7 > reach
+            || (f64::from(z) + 0.5 - state.position.z).abs() + 1.0e-7 > reach)
 }
 
 fn climbable(world: &WorldSnapshot, state: &SimulationState) -> bool {
@@ -1110,11 +1194,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.fall_distance = 0.0;
     }
     state.jump_ticks = state.jump_ticks.saturating_sub(1);
-    let feet_position = (
-        state.position.x.floor() as i32,
-        (state.position.y - 0.01).floor() as i32,
-        state.position.z.floor() as i32,
-    );
     let body_position = (
         state.position.x.floor() as i32,
         state.position.y.floor() as i32,
@@ -1229,19 +1308,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.ticks_frozen = 0;
         state.contact_damage += 2.0;
     }
-    let ignores_stuck_block = state.is_player && state.flying;
-    let honey_block = (-1..=1)
-        .flat_map(|x| {
-            (-1..=1).map(move |z| (feet_position.0 + x, feet_position.1, feet_position.2 + z))
-        })
-        .find(|&(x, y, z)| world.effect_at((x, y, z)) == BlockEffect::Honey);
-    let honey_sliding = honey_block.is_some_and(|(x, y, z)| {
-        !state.on_ground
-            && state.position.y <= y as f64 + 0.9375 - 1.0e-7
-            && state.velocity.y / 0.98 + 0.08 < -0.08
-            && ((x as f64 + 0.5 - state.position.x).abs() + 1.0e-7 > 0.4375 + state.half_width
-                || (z as f64 + 0.5 - state.position.z).abs() + 1.0e-7 > 0.4375 + state.half_width)
-    });
     let climbing = climbable(world, state);
     let on_scaffolding = body_effect == BlockEffect::Scaffolding;
     let eye_y = state.position.y + state.height - 0.1;
@@ -1567,23 +1633,17 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             }
         }
     }
-    let support_effect = world.supporting_block_effect(state.bounds());
-    if support_effect == BlockEffect::Magma && !state.stepping_carefully && !state.fall_flying {
-        state.contact_damage += 1.0;
-    }
-    let slime_bounce = collisions[1]
-        && support_effect == BlockEffect::Slime
-        && desired.y <= 0.0
-        && !state.sneaking;
-    if slime_bounce {
-        let bounce_scale = if state.is_player { 1.0 } else { 0.8 };
-        state.velocity.y = -desired.y * bounce_scale;
-        state.on_ground = false;
+    let landed_on = world.effect_at(landing_position(world, state, rules.release));
+    let bounced = collisions[1] && landed_on == BlockEffect::Slime && !state.sneaking;
+    if bounced {
+        if state.velocity.y < 0.0 {
+            let bounce_scale = if state.is_player { 1.0 } else { 0.8 };
+            state.velocity.y = -state.velocity.y * bounce_scale;
+        }
         state.fall_distance = 0.0;
         state.fall_damage = 0.0;
     }
-    let bounced = slime_bounce;
-    if checks_fall_damage && state.on_ground {
+    if checks_fall_damage && state.on_ground && !bounced {
         if state.on_ground {
             state.fall_damage = if state.fall_damage_immune {
                 0.0
@@ -1613,20 +1673,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         }
     } else if checks_fall_damage && !bounced && !reset_fall_distance && displacement.y < 0.0 {
         state.fall_distance += -displacement.y;
-    }
-    if !ignores_stuck_block {
-        if let Some(multiplier) = stuck_speed_multiplier_inside(state, world, rules.release) {
-            state.stuck_speed_multiplier = multiplier;
-            state.fall_distance = 0.0;
-        }
-    }
-    if !rules.release.at_least(1, 15, 0) {
-        for position in blocks_inside(state, rules.release) {
-            if world.effect_at(position) == BlockEffect::SoulSand {
-                state.velocity.x *= 0.4;
-                state.velocity.z *= 0.4;
-            }
-        }
     }
 
     if restitution_enabled {
@@ -1681,25 +1727,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             state.velocity.z = 0.0;
         }
     }
-    if support_effect == BlockEffect::Slime
-        && state.on_ground
-        && state.velocity.y.abs() < 0.1
-        && !state.stepping_carefully
-    {
-        let step_factor = 0.4 + state.velocity.y.abs() * 0.2;
-        state.velocity.x *= step_factor;
-        state.velocity.z *= step_factor;
-    }
-    if honey_sliding {
-        let scale = if state.velocity.y < -0.13 {
-            -0.05 / state.velocity.y
-        } else {
-            1.0
-        };
-        state.velocity.x *= scale;
-        state.velocity.y = -0.05;
-        state.velocity.z *= scale;
-        state.fall_distance = 0.0;
+    if !rules.release.at_least(1, 21, 2) {
+        apply_block_effects(state, world, rules.release);
     }
     if rules.release.at_least(1, 15, 0) {
         let speed_factor = f64::from(block_speed_factor(world, state, rules.release));
@@ -1780,6 +1809,9 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         };
     }
 
+    if rules.release.at_least(1, 21, 2) {
+        apply_block_effects(state, world, rules.release);
+    }
     if state.flying {
         state.fall_distance = 0.0;
     }
