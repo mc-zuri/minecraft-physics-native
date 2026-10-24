@@ -1556,7 +1556,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
                     * vertical_restitution;
                 state.on_ground = false;
             } else {
-                state.velocity.y = 0.0;
+                // restituteMovementAfterCollisions with no restitution: (0 - y) * 0, +0.0 after a fall.
+                state.velocity.y = -current_movement.y * 0.0;
             }
         }
     } else {
@@ -1564,7 +1565,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             state.velocity.x = 0.0;
         }
         if collisions[1] && !bounced {
-            state.velocity.y = 0.0;
+            // Block.updateEntityAfterFallOn multiplies by zero: a landing leaves -0.0.
+            state.velocity.y *= 0.0;
         }
         if collisions[2] {
             state.velocity.z = 0.0;

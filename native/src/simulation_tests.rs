@@ -80,6 +80,40 @@ mod tests {
     }
 
     #[test]
+    fn landing_leaves_a_negative_zero_vertical_velocity() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 1.2, 0.5),
+            velocity: Vec3::new(0.0, -0.5, 0.0),
+            no_gravity: true,
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+
+        let mut restituted = state;
+
+        tick(&mut state, &world, PhysicsConfig::default());
+        crate::versioned::dispatch("26.2", &mut restituted, &world, PhysicsConfig::default())
+            .expect("26.2 is supported");
+
+        assert!(state.on_ground);
+        assert_eq!(state.velocity.y, 0.0);
+        assert!(state.velocity.y.is_sign_negative());
+        assert!(restituted.on_ground);
+        assert_eq!(restituted.velocity.y, 0.0);
+        assert!(restituted.velocity.y.is_sign_positive());
+    }
+
+    #[test]
     fn slow_falling_keeps_full_gravity_while_rising() {
         let mut state = SimulationState {
             position: Vec3::new(0.0, 2.0, 0.0),
