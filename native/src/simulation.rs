@@ -2333,6 +2333,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     let horizontal_drag = if gliding { 1.0 } else { ground_inertia };
     if matches!(fluid, FluidState::Water | FluidState::Waterlogged)
         && state.collided_horizontally
+        && rules.release.at_least(1, 14, 0)
         && climbable(world, state)
     {
         state.velocity.y = 0.2;

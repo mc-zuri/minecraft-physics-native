@@ -2633,6 +2633,39 @@ mod tests {
         assert_eq!(pushed("1.14.4"), 100.0 * height * 0.5 * 0.014 * f64::from(0.8_f32));
     }
 
+    #[test]
+    fn water_climbs_after_a_collision_only_from_1_14() {
+        let mut world = legacy_water_world(&[
+            ((0, 0, 0), Vec3::ZERO),
+            ((0, 1, 0), Vec3::ZERO),
+            ((0, 2, 0), Vec3::ZERO),
+        ]);
+        for y in 0..3 {
+            world.set_block(
+                (1, y, 0),
+                BlockState {
+                    id: 1,
+                    shape: Some(BlockShape::full_block()),
+                    ..BlockState::default()
+                },
+            );
+        }
+        let climb = |version| {
+            let mut state = SimulationState {
+                climbing: true,
+                ..legacy_water_player(Vec3::new(0.65, 0.5, 0.5), Vec3::new(0.1, 0.0, 0.0))
+            };
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            assert!(state.in_water && state.collided_horizontally, "{version}");
+            state.velocity.y
+        };
+
+        assert_eq!(climb("1.12.2"), 0.0);
+        assert_eq!(climb("1.13.2"), 0.0);
+        assert_eq!(climb("1.14.4"), 0.2 * f64::from(0.8_f32));
+    }
+
     fn lava_world(position: (i32, i32, i32)) -> WorldSnapshot {
         let mut world = WorldSnapshot::new();
         world.set_block(
