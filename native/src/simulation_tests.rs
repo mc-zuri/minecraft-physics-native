@@ -1211,6 +1211,115 @@ mod tests {
         assert_ne!(vertical(java_float(look_length)), vertical(look_length));
     }
 
+    fn tick_kept_box(state: SimulationState, release: MinecraftVersion) -> SimulationState {
+        let mut state = SimulationState {
+            no_gravity: true,
+            ..state
+        };
+        let rules = VersionPhysicsRules {
+            release,
+            ..VersionPhysicsRules::default()
+        };
+        tick_with_rules(
+            &mut state,
+            &WorldSnapshot::new(),
+            PhysicsConfig::default(),
+            rules,
+        );
+        state
+    }
+
+    #[test]
+    fn the_position_is_the_centre_of_the_kept_bounding_box_before_1_17() {
+        let kept = Aabb::new(
+            Vec3::new(0.12928931033455007, 5.0, 0.12928931033455007),
+            Vec3::new(0.729289334176408, 6.5, 0.729289334176408),
+        );
+        let state = SimulationState {
+            position: Vec3::new(0.429289322255479, 5.0, 0.429289322255479),
+            velocity: Vec3::new(-0.2, 0.0, -0.2),
+            half_width: f64::from(0.6_f32) / 2.0,
+            height: f64::from(1.5_f32),
+            bounding_box: Some(kept),
+            ..SimulationState::default()
+        };
+
+        let old = tick_kept_box(state, MinecraftVersion::new(1, 16, 5));
+        let moved = kept.translated(state.velocity);
+        let centre = Vec3::new(
+            (moved.min.x + moved.max.x) / 2.0,
+            moved.min.y,
+            (moved.min.z + moved.max.z) / 2.0,
+        );
+        assert_eq!((old.position, old.bounding_box), (centre, Some(moved)));
+        assert_ne!(centre, state.position + state.velocity);
+
+        let modern = tick_kept_box(state, MinecraftVersion::new(1, 17, 0));
+        assert_eq!(
+            (modern.position, modern.bounding_box),
+            (state.position + state.velocity, None)
+        );
+    }
+
+    #[test]
+    fn a_move_too_short_to_count_leaves_the_kept_bounding_box_before_1_17() {
+        let state = SimulationState {
+            position: Vec3::new(0.5, 5.0, 0.5),
+            velocity: Vec3::new(0.01, 0.0, 0.01),
+            stuck_speed_multiplier: Vec3::new(0.01, 0.01, 0.01),
+            half_width: f64::from(0.6_f32) / 2.0,
+            height: f64::from(1.8_f32),
+            ..SimulationState::default()
+        };
+
+        let old = tick_kept_box(state, MinecraftVersion::new(1, 16, 5));
+
+        assert_eq!(
+            (old.position, old.bounding_box),
+            (state.position, Some(state.bounds_around_position()))
+        );
+    }
+
+    #[test]
+    fn a_pose_of_another_size_refits_the_kept_bounding_box_before_1_17() {
+        let width = f64::from(0.6_f32);
+        let standing = Aabb::new(
+            Vec3::new(0.1, 5.0, 0.1),
+            Vec3::new(0.1 + width, 5.0 + f64::from(1.8_f32), 0.1 + width),
+        );
+        let crouching = SimulationState {
+            position: Vec3::new(0.4, 5.0, 0.4),
+            half_width: width / 2.0,
+            height: f64::from(1.5_f32),
+            bounding_box: Some(standing),
+            ..SimulationState::default()
+        };
+        let rounded_wider = SimulationState {
+            bounding_box: Some(Aabb::new(
+                standing.min,
+                standing.max + Vec3::new(1.0e-15, 0.0, 1.0e-15),
+            )),
+            ..crouching
+        };
+        let sleeping = SimulationState {
+            half_width: f64::from(0.2_f32) / 2.0,
+            height: f64::from(0.2_f32),
+            ..crouching
+        };
+        let release = MinecraftVersion::new(1, 16, 5);
+
+        let refitted = Some(Aabb::new(
+            standing.min,
+            standing.min + Vec3::new(width, crouching.height, width),
+        ));
+        assert_eq!(tick_kept_box(crouching, release).bounding_box, refitted);
+        assert_eq!(tick_kept_box(rounded_wider, release).bounding_box, refitted);
+        assert_eq!(
+            tick_kept_box(sleeping, release).bounding_box,
+            Some(sleeping.bounds_around_position())
+        );
+    }
+
     #[test]
     fn gliding_moves_with_the_dragged_velocity_and_ignores_the_keys() {
         let glide = |input: Vec3| {

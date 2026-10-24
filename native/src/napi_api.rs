@@ -136,6 +136,21 @@ impl From<Vec3> for NativeVec3 {
     }
 }
 
+impl From<NativeAabb> for Aabb {
+    fn from(value: NativeAabb) -> Self {
+        Self::new(value.min.into(), value.max.into())
+    }
+}
+
+impl From<Aabb> for NativeAabb {
+    fn from(value: Aabb) -> Self {
+        Self {
+            min: value.min.into(),
+            max: value.max.into(),
+        }
+    }
+}
+
 #[napi(object)]
 pub struct NativeSimulationConfig {
     pub gravity: Option<f64>,
@@ -246,6 +261,7 @@ pub struct NativeSimulationState {
     pub firework_boost: Option<NativeVec3>,
     pub stuck_speed_multiplier: Option<NativeVec3>,
     pub previous_position: Option<NativeVec3>,
+    pub bounding_box: Option<NativeAabb>,
 }
 
 #[napi(object)]
@@ -561,6 +577,7 @@ impl From<NativeSimulationState> for SimulationState {
                 .map(Into::into)
                 .unwrap_or(Vec3::ZERO),
             previous_position: value.previous_position.map(Into::into),
+            bounding_box: value.bounding_box.map(Into::into),
         }
     }
 }
@@ -650,6 +667,7 @@ impl From<SimulationState> for NativeSimulationState {
             firework_boost: Some(value.firework_boost.into()),
             stuck_speed_multiplier: Some(value.stuck_speed_multiplier.into()),
             previous_position: value.previous_position.map(Into::into),
+            bounding_box: value.bounding_box.map(Into::into),
         }
     }
 }
@@ -2480,9 +2498,9 @@ mod tests {
     use super::{
         create_simulation_state, refresh_versioned_pose, simulate_versioned_entity_push,
         simulate_versioned_entity_ticks, simulate_versioned_tick, simulate_versioned_ticks,
-        NativeBlockShape, NativeBlockUpdate, NativeEntityDescriptor, NativeEntityPushState,
-        NativeSimulationConfig, NativeSimulationState, NativeVec3, NativeVersionedEntityState,
-        NativeWorld,
+        NativeAabb, NativeBlockShape, NativeBlockUpdate, NativeEntityDescriptor,
+        NativeEntityPushState, NativeSimulationConfig, NativeSimulationState, NativeVec3,
+        NativeVersionedEntityState, NativeWorld,
     };
 
     fn block_shape(min: (f64, f64, f64), max: (f64, f64, f64), effect: u8) -> NativeBlockShape {
@@ -2648,6 +2666,30 @@ mod tests {
             .expect("26.2 is supported");
 
         assert_eq!(twice.velocity.x, moved_once * crate::math::java_float(0.91));
+    }
+
+    #[test]
+    fn the_kept_bounding_box_goes_in_and_out_before_1_17() {
+        let world = NativeWorld::new();
+        let mut state = pose_state();
+        state.velocity = vec3(0.2, 0.0, 0.0);
+        state.bounding_box = Some(NativeAabb {
+            min: vec3(-0.25, 0.0, -0.3),
+            max: vec3(0.35, 1.8, 0.3),
+        });
+
+        let old = simulate_versioned_tick("1.16.5".to_string(), &world, state, default_config())
+            .expect("1.16.5 is supported");
+        let bounding_box = old.bounding_box.expect("1.16.5 keeps the box");
+        let (min_x, max_x) = (-0.25 + 0.2, 0.35 + 0.2);
+        assert_eq!((bounding_box.min.x, bounding_box.max.x), (min_x, max_x));
+        assert_eq!(old.position.x, (min_x + max_x) / 2.0);
+
+        let mut state = pose_state();
+        state.bounding_box = Some(bounding_box);
+        let modern = simulate_versioned_tick("1.17".to_string(), &world, state, default_config())
+            .expect("1.17 is supported");
+        assert!(modern.bounding_box.is_none());
     }
 
     #[test]
@@ -3065,6 +3107,7 @@ mod tests {
                 firework_boost: None,
                 stuck_speed_multiplier: None,
                 previous_position: None,
+                bounding_box: None,
             },
             no_physics: false,
             vehicle_id: None,

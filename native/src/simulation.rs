@@ -306,6 +306,7 @@ pub struct SimulationState {
     pub firework_boost: Vec3,
     pub stuck_speed_multiplier: Vec3,
     pub previous_position: Option<Vec3>,
+    pub bounding_box: Option<Aabb>,
 }
 
 impl From<EntityState> for SimulationState {
@@ -392,6 +393,7 @@ impl From<EntityState> for SimulationState {
             firework_boost: Vec3::ZERO,
             stuck_speed_multiplier: Vec3::ZERO,
             previous_position: None,
+            bounding_box: None,
         }
     }
 }
@@ -418,6 +420,12 @@ impl From<SimulationState> for EntityState {
 impl SimulationState {
     #[must_use]
     pub fn bounds(self) -> Aabb {
+        self.bounding_box
+            .unwrap_or_else(|| self.bounds_around_position())
+    }
+
+    #[must_use]
+    pub fn bounds_around_position(self) -> Aabb {
         Aabb::new(
             Vec3::new(
                 self.position.x - self.half_width,
@@ -950,6 +958,35 @@ fn climbable(world: &WorldSnapshot, state: &SimulationState) -> bool {
             ))
 }
 
+/// Before 1.17 an entity keeps its bounding box between ticks: Entity.move moves the box and takes
+/// the position from it. A pose of another size refits it as Entity.refreshDimensions does.
+fn kept_bounding_box(state: &SimulationState) -> Aabb {
+    let around_position = state.bounds_around_position();
+    let Some(kept) = state.bounding_box else {
+        return around_position;
+    };
+    let kept_half_width = (kept.max.x - kept.min.x) / 2.0;
+    // a moved box keeps its size up to rounding
+    let same_size = |box_size: f64, size: f64| (box_size - size).abs() < 1.0e-4;
+    let same_width = same_size(kept_half_width, state.half_width);
+    if same_width && same_size(kept.max.y - kept.min.y, state.height) {
+        kept
+    } else if !same_width && state.half_width < kept_half_width {
+        around_position
+    } else {
+        let width = state.half_width * 2.0;
+        Aabb::new(kept.min, kept.min + Vec3::new(width, state.height, width))
+    }
+}
+
+fn position_of_bounding_box(bounds: Aabb) -> Vec3 {
+    Vec3::new(
+        (bounds.min.x + bounds.max.x) / 2.0,
+        bounds.min.y,
+        (bounds.min.z + bounds.max.z) / 2.0,
+    )
+}
+
 fn block_position(position: Vec3) -> (i32, i32, i32) {
     (
         position.x.floor() as i32,
@@ -1295,23 +1332,6 @@ fn horizontal_collision_is_minor(
     (dot / (input_length_squared * movement_length_squared).sqrt()).acos() < 0.13962633907794952
 }
 
-fn position_after_move(
-    position: Vec3,
-    bounds: Aabb,
-    movement: Vec3,
-    release: MinecraftVersion,
-) -> Vec3 {
-    if release.at_least(1, 17, 0) {
-        return position + movement;
-    }
-    let moved = bounds.translated(movement);
-    Vec3::new(
-        (moved.min.x + moved.max.x) / 2.0,
-        moved.min.y,
-        (moved.min.z + moved.max.z) / 2.0,
-    )
-}
-
 fn back_off_from_edge(
     state: &SimulationState,
     world: &WorldSnapshot,
@@ -1578,6 +1598,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
 ) -> TickResult {
     let mut rules = rules;
     state.tick_count = state.tick_count.saturating_add(1);
+    state.bounding_box = (!rules.release.at_least(1, 17, 0)).then(|| kept_bounding_box(state));
     let old_position = state.position;
     state.contact_damage = 0.0;
     state.block_fall_callback = false;
@@ -1999,7 +2020,14 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     };
 
     if state.no_physics || moves_position(desired, displacement, rules.release) {
-        state.position = position_after_move(state.position, bounds, displacement, rules.release);
+        match state.bounding_box {
+            Some(bounds) => {
+                let moved = bounds.translated(displacement);
+                state.bounding_box = Some(moved);
+                state.position = position_of_bounding_box(moved);
+            }
+            None => state.position = state.position + displacement,
+        }
     }
     let mut reset_fall_distance = false;
     if !state.no_physics

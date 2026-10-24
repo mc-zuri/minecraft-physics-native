@@ -104,6 +104,11 @@ export interface NativeSimulationState {
      * an edge under the box where the move began (Entity.mainSupportingBlockPos, 1.20+).
      */
     previousPosition?: NativeVec3;
+    /**
+     * Before 1.17 the entity's bounding box, kept between ticks: the move starts from it and the position is taken
+     * from it. Pass back the one the previous tick returned; leave it out after setting the position.
+     */
+    boundingBox?: NativeAabb;
 }
 
 export interface NativeEntityPushState {
