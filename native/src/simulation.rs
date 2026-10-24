@@ -1752,7 +1752,17 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
                 bounds.max.z.max(target.max.z),
             ),
         );
-        let obstacles = world.collision_shapes_for_entity(query, &collision_context);
+        let mut obstacles = world.collision_shapes_for_entity(query, &collision_context);
+        let border = world.world_border_collision_boxes();
+        let collides_with_border = if rules.release.at_least(1, 18, 0) {
+            world.is_inside_close_to_world_border(state.position, bounds.expand_towards(desired))
+        } else {
+            let inside = bounds.deflate(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7));
+            !border.iter().any(|outside| outside.intersects(inside))
+        };
+        if collides_with_border {
+            obstacles.extend(border);
+        }
         let (displacement, collisions) = resolve_motion(bounds, desired, &obstacles);
         (displacement, collisions, obstacles)
     };

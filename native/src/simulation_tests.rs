@@ -2255,6 +2255,41 @@ mod tests {
         assert_eq!(pushed_out(&world, "1.21.1", true).position.x, 0.2);
     }
 
+    fn walking_east(world: &WorldSnapshot, version: &str, x: f64) -> SimulationState {
+        let mut state = SimulationState {
+            position: Vec3::new(x, 0.0, 0.5),
+            velocity: Vec3::new(0.5, 0.0, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            no_gravity: true,
+            ..SimulationState::default()
+        };
+        crate::versioned::dispatch(version, &mut state, world, PhysicsConfig::default()).unwrap();
+        state
+    }
+
+    #[test]
+    fn the_default_world_border_stops_movement_at_its_edge() {
+        let world = WorldSnapshot::new();
+
+        for version in ["1.17", "1.21.1"] {
+            let walker = walking_east(&world, version, 29999983.5);
+            assert!(walker.collided_horizontally, "{version}");
+            assert_eq!(walker.position.x, 29999983.5 + (29999984.0 - (29999983.5 + 0.3)));
+        }
+    }
+
+    #[test]
+    fn a_world_border_collides_at_its_block_aligned_edges() {
+        let mut world = WorldSnapshot::new();
+        world.set_world_bounds(-64, 320, 0.0, 0.0, 9.0);
+
+        let walker = walking_east(&world, "1.21.1", 4.5);
+
+        assert!(walker.collided_horizontally);
+        assert_eq!(walker.position.x, 4.5 + (5.0 - (4.5 + 0.3)));
+    }
+
     #[test]
     fn sneaking_spectators_do_not_back_off_from_edges() {
         let mut state = SimulationState {

@@ -119,7 +119,7 @@ pub struct BlockState {
     pub suffocating: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct WorldSnapshot {
     blocks: HashMap<BlockPosition, BlockState>,
     properties: HashMap<BlockPosition, Vec<(String, String)>>,
@@ -136,6 +136,31 @@ pub struct WorldSnapshot {
     max_build_height: i32,
     border_center: (f64, f64),
     border_size: f64,
+}
+
+const WORLD_BORDER_DEFAULT_SIZE: f64 = 5.9999968e7;
+const WORLD_BORDER_ABSOLUTE_MAX: f64 = 29999984.0;
+
+impl Default for WorldSnapshot {
+    fn default() -> Self {
+        Self {
+            blocks: HashMap::new(),
+            properties: HashMap::new(),
+            state_ids: HashMap::new(),
+            block_entities: HashMap::new(),
+            extra_shapes: HashMap::new(),
+            extra_outline_shapes: HashMap::new(),
+            extra_interaction_shapes: HashMap::new(),
+            chunks: ChunkIndex::new(),
+            sections: SectionIndex::new(),
+            explicit_sections: HashSet::new(),
+            loaded_chunks: HashSet::new(),
+            min_build_height: 0,
+            max_build_height: 0,
+            border_center: (0.0, 0.0),
+            border_size: WORLD_BORDER_DEFAULT_SIZE,
+        }
+    }
 }
 
 impl WorldSnapshot {
@@ -301,6 +326,54 @@ impl WorldSnapshot {
             && position.x < self.border_center.0 + half
             && position.z >= self.border_center.1 - half
             && position.z < self.border_center.1 + half
+    }
+
+    /// WorldBorder.getMinX / getMaxX / getMinZ / getMaxZ.
+    fn world_border_edges(&self) -> (f64, f64, f64, f64) {
+        let half = self.border_size / 2.0;
+        let edge = |value: f64| value.clamp(-WORLD_BORDER_ABSOLUTE_MAX, WORLD_BORDER_ABSOLUTE_MAX);
+        let (center_x, center_z) = self.border_center;
+        (
+            edge(center_x - half),
+            edge(center_x + half),
+            edge(center_z - half),
+            edge(center_z + half),
+        )
+    }
+
+    /// WorldBorder.isInsideCloseToBorder: the entity at `position` sweeping `swept` is inside the
+    /// border and close to it.
+    #[must_use]
+    pub fn is_inside_close_to_world_border(&self, position: Vec3, swept: Aabb) -> bool {
+        let (min_x, max_x, min_z, max_z) = self.world_border_edges();
+        let size = swept.max - swept.min;
+        let margin = size.x.abs().max(size.z.abs()).max(1.0);
+        let distance = (position.x - min_x)
+            .min(max_x - position.x)
+            .min(position.z - min_z)
+            .min(max_z - position.z);
+        distance < margin * 2.0
+            && position.x >= min_x - margin
+            && position.x < max_x + margin
+            && position.z >= min_z - margin
+            && position.z < max_z + margin
+    }
+
+    /// WorldBorder.getCollisionShape: everything outside the border's block-aligned edges.
+    #[must_use]
+    pub fn world_border_collision_boxes(&self) -> [Aabb; 4] {
+        let (min_x, max_x, min_z, max_z) = self.world_border_edges();
+        let (min_x, max_x) = (min_x.floor(), max_x.ceil());
+        let (min_z, max_z) = (min_z.floor(), max_z.ceil());
+        let infinity = f64::INFINITY;
+        let lowest = Vec3::new(-infinity, -infinity, -infinity);
+        let highest = Vec3::new(infinity, infinity, infinity);
+        [
+            Aabb::new(lowest, Vec3::new(min_x, infinity, infinity)),
+            Aabb::new(Vec3::new(max_x, -infinity, -infinity), highest),
+            Aabb::new(lowest, Vec3::new(infinity, infinity, min_z)),
+            Aabb::new(Vec3::new(-infinity, -infinity, max_z), highest),
+        ]
     }
 
     #[must_use]
