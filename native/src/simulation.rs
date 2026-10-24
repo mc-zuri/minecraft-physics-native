@@ -2695,6 +2695,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         }
     }
 
+    let mut visited_powder_snow = false;
     if rules.release.at_least(1, 21, 2) {
         let movements =
             movements_this_tick(state, old_position, desired, displacement, rules.release);
@@ -2705,6 +2706,10 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             state.height,
             rules.release,
         );
+        visited_powder_snow = !state.no_physics
+            && inside
+                .iter()
+                .any(|&(position, _)| world.effect_at(position) == BlockEffect::PowderSnow);
         apply_block_effects(state, world, support, rules.release, &inside);
     }
     if state.is_player && state.flying && state.on_ground && !state.no_physics {
@@ -2715,11 +2720,13 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     }
     state.was_sprinting = state.sprinting;
     state.previous_position = Some(old_position);
-    let ends_in_powder_snow = world
-        .effects_in_bounds(state.bounds())
-        .contains(&BlockEffect::PowderSnow);
-    state.in_powder_snow =
-        ends_in_powder_snow || (rules.release.at_least(1, 21, 2) && in_powder_snow);
+    state.in_powder_snow = if rules.release.at_least(1, 21, 2) {
+        visited_powder_snow
+    } else {
+        world
+            .effects_in_bounds(state.bounds())
+            .contains(&BlockEffect::PowderSnow)
+    };
 
     TickResult {
         displacement,

@@ -5054,6 +5054,27 @@ mod tests {
     }
 
     #[test]
+    fn powder_snow_counts_only_where_the_move_visited_blocks_from_1_21_2() {
+        let world = powder_snow_world();
+        let in_powder_snow = |version| {
+            let mut rising = SimulationState {
+                position: Vec3::new(0.5, 0.9758, 0.5),
+                velocity: Vec3::new(0.0, 0.1764, 0.0),
+                half_width: 0.3,
+                height: 1.8,
+                no_gravity: true,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch(version, &mut rising, &world, PhysicsConfig::default())
+                .unwrap();
+            rising.in_powder_snow
+        };
+
+        assert!(!in_powder_snow("1.21.5"));
+        assert!(in_powder_snow("1.21.9"));
+    }
+
+    #[test]
     fn powder_snow_catches_a_long_fall_on_its_lower_shape() {
         let world = powder_snow_world();
         let falling = SimulationState {
