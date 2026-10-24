@@ -61,8 +61,8 @@ pub enum BlockEffect {
 }
 
 /// What vanilla's EntityCollisionContext tells the blocks whose collision shape depends on the
-/// entity (powder snow): its feet when the context is made, whether it descends (the sneak key),
-/// its fall distance and whether it can walk on powder snow.
+/// entity (powder snow, scaffolding): its feet when the context is made, whether it descends (the
+/// sneak key), its fall distance and whether it can walk on powder snow.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct EntityCollisionContext {
     pub bottom: f64,
@@ -786,8 +786,31 @@ impl WorldSnapshot {
                 EntityCollisionShape::Box(cell(1.0))
             }
             BlockEffect::PowderSnow => EntityCollisionShape::Empty,
+            BlockEffect::Scaffolding if context.is_above(1.0, y) && !context.descending => {
+                EntityCollisionShape::Stored
+            }
+            BlockEffect::Scaffolding
+                if self.is_unstable_scaffolding_bottom(position) && context.is_above(0.0, y) =>
+            {
+                EntityCollisionShape::Box(cell(0.125))
+            }
+            BlockEffect::Scaffolding => EntityCollisionShape::Empty,
             _ => EntityCollisionShape::Stored,
         }
+    }
+
+    fn is_unstable_scaffolding_bottom(&self, position: BlockPosition) -> bool {
+        let properties = self
+            .properties
+            .get(&position)
+            .map_or(&[][..], Vec::as_slice);
+        let value = |name: &str| {
+            properties
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.as_str())
+        };
+        value("bottom") == Some("true") && value("distance").is_some_and(|distance| distance != "0")
     }
 
     #[must_use]

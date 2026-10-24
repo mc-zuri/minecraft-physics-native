@@ -3542,6 +3542,110 @@ mod tests {
         assert!(descending.position.y < 1.0);
     }
 
+    fn place_scaffolding(world: &mut WorldSnapshot, position: (i32, i32, i32), bottom: bool) {
+        let stable_boxes = [
+            (Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.125, 1.0, 0.125)),
+            (Vec3::new(0.0, 0.0, 0.875), Vec3::new(0.125, 1.0, 1.0)),
+            (Vec3::new(0.875, 0.0, 0.0), Vec3::new(1.0, 1.0, 0.125)),
+            (Vec3::new(0.875, 0.0, 0.875), Vec3::new(1.0, 1.0, 1.0)),
+            (Vec3::new(0.0, 0.875, 0.0), Vec3::new(1.0, 1.0, 1.0)),
+        ];
+        let shapes = stable_boxes
+            .iter()
+            .map(|&(min, max)| BlockShape {
+                bounds: Aabb::new(min, max),
+                effect: BlockEffect::Scaffolding,
+                ..BlockShape::full_block()
+            })
+            .collect();
+        let state = BlockState {
+            id: 1,
+            ..BlockState::default()
+        };
+        world.set_block_shapes(position, state, shapes);
+        world.set_block_properties(
+            position,
+            vec![
+                ("bottom".to_owned(), bottom.to_string()),
+                ("distance".to_owned(), "1".to_owned()),
+            ],
+        );
+    }
+
+    #[test]
+    fn scaffolding_holds_only_entities_above_it_that_do_not_descend() {
+        let mut world = WorldSnapshot::new();
+        place_scaffolding(&mut world, (0, 0, 0), false);
+        let mut standing = SimulationState {
+            position: Vec3::new(0.5, 1.0, 0.5),
+            velocity: Vec3::new(0.0, -0.0784000015258789, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            on_ground: true,
+            ..SimulationState::default()
+        };
+        let mut descending = SimulationState {
+            sneaking: true,
+            ..standing
+        };
+
+        crate::versioned::dispatch("1.21.1", &mut standing, &world, PhysicsConfig::default())
+            .unwrap();
+        crate::versioned::dispatch("1.21.1", &mut descending, &world, PhysicsConfig::default())
+            .unwrap();
+
+        assert!(standing.on_ground);
+        assert_eq!(standing.position.y, 1.0);
+        assert!(descending.position.y < 1.0);
+    }
+
+    #[test]
+    fn scaffolding_legs_do_not_block_entities_inside_it() {
+        let mut world = WorldSnapshot::new();
+        place_scaffolding(&mut world, (0, 0, 0), false);
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 0.0, 0.1),
+            velocity: Vec3::new(0.1, 0.0, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            no_gravity: true,
+            ..SimulationState::default()
+        };
+
+        crate::versioned::dispatch("1.21.1", &mut state, &world, PhysicsConfig::default()).unwrap();
+
+        assert!(!state.collided_horizontally);
+        assert_eq!(state.position.x, 0.6);
+    }
+
+    #[test]
+    fn hanging_bottom_scaffolding_is_a_floor_to_entities_above_its_base() {
+        let mut world = WorldSnapshot::new();
+        place_scaffolding(&mut world, (0, 1, 0), true);
+        place_scaffolding(&mut world, (2, 1, 0), false);
+        let falling = |x: f64| {
+            let mut state = SimulationState {
+                position: Vec3::new(x, 1.2, 0.5),
+                velocity: Vec3::new(0.0, -0.1, 0.0),
+                half_width: 0.3,
+                height: 1.8,
+                no_gravity: true,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch("1.21.1", &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            state
+        };
+
+        let over_bottom = falling(0.5);
+        let over_supported = falling(2.5);
+
+        assert!(over_bottom.on_ground);
+        assert_eq!(over_bottom.position.y, 1.2 + (1.125 - 1.2));
+        assert!(!over_supported.on_ground);
+        assert_eq!(over_supported.position.y, 1.2 - 0.1);
+    }
+
     #[test]
     fn fully_frozen_entities_take_periodic_freeze_damage() {
         let mut world = WorldSnapshot::new();
