@@ -507,6 +507,31 @@ mod tests {
     }
 
     #[test]
+    fn input_rotation_uses_the_mth_sine_table_of_the_release() {
+        for release in [MinecraftVersion::new(1, 21, 1), MinecraftVersion::new(1, 21, 11)] {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 2.0, 0.5),
+                yaw: f64::from(270.0_f32 * 0.017453292_f32),
+                input: Vec3::new(0.0, 0.0, 1.0),
+                on_ground: true,
+                no_gravity: true,
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            let rules = VersionPhysicsRules {
+                release,
+                ..VersionPhysicsRules::default()
+            };
+
+            tick_with_rules(&mut state, &WorldSnapshot::new(), PhysicsConfig::default(), rules);
+
+            assert_eq!(state.position.z, 0.5);
+            assert_eq!(state.position.x, 0.5 + java_float(0.1));
+        }
+    }
+
+    #[test]
     fn rotates_input_by_yaw() {
         let mut state = SimulationState {
             position: Vec3::new(0.0, 2.0, 0.0),

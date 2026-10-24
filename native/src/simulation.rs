@@ -1,6 +1,6 @@
 use crate::collision::{resolve_motion, resolve_step_motion, vanilla_equal};
 use crate::entity::{Dimensions, EntityFlags, EntityState};
-use crate::math::{java_float, Aabb, Vec3};
+use crate::math::{java_cos, java_cos_legacy, java_float, java_sin, java_sin_legacy, Aabb, Vec3};
 use crate::version::MinecraftVersion;
 use crate::world::WorldSnapshot;
 use crate::world::{BlockEffect, FluidState};
@@ -655,7 +655,23 @@ fn friction_influenced_speed(speed: f64, friction: f64) -> f64 {
     f64::from(speed as f32 * (0.21600002_f32 / (friction * friction * friction)))
 }
 
-fn relative_movement(input: Vec3, speed: f64, yaw: f64) -> Vec3 {
+fn mth_sin(radians: f64, release: MinecraftVersion) -> f64 {
+    if release.at_least(1, 21, 11) {
+        java_sin(radians)
+    } else {
+        java_sin_legacy(radians as f32)
+    }
+}
+
+fn mth_cos(radians: f64, release: MinecraftVersion) -> f64 {
+    if release.at_least(1, 21, 11) {
+        java_cos(radians)
+    } else {
+        java_cos_legacy(radians as f32)
+    }
+}
+
+fn relative_movement(input: Vec3, speed: f64, yaw: f64, release: MinecraftVersion) -> Vec3 {
     let length_squared = input.x * input.x + input.y * input.y + input.z * input.z;
     if length_squared < 1.0e-7 {
         return Vec3::ZERO;
@@ -667,8 +683,8 @@ fn relative_movement(input: Vec3, speed: f64, yaw: f64) -> Vec3 {
         input
     };
     let scaled = direction.scale(speed);
-    let sin = yaw.sin();
-    let cos = yaw.cos();
+    let sin = mth_sin(yaw, release);
+    let cos = mth_cos(yaw, release);
     Vec3::new(
         scaled.x * cos - scaled.z * sin,
         scaled.y,
@@ -1037,8 +1053,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             config.jump_velocity
         } + 0.1 * (jump_boost - 1.0);
         if state.sprinting {
-            state.velocity.x -= state.yaw.sin() * 0.2;
-            state.velocity.z += state.yaw.cos() * 0.2;
+            state.velocity.x -= mth_sin(state.yaw, rules.release) * 0.2;
+            state.velocity.z += mth_cos(state.yaw, rules.release) * 0.2;
         }
         state.on_ground = false;
         state.fall_distance = 0.0;
@@ -1138,7 +1154,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     };
     let input_speed = input_speed * sneaking_speed;
     let input_speed = input_speed * if state.using_item { 0.2 } else { 1.0 };
-    state.velocity = state.velocity + relative_movement(state.input, input_speed, state.yaw);
+    state.velocity = state.velocity + relative_movement(state.input, input_speed, state.yaw, rules.release);
     if in_web && !ignores_stuck_block {
         let (horizontal, vertical) = if state.weaving {
             (0.5, 0.25)

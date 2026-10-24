@@ -17,6 +17,18 @@ fn sine_table() -> &'static [f32; 65536] {
     })
 }
 
+fn legacy_sine_table() -> &'static [f32; 65536] {
+    static TABLE: OnceLock<[f32; 65536]> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut table = [0.0; 65536];
+        for (index, value) in table.iter_mut().enumerate() {
+            *value = (index as f64 * std::f64::consts::PI * 2.0 / 65536.0).sin() as f32;
+        }
+
+        table
+    })
+}
+
 fn atan_tables() -> (&'static [f64; ATAN_LUT_SIZE], &'static [f64; ATAN_LUT_SIZE]) {
     static TABLES: OnceLock<([f64; ATAN_LUT_SIZE], [f64; ATAN_LUT_SIZE])> = OnceLock::new();
     let tables = TABLES.get_or_init(|| {
@@ -269,6 +281,18 @@ pub fn java_sin(radians: f64) -> f64 {
 pub fn java_cos(radians: f64) -> f64 {
     let index = ((radians * SIN_SCALE + 16384.0) as i64 & 65535) as usize;
     f64::from(sine_table()[index])
+}
+
+#[must_use]
+pub fn java_sin_legacy(radians: f32) -> f64 {
+    let index = ((radians * 10430.378) as i32 & 65535) as usize;
+    f64::from(legacy_sine_table()[index])
+}
+
+#[must_use]
+pub fn java_cos_legacy(radians: f32) -> f64 {
+    let index = ((radians * 10430.378 + 16384.0) as i32 & 65535) as usize;
+    f64::from(legacy_sine_table()[index])
 }
 
 #[must_use]
