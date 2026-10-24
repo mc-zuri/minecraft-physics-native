@@ -961,6 +961,9 @@ fn friction_influenced_speed(speed: f64, friction: f64, release: MinecraftVersio
         return f64::from(speed as f32 * (acceleration / (inertia * inertia * inertia)));
     }
     let friction = friction as f32;
+    if release.at_least(26, 2, 0) && f64::from(friction) <= 0.6 {
+        return f64::from(speed as f32);
+    }
     f64::from(speed as f32 * (0.21600002_f32 / (friction * friction * friction)))
 }
 

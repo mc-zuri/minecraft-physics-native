@@ -334,6 +334,37 @@ mod tests {
     }
 
     #[test]
+    fn low_friction_keeps_the_plain_ground_speed_from_26_2() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        let walking = SimulationState {
+            position: Vec3::new(0.5, 1.0, 0.5),
+            input: Vec3::new(1.0, 0.0, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            on_ground: true,
+            friction_modifier: 1.6,
+            friction_modifier_present: true,
+            ..SimulationState::default()
+        };
+        let mut modern = walking;
+        let mut older = walking;
+
+        crate::versioned::dispatch("26.2", &mut modern, &world, PhysicsConfig::default()).unwrap();
+        crate::versioned::dispatch("26.1", &mut older, &world, PhysicsConfig::default()).unwrap();
+
+        let plain_step = f64::from(0.98_f32) * f64::from(0.1_f32);
+        assert_eq!(modern.position.x, 0.5 + plain_step);
+        assert!(older.position.x > modern.position.x);
+    }
+
+    #[test]
     fn input_before_1_14_is_rotated_in_float() {
         let world = WorldSnapshot::new();
         let mut state = SimulationState {
