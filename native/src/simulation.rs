@@ -1637,21 +1637,23 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.fall_distance = 0.0;
         reset_fall_distance = true;
     }
-    state.collided_horizontally = !state.no_physics
-        && (!vanilla_equal(desired.x, displacement.x) || !vanilla_equal(desired.z, displacement.z));
-    state.minor_horizontal_collision = false;
-    if state.minor_horizontal_collision_supported && state.is_player && state.collided_horizontally
-    {
-        let input_length_squared = desired.x * desired.x + desired.z * desired.z;
-        let displacement_length_squared =
-            displacement.x * displacement.x + displacement.z * displacement.z;
-        if input_length_squared >= 1.0e-5 && displacement_length_squared >= 1.0e-5 {
-            let cosine = (desired.x * displacement.x + desired.z * displacement.z)
-                / (input_length_squared * displacement_length_squared).sqrt();
-            state.minor_horizontal_collision = cosine.clamp(-1.0, 1.0).acos() < 0.13962634;
-        }
-    }
     if !state.no_physics {
+        state.collided_horizontally =
+            !vanilla_equal(desired.x, displacement.x) || !vanilla_equal(desired.z, displacement.z);
+        state.minor_horizontal_collision = false;
+        if state.minor_horizontal_collision_supported
+            && state.is_player
+            && state.collided_horizontally
+        {
+            let input_length_squared = desired.x * desired.x + desired.z * desired.z;
+            let displacement_length_squared =
+                displacement.x * displacement.x + displacement.z * displacement.z;
+            if input_length_squared >= 1.0e-5 && displacement_length_squared >= 1.0e-5 {
+                let cosine = (desired.x * displacement.x + desired.z * displacement.z)
+                    / (input_length_squared * displacement_length_squared).sqrt();
+                state.minor_horizontal_collision = cosine.clamp(-1.0, 1.0).acos() < 0.13962634;
+            }
+        }
         if desired.y != 0.0 || state.controlled_by_local_instance {
             state.collided_vertically = !vanilla_equal(desired.y, displacement.y);
             state.vertical_collision_below = state.collided_vertically && desired.y < 0.0;
@@ -1659,7 +1661,9 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
                 state.vertical_collision_below && state.controlled_by_local_instance;
             state.on_ground = state.collided_vertically && desired.y < 0.0;
         }
-    } else {
+    } else if rules.release.at_least(1, 21, 9) {
+        state.collided_horizontally = false;
+        state.minor_horizontal_collision = false;
         state.collided_vertically = false;
         state.vertical_collision_below = false;
     }

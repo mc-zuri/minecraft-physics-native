@@ -416,6 +416,47 @@ mod tests {
     }
 
     #[test]
+    fn no_physics_keeps_the_collision_flags_before_1_21_9() {
+        let collisions_after = |release: MinecraftVersion| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 1.0, 0.5),
+                velocity: Vec3::new(0.2, -0.5, 0.0),
+                is_player: true,
+                no_physics: true,
+                collided_horizontally: true,
+                minor_horizontal_collision: true,
+                collided_vertically: true,
+                vertical_collision_below: true,
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            let rules = VersionPhysicsRules {
+                release,
+                ..VersionPhysicsRules::default()
+            };
+            tick_with_rules(
+                &mut state,
+                &WorldSnapshot::new(),
+                PhysicsConfig::default(),
+                rules,
+            );
+            [
+                state.collided_horizontally,
+                state.minor_horizontal_collision,
+                state.collided_vertically,
+                state.vertical_collision_below,
+            ]
+        };
+
+        assert_eq!(collisions_after(MinecraftVersion::new(1, 21, 8)), [true; 4]);
+        assert_eq!(
+            collisions_after(MinecraftVersion::new(1, 21, 9)),
+            [false; 4]
+        );
+    }
+
+    #[test]
     fn zero_vertical_motion_preserves_vanilla_vertical_state() {
         let mut state = SimulationState {
             velocity: Vec3::new(0.0, 0.0, 0.0),
