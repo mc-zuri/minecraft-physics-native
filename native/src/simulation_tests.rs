@@ -2958,6 +2958,47 @@ mod tests {
     }
 
     #[test]
+    fn flying_players_jump_from_the_ground_before_1_16() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        let rise = |release: MinecraftVersion| {
+            let mut state = SimulationState {
+                is_player: true,
+                flying: true,
+                flying_speed: java_float(0.05),
+                jump_requested: true,
+                on_ground: true,
+                position: Vec3::new(0.5, 1.0, 0.5),
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            let rules = VersionPhysicsRules {
+                release,
+                ..VersionPhysicsRules::default()
+            };
+            tick_with_rules(&mut state, &world, PhysicsConfig::default(), rules);
+            (state.velocity.y, state.jump_ticks)
+        };
+
+        assert_eq!(
+            rise(MinecraftVersion::new(1, 15, 2)),
+            (java_float(0.42) * 0.6, 10)
+        );
+        assert_eq!(
+            rise(MinecraftVersion::new(1, 16, 0)),
+            (f64::from(0.05_f32 * 3.0) * 0.6, 0)
+        );
+    }
+
+    #[test]
     fn creative_flight_ends_on_landing_but_spectators_keep_flying() {
         let mut world = WorldSnapshot::new();
         world.set_block(

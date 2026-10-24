@@ -1403,7 +1403,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         FluidState::Waterlogged => rules.water_drag,
         FluidState::Empty => rules.vertical_drag,
     };
-    let jumping = state.jump_requested && !(state.is_player && state.flying);
+    let jumping = state.jump_requested
+        && !(state.is_player && state.flying && rules.release.at_least(1, 16, 0));
     if matches!(
         fluid,
         FluidState::Water | FluidState::Waterlogged | FluidState::Lava
