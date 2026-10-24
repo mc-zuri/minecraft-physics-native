@@ -733,6 +733,20 @@ impl WorldSnapshot {
             .any(|shape| is_non_empty_shape(shape.bounds))
     }
 
+    /// The collision boxes of the block at a position, moved there.
+    #[must_use]
+    pub fn block_collision_boxes(&self, position: (i32, i32, i32)) -> Vec<Aabb> {
+        let offset = Vec3::new(
+            f64::from(position.0),
+            f64::from(position.1),
+            f64::from(position.2),
+        );
+        self.block_collision_shapes(position)
+            .filter(|shape| is_non_empty_shape(shape.bounds))
+            .map(|shape| shape.bounds.translated(offset))
+            .collect()
+    }
+
     #[must_use]
     pub fn is_air_at(&self, position: (i32, i32, i32)) -> bool {
         let block = self.block(position);

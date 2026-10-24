@@ -559,7 +559,7 @@ pub fn tick_with_rules(
     )
 }
 
-fn push_by_fluid(
+pub(crate) fn push_by_fluid(
     state: &mut SimulationState,
     contact: FluidContact,
     scale: f64,
@@ -715,7 +715,7 @@ fn stuck_speed_multiplier_inside(
         .last()
 }
 
-fn block_speed_factor(
+pub(crate) fn block_speed_factor(
     world: &WorldSnapshot,
     state: &SimulationState,
     support: Option<BlockPosition>,
@@ -750,7 +750,7 @@ fn block_speed_factor(
     }
 }
 
-fn block_below_affecting_movement(
+pub(crate) fn block_below_affecting_movement(
     state: &SimulationState,
     support: Option<BlockPosition>,
     release: MinecraftVersion,
@@ -771,7 +771,7 @@ fn block_below_affecting_movement(
     on_position(state, support, 0.500001)
 }
 
-fn landing_position(
+pub(crate) fn landing_position(
     state: &SimulationState,
     support: Option<BlockPosition>,
     release: MinecraftVersion,
@@ -798,7 +798,7 @@ fn on_position(
 /// Entity.mainSupportingBlockPos (1.20+, checkSupportingBlock): the block under an entity on the
 /// ground that supports it, else, after a move that leaves the box over nothing, the one under
 /// the box where the move started.
-fn main_supporting_block(
+pub(crate) fn main_supporting_block(
     world: &WorldSnapshot,
     state: &SimulationState,
     movement: Option<Vec3>,
@@ -997,7 +997,7 @@ fn kept_bounding_box(state: &SimulationState) -> Aabb {
     }
 }
 
-fn position_of_bounding_box(bounds: Aabb) -> Vec3 {
+pub(crate) fn position_of_bounding_box(bounds: Aabb) -> Vec3 {
     Vec3::new(
         (bounds.min.x + bounds.max.x) / 2.0,
         bounds.min.y,
@@ -1005,7 +1005,7 @@ fn position_of_bounding_box(bounds: Aabb) -> Vec3 {
     )
 }
 
-fn block_position(position: Vec3) -> (i32, i32, i32) {
+pub(crate) fn block_position(position: Vec3) -> (i32, i32, i32) {
     (
         position.x.floor() as i32,
         position.y.floor() as i32,
@@ -1270,7 +1270,7 @@ fn sneaking_speed(state: &SimulationState) -> f32 {
     state.sneaking_speed.map_or(0.3, |speed| speed as f32)
 }
 
-fn mth_sin(radians: f64, release: MinecraftVersion) -> f64 {
+pub(crate) fn mth_sin(radians: f64, release: MinecraftVersion) -> f64 {
     if release.at_least(1, 21, 11) {
         java_sin(radians)
     } else {
@@ -1278,7 +1278,7 @@ fn mth_sin(radians: f64, release: MinecraftVersion) -> f64 {
     }
 }
 
-fn mth_cos(radians: f64, release: MinecraftVersion) -> f64 {
+pub(crate) fn mth_cos(radians: f64, release: MinecraftVersion) -> f64 {
     if release.at_least(1, 21, 11) {
         java_cos(radians)
     } else {
@@ -1347,7 +1347,7 @@ fn effective_modifier(modifier: f64, present: bool) -> f64 {
     }
 }
 
-fn moves_position(requested: Vec3, movement: Vec3, release: MinecraftVersion) -> bool {
+pub(crate) fn moves_position(requested: Vec3, movement: Vec3, release: MinecraftVersion) -> bool {
     let length_squared = movement.length_squared();
     length_squared > 1.0e-7
         || (release.at_least(1, 21, 2) && requested.length_squared() - length_squared < 1.0e-7)

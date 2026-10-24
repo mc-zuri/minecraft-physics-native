@@ -398,6 +398,10 @@ pub struct NativeBoatState {
     pub collided_horizontally: Option<bool>,
     pub collided_vertically: Option<bool>,
     pub on_ground: Option<bool>,
+    pub yaw_degrees: Option<f64>,
+    pub land_friction: Option<f64>,
+    pub last_vertical_velocity: Option<f64>,
+    pub bounding_box: Option<NativeAabb>,
 }
 
 #[napi(object)]
@@ -2098,6 +2102,7 @@ pub fn simulate_boat_tick(state: NativeBoatState) -> Result<NativeBoatState> {
         collided_horizontally: state.collided_horizontally.unwrap_or(false),
         collided_vertically: state.collided_vertically.unwrap_or(false),
         on_ground: state.on_ground.unwrap_or(false),
+        ..BoatSimulationState::default()
     };
     if !valid_boat_state(state) {
         return Err(Error::from_reason(
@@ -2129,7 +2134,21 @@ pub fn simulate_boat_tick(state: NativeBoatState) -> Result<NativeBoatState> {
         collided_horizontally: Some(state.collided_horizontally),
         collided_vertically: Some(state.collided_vertically),
         on_ground: Some(state.on_ground),
+        yaw_degrees: None,
+        land_friction: None,
+        last_vertical_velocity: None,
+        bounding_box: None,
     })
+}
+
+fn vehicle_release(version: &str, kind: &str) -> Result<MinecraftVersion> {
+    if !versioned::is_supported(version) {
+        return Err(Error::from_reason(format!(
+            "unsupported Minecraft version for {kind} simulation: {version}"
+        )));
+    }
+    MinecraftVersion::parse(version)
+        .ok_or_else(|| Error::from_reason(format!("invalid Minecraft version: {version}")))
 }
 
 #[napi]
@@ -2138,13 +2157,9 @@ pub fn simulate_versioned_boat_tick(
     world: &NativeWorld,
     state: NativeBoatState,
 ) -> Result<NativeBoatState> {
-    if !versioned::is_supported(&version) {
-        return Err(Error::from_reason(format!(
-            "unsupported Minecraft version for boat simulation: {version}"
-        )));
-    }
+    let release = vehicle_release(&version, "boat")?;
     let mut state = boat_state(state)?;
-    tick_boat_in_world(&mut state, world.snapshot());
+    tick_boat_in_world(&mut state, world.snapshot(), release);
     Ok(native_boat_state(state))
 }
 
@@ -2155,11 +2170,7 @@ pub fn simulate_versioned_boat_ticks(
     states: Vec<NativeBoatState>,
     ticks: u32,
 ) -> Result<Vec<NativeBoatState>> {
-    if !versioned::is_supported(&version) {
-        return Err(Error::from_reason(format!(
-            "unsupported Minecraft version for boat simulation: {version}"
-        )));
-    }
+    let release = vehicle_release(&version, "boat")?;
     let snapshot = world.snapshot();
     let mut states: Vec<BoatSimulationState> = states
         .into_iter()
@@ -2167,7 +2178,7 @@ pub fn simulate_versioned_boat_ticks(
         .collect::<Result<Vec<_>>>()?;
     for _ in 0..ticks {
         for state in &mut states {
-            tick_boat_in_world(state, snapshot);
+            tick_boat_in_world(state, snapshot, release);
         }
     }
     Ok(states.into_iter().map(native_boat_state).collect())
@@ -3239,6 +3250,7 @@ fn boat_state(value: NativeBoatState) -> Result<BoatSimulationState> {
         position: value.position.into(),
         velocity: value.velocity.into(),
         yaw: value.yaw,
+        yaw_degrees: value.yaw_degrees.unwrap_or_else(|| value.yaw.to_degrees()) as f32,
         forward: value.forward,
         left: value.left,
         right: value.right,
@@ -3246,8 +3258,11 @@ fn boat_state(value: NativeBoatState) -> Result<BoatSimulationState> {
         delta_rotation: value.delta_rotation.unwrap_or(0.0),
         in_water: value.in_water,
         water_level: value.water_level.unwrap_or(f64::NEG_INFINITY),
+        land_friction: value.land_friction.unwrap_or(0.0) as f32,
         status: parse_boat_status(value.status.as_deref()),
         previous_status: parse_boat_status(value.previous_status.as_deref()),
+        settle_status: value.status.is_none(),
+        last_yd: value.last_vertical_velocity.unwrap_or(0.0),
         bubble_time: value.bubble_time.unwrap_or(0),
         bubble_column_direction_is_down: value
             .bubble_column_direction_is_down
@@ -3257,6 +3272,7 @@ fn boat_state(value: NativeBoatState) -> Result<BoatSimulationState> {
         collided_horizontally: value.collided_horizontally.unwrap_or(false),
         collided_vertically: value.collided_vertically.unwrap_or(false),
         on_ground: value.on_ground.unwrap_or(false),
+        bounding_box: value.bounding_box.map(Into::into),
     };
     if !valid_boat_state(state) {
         return Err(Error::from_reason(
@@ -3264,6 +3280,17 @@ fn boat_state(value: NativeBoatState) -> Result<BoatSimulationState> {
         ));
     }
     Ok(state)
+}
+
+fn boat_status_name(status: BoatStatus) -> String {
+    match status {
+        BoatStatus::InWater => "in_water",
+        BoatStatus::UnderWater => "under_water",
+        BoatStatus::UnderFlowingWater => "under_flowing_water",
+        BoatStatus::OnLand => "on_land",
+        BoatStatus::InAir => "in_air",
+    }
+    .to_string()
 }
 
 fn native_boat_state(state: BoatSimulationState) -> NativeBoatState {
@@ -3278,20 +3305,8 @@ fn native_boat_state(state: BoatSimulationState) -> NativeBoatState {
         delta_rotation: Some(state.delta_rotation),
         in_water: state.in_water,
         water_level: Some(state.water_level),
-        status: Some(match state.status {
-            BoatStatus::InWater => "in_water",
-            BoatStatus::UnderWater => "under_water",
-            BoatStatus::UnderFlowingWater => "under_flowing_water",
-            BoatStatus::OnLand => "on_land",
-            BoatStatus::InAir => "in_air",
-        }.to_string()),
-        previous_status: Some(match state.previous_status {
-            BoatStatus::InWater => "in_water",
-            BoatStatus::UnderWater => "under_water",
-            BoatStatus::UnderFlowingWater => "under_flowing_water",
-            BoatStatus::OnLand => "on_land",
-            BoatStatus::InAir => "in_air",
-        }.to_string()),
+        status: Some(boat_status_name(state.status)),
+        previous_status: Some(boat_status_name(state.previous_status)),
         bubble_time: Some(state.bubble_time),
         bubble_column_direction_is_down: Some(state.bubble_column_direction_is_down),
         above_bubble_column: Some(state.above_bubble_column),
@@ -3299,6 +3314,10 @@ fn native_boat_state(state: BoatSimulationState) -> NativeBoatState {
         collided_horizontally: Some(state.collided_horizontally),
         collided_vertically: Some(state.collided_vertically),
         on_ground: Some(state.on_ground),
+        yaw_degrees: Some(f64::from(state.yaw_degrees)),
+        land_friction: Some(f64::from(state.land_friction)),
+        last_vertical_velocity: Some(state.last_yd),
+        bounding_box: state.bounding_box.map(Into::into),
     }
 }
 

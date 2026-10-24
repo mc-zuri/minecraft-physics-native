@@ -446,15 +446,25 @@ export interface NativeBoatState {
     deltaRotation?: number;
     inWater: boolean;
     waterLevel?: number;
+    /** The status of the tick before; without one the versioned tick takes it where the boat is. */
     status?: 'in_water' | 'under_water' | 'under_flowing_water' | 'on_land' | 'in_air';
     previousStatus?: 'in_water' | 'under_water' | 'under_flowing_water' | 'on_land' | 'in_air';
     bubbleTime?: number;
     bubbleColumnDirectionIsDown?: boolean;
     aboveBubbleColumn?: boolean;
+    /** A player rides and controls the boat (its land friction halves each tick). */
     playerPassenger?: boolean;
     collidedHorizontally?: boolean;
     collidedVertically?: boolean;
     onGround?: boolean;
+    /** Vanilla's float yRot in degrees (the versioned tick turns it); `yaw` in radians otherwise. */
+    yawDegrees?: number;
+    /** Boat.landFriction: the ground friction it last found. */
+    landFriction?: number;
+    /** Boat.lastYd: the vertical motion its last move saw. */
+    lastVerticalVelocity?: number;
+    /** The box the boat keeps before 1.17. */
+    boundingBox?: NativeAabb;
 }
 
 export interface NativeHorseState {
