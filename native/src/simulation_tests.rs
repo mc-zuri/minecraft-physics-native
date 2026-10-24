@@ -2347,6 +2347,33 @@ mod tests {
     }
 
     #[test]
+    fn ladder_falls_are_clamped_to_a_double_before_1_14() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 100, 0),
+            BlockState {
+                shape: Some(BlockShape {
+                    effect: BlockEffect::Climbable,
+                    bounds: Aabb::new(Vec3::ZERO, Vec3::ZERO),
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        for (version, clamp) in [("1.13.2", 0.15), ("1.14.4", f64::from(0.15_f32))] {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 100.5, 0.5),
+                velocity: Vec3::new(0.0, -0.5, 0.0),
+                is_player: true,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            assert_eq!(state.position.y, 100.5 - clamp, "{version}");
+        }
+    }
+
+    #[test]
     fn sneaking_player_stops_sliding_down_ladder_but_not_scaffolding() {
         let mut ladder_world = WorldSnapshot::new();
         ladder_world.set_block(
