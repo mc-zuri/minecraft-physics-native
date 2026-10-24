@@ -496,7 +496,7 @@ mod tests {
         tick_boat_in_world(&mut boat, &world);
 
         assert!(boat.in_water);
-        assert_eq!(boat.water_level, 1.0);
+        assert_eq!(boat.water_level, f64::from(8.0_f32 / 9.0));
         assert_eq!(boat.status, super::BoatStatus::InWater);
         assert!(boat.position.y >= 0.0);
     }
@@ -544,7 +544,7 @@ mod tests {
 
         tick_boat_in_world(&mut boat, &world);
 
-        assert!(boat.position.y > 1.501);
+        assert!(boat.position.y > 1.0 + f64::from(8.0_f32 / 9.0) - 0.6);
         assert_eq!(boat.status, super::BoatStatus::InWater);
     }
 

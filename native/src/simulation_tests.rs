@@ -884,7 +884,7 @@ mod tests {
             },
         );
         let mut state = SimulationState {
-            position: Vec3::new(0.5, 0.5, 0.5),
+            position: Vec3::new(0.5, 0.2, 0.5),
             velocity: Vec3::new(1.0, 0.0, 0.0),
             ..SimulationState::default()
         };
@@ -917,7 +917,7 @@ mod tests {
     }
 
     #[test]
-    fn fluid_currents_apply_to_any_nonzero_flow() {
+    fn fluid_currents_apply_to_any_nonzero_flow_until_26_1() {
         let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 0, 0),
@@ -927,14 +927,21 @@ mod tests {
                 ..BlockState::default()
             },
         );
-        let mut state = SimulationState {
-            position: Vec3::new(0.5, 0.5, 0.5),
-            ..SimulationState::default()
+        let pushed = |release: MinecraftVersion| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 0.5, 0.5),
+                ..SimulationState::default()
+            };
+            let rules = VersionPhysicsRules {
+                release,
+                ..VersionPhysicsRules::default()
+            };
+            tick_with_rules(&mut state, &world, PhysicsConfig::default(), rules);
+            state.velocity.x
         };
 
-        tick(&mut state, &world, PhysicsConfig::default());
-
-        assert!(state.velocity.x > 0.0);
+        assert!(pushed(MinecraftVersion::new(1, 21, 11)) > 0.0);
+        assert_eq!(pushed(MinecraftVersion::new(26, 1, 0)), 0.0);
     }
 
     #[test]
@@ -948,15 +955,22 @@ mod tests {
                 ..BlockState::default()
             },
         );
-        let mut state = SimulationState {
-            position: Vec3::new(0.5, 0.5, 0.5),
-            ultra_warm: true,
-            ..SimulationState::default()
+        let pushed = |release: MinecraftVersion| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 0.5, 0.5),
+                ultra_warm: true,
+                ..SimulationState::default()
+            };
+            let rules = VersionPhysicsRules {
+                release,
+                ..VersionPhysicsRules::default()
+            };
+            tick_with_rules(&mut state, &world, PhysicsConfig::default(), rules);
+            state.velocity.x
         };
 
-        tick(&mut state, &world, PhysicsConfig::default());
-
-        assert!((state.velocity.x - 0.007 * 0.5).abs() < 1e-7);
+        assert!((pushed(MinecraftVersion::new(1, 21, 11)) - 0.007 * 0.5).abs() < 1e-7);
+        assert!((pushed(MinecraftVersion::new(26, 1, 0)) - (0.007 + 0.007) * 0.5).abs() < 1e-7);
     }
 
     #[test]
@@ -971,7 +985,7 @@ mod tests {
             },
         );
         let mut state = SimulationState {
-            position: Vec3::new(0.5, 0.5, 0.5),
+            position: Vec3::new(0.5, 0.2, 0.5),
             is_player: true,
             ..SimulationState::default()
         };
@@ -1471,8 +1485,10 @@ mod tests {
         let mut rules = VersionPhysicsRules::default();
         rules.lava_gravity_divisor = 8.0;
         let mut state = SimulationState {
-            position: Vec3::new(0.5, 0.5, 0.5),
+            position: Vec3::new(0.5, 0.2, 0.5),
             no_gravity: false,
+            half_width: 0.3,
+            height: 1.8,
             ..SimulationState::default()
         };
 
@@ -1492,7 +1508,7 @@ mod tests {
             },
         );
         let mut state = SimulationState {
-            position: Vec3::new(0.5, 0.9, 0.5),
+            position: Vec3::new(0.5, 0.5, 0.5),
             velocity: Vec3::ZERO,
             half_width: 0.3,
             height: 1.8,
@@ -1531,7 +1547,7 @@ mod tests {
     }
 
     #[test]
-    fn landing_into_post_movement_water_does_not_accumulate_fall_distance() {
+    fn entering_water_restarts_the_fall_distance_from_the_last_move() {
         let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 0, 0),
@@ -1553,12 +1569,15 @@ mod tests {
             velocity: Vec3::new(0.0, -1.5, 0.0),
             on_ground: false,
             no_gravity: true,
+            half_width: 0.3,
+            height: 1.8,
             ..SimulationState::default()
         };
 
         tick(&mut state, &world, PhysicsConfig::default());
 
-        assert_eq!(state.fall_distance, 0.0);
+        assert!(state.in_water);
+        assert_eq!(state.fall_distance, 1.5);
     }
 
     #[test]
@@ -2029,7 +2048,7 @@ mod tests {
             },
         );
         let mut state = SimulationState {
-            position: Vec3::new(0.5, 0.9, 0.5),
+            position: Vec3::new(0.5, 0.5, 0.5),
             jump_requested: true,
             half_width: 0.3,
             height: 1.8,

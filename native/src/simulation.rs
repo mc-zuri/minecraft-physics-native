@@ -3,7 +3,7 @@ use crate::entity::{Dimensions, EntityFlags, EntityState};
 use crate::math::{java_cos, java_cos_legacy, java_float, java_sin, java_sin_legacy, Aabb, Vec3};
 use crate::version::MinecraftVersion;
 use crate::world::WorldSnapshot;
-use crate::world::{BlockEffect, FluidState};
+use crate::world::{BlockEffect, FluidContact, FluidState};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PhysicsConfig {
@@ -534,12 +534,64 @@ pub fn tick_with_rules(
     )
 }
 
-fn legacy_travel_fluid_flow(world: &WorldSnapshot, fluid: FluidState, bounds: Aabb) -> Vec3 {
-    world.fluid_flow_in_bounds(fluid, bounds)
+fn push_by_fluid(
+    state: &mut SimulationState,
+    contact: FluidContact,
+    scale: f64,
+    release: MinecraftVersion,
+) {
+    let average = || contact.flow.scale(1.0 / f64::from(contact.flowing_blocks));
+    let current = if release.at_least(26, 1, 0) {
+        if contact.flowing_blocks == 0 || contact.flow.length_squared() < 9.999999747378752e-6 {
+            return;
+        }
+        if state.is_player {
+            average()
+        } else {
+            normalize(contact.flow, release)
+        }
+    } else {
+        if !(vector_length(contact.flow, release) > 0.0) {
+            return;
+        }
+        let current = if contact.flowing_blocks > 0 {
+            average()
+        } else {
+            contact.flow
+        };
+        if state.is_player {
+            current
+        } else {
+            normalize(current, release)
+        }
+    };
+    let mut push = current.scale(scale);
+    if release.at_least(1, 16, 0)
+        && state.velocity.x.abs() < 0.003
+        && state.velocity.z.abs() < 0.003
+        && vector_length(push, release) < 0.0045000000000000005
+    {
+        push = normalize(push, release).scale(0.0045000000000000005);
+    }
+    state.velocity = state.velocity + push;
 }
 
-fn travel_in_fluid_flow(world: &WorldSnapshot, fluid: FluidState, bounds: Aabb) -> Vec3 {
-    world.fluid_flow_in_bounds(fluid, bounds)
+fn vector_length(vector: Vec3, release: MinecraftVersion) -> f64 {
+    let length = vector.length_squared().sqrt();
+    if release.at_least(1, 17, 0) {
+        length
+    } else {
+        java_float(length)
+    }
+}
+
+fn normalize(vector: Vec3, release: MinecraftVersion) -> Vec3 {
+    let length = vector_length(vector, release);
+    if length < 1.0e-4 {
+        Vec3::ZERO
+    } else {
+        Vec3::new(vector.x / length, vector.y / length, vector.z / length)
+    }
 }
 
 fn apply_legacy_fluid_travel_vertical(
@@ -560,7 +612,7 @@ fn apply_legacy_fluid_travel_vertical(
             }
         }
         FluidState::Lava => {
-            if fluid_height <= fluid_jump_threshold {
+            if rules.release.at_least(1, 16, 0) && fluid_height <= fluid_jump_threshold {
                 state.velocity.y *= java_float(rules.fluid_vertical_drag);
                 if fluid_falling_gravity_enabled(state, rules, sprint_active) {
                     state.velocity.y =
@@ -951,24 +1003,10 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     if let Some(step_height) = state.step_height {
         rules.step_height = step_height;
     }
-    if state.velocity.x.abs() < config.negligible_velocity {
-        state.velocity.x = 0.0;
-    }
-    if state.velocity.y.abs() < config.negligible_velocity {
-        state.velocity.y = 0.0;
-    }
-    if state.velocity.z.abs() < config.negligible_velocity {
-        state.velocity.z = 0.0;
-    }
     if state.slow_falling || state.levitation {
         state.fall_distance = 0.0;
     }
     state.jump_ticks = state.jump_ticks.saturating_sub(1);
-    let mut fluid = world.fluid_at((
-        state.position.x.floor() as i32,
-        state.position.y.floor() as i32,
-        state.position.z.floor() as i32,
-    ));
     let feet_position = (
         state.position.x.floor() as i32,
         (state.position.y - 0.01).floor() as i32,
@@ -979,8 +1017,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.position.y.floor() as i32,
         state.position.z.floor() as i32,
     );
-    let body_fluid_height = world.fluid_height_at(body_position);
-    let body_fluid = world.fluid_at(body_position);
     let bounds = state.bounds();
     let eye_height = state.eye_height.unwrap_or(state.height * 0.85);
     let eye_half_width = state.half_width * 0.8;
@@ -1001,27 +1037,52 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             .collision_shapes(eye_box)
             .iter()
             .any(|shape| shape.intersects(eye_box));
-    let water_height = world.fluid_height_in_bounds(FluidState::Water, bounds);
-    let lava_height = world.fluid_height_in_bounds(FluidState::Lava, bounds);
-    if fluid == FluidState::Empty {
-        if water_height > 0.0 {
-            fluid = FluidState::Water;
-        } else if lava_height > 0.0 {
-            fluid = FluidState::Lava;
+    let affected_by_fluids = !(state.is_player && state.flying);
+    let water = world.fluid_contact(FluidState::Water, bounds, rules.release);
+    state.in_water = water.touching;
+    if state.in_water {
+        state.fall_distance = 0.0;
+        if affected_by_fluids {
+            push_by_fluid(state, water, rules.water_flow_scale, rules.release);
         }
     }
-    // The source split introduced `travelInFluid` as a separate handler in
-    // 1.21.4, but its fluid-flow sampling is source-identical at this stage.
-    // Keep the handler boundary explicit so later source changes cannot
-    // accidentally alter the legacy pipeline.
-    let fluid_flow = if rules.fluid_travel_split {
-        travel_in_fluid_flow(world, fluid, bounds)
+    let lava = world.fluid_contact(FluidState::Lava, bounds, rules.release);
+    state.in_lava = if rules.release.at_least(1, 16, 0) {
+        if affected_by_fluids {
+            let lava_flow_scale = if state.ultra_warm {
+                rules.ultra_warm_lava_flow_scale
+            } else {
+                rules.lava_flow_scale
+            };
+            push_by_fluid(state, lava, lava_flow_scale, rules.release);
+        }
+        lava.height > 0.0
     } else {
-        legacy_travel_fluid_flow(world, fluid, bounds)
+        world.has_fluid_block_inside(FluidState::Lava, bounds)
     };
-    let fluid_height = world
-        .fluid_height_in_bounds(fluid, bounds)
-        .max(body_fluid_height);
+    if state.velocity.x.abs() < config.negligible_velocity {
+        state.velocity.x = 0.0;
+    }
+    if state.velocity.y.abs() < config.negligible_velocity {
+        state.velocity.y = 0.0;
+    }
+    if state.velocity.z.abs() < config.negligible_velocity {
+        state.velocity.z = 0.0;
+    }
+    let fluid = if !affected_by_fluids {
+        FluidState::Empty
+    } else if state.in_water {
+        FluidState::Water
+    } else if state.in_lava {
+        FluidState::Lava
+    } else {
+        FluidState::Empty
+    };
+    let fluid_height = if state.in_water {
+        water.height
+    } else {
+        lava.height
+    };
     let fluid_jump_threshold = if state.height - 0.1 < 0.4 { 0.0 } else { 0.4 };
     let head_position = (
         state.position.x.floor() as i32,
@@ -1087,13 +1148,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         || feet_effect == BlockEffect::Scaffolding;
     let on_scaffolding =
         body_effect == BlockEffect::Scaffolding || feet_effect == BlockEffect::Scaffolding;
-    state.in_water = matches!(body_fluid, FluidState::Water | FluidState::Waterlogged)
-        || (matches!(fluid, FluidState::Water | FluidState::Waterlogged) && water_height > 0.0);
-    state.in_lava =
-        body_fluid == FluidState::Lava || (fluid == FluidState::Lava && lava_height > 0.0);
-    if state.in_water {
-        state.fall_distance = 0.0;
-    }
     let eye_y = state.position.y + state.height - 0.1;
     let eye_fluid_height = world.fluid_height_at(head_position);
     let eye_fluid_top = head_position.1 as f64 + eye_fluid_height;
@@ -1112,50 +1166,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         FluidState::Water | FluidState::Waterlogged
     ) && eye_fluid_top > eye_y;
     state.eye_in_lava = head_fluid.fluid == FluidState::Lava && eye_fluid_top > eye_y;
-    let fluid_flow_length =
-        (fluid_flow.x * fluid_flow.x + fluid_flow.y * fluid_flow.y + fluid_flow.z * fluid_flow.z)
-            .sqrt();
-    if (state.in_water || state.in_lava) && fluid_flow_length > 0.0 {
-        let flow_scale = if state.in_water {
-            rules.water_flow_scale
-        } else if state.ultra_warm {
-            rules.ultra_warm_lava_flow_scale
-        } else {
-            rules.lava_flow_scale
-        };
-        let normalized_flow = if state.is_player {
-            fluid_flow
-        } else {
-            Vec3::new(
-                fluid_flow.x / fluid_flow_length,
-                fluid_flow.y / fluid_flow_length,
-                fluid_flow.z / fluid_flow_length,
-            )
-        };
-        let mut applied_flow = Vec3::new(
-            normalized_flow.x * flow_scale,
-            normalized_flow.y * flow_scale,
-            normalized_flow.z * flow_scale,
-        );
-        let applied_length = (applied_flow.x * applied_flow.x
-            + applied_flow.y * applied_flow.y
-            + applied_flow.z * applied_flow.z)
-            .sqrt();
-        if state.velocity.x.abs() < 0.003
-            && state.velocity.z.abs() < 0.003
-            && applied_length < 0.0045
-        {
-            if applied_length > 0.0 {
-                let scale = 0.0045 / applied_length;
-                applied_flow.x *= scale;
-                applied_flow.y *= scale;
-                applied_flow.z *= scale;
-            }
-        }
-        state.velocity.x += applied_flow.x;
-        state.velocity.y += applied_flow.y;
-        state.velocity.z += applied_flow.z;
-    }
     let gravity = match fluid {
         FluidState::Water => rules.gravity / rules.water_gravity_divisor,
         FluidState::Lava => rules.gravity / rules.lava_gravity_divisor,
@@ -1425,19 +1435,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     };
 
     state.position = state.position + displacement;
-    // Entity.checkFallDamage uses the post-movement fluid state. A landing
-    // into water must not accumulate the downward movement into fall distance.
-    let post_movement_bounds = state.bounds();
-    let post_movement_body = (
-        state.position.x.floor() as i32,
-        state.position.y.floor() as i32,
-        state.position.z.floor() as i32,
-    );
-    let post_movement_in_water =
-        matches!(
-            world.fluid_at(post_movement_body),
-            FluidState::Water | FluidState::Waterlogged
-        ) || world.fluid_height_in_bounds(FluidState::Water, post_movement_bounds) > 0.0;
     let mut reset_fall_distance = false;
     if state.fall_distance != 0.0
         && displacement.length_squared() >= 1.0
@@ -1472,6 +1469,30 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.collided_vertically = false;
         state.vertical_collision_below = false;
     }
+    let checks_fall_damage =
+        !(state.is_player && rules.release == MinecraftVersion::new(1, 21, 4));
+    if checks_fall_damage && !state.in_water {
+        let water = world.fluid_contact(FluidState::Water, state.bounds(), rules.release);
+        if water.touching {
+            state.in_water = true;
+            state.fall_distance = 0.0;
+            if affected_by_fluids {
+                push_by_fluid(state, water, rules.water_flow_scale, rules.release);
+            }
+        }
+        if rules.release.at_least(26, 1, 0) {
+            let lava = world.fluid_contact(FluidState::Lava, state.bounds(), rules.release);
+            state.in_lava = lava.touching;
+            if affected_by_fluids && lava.touching {
+                let lava_flow_scale = if state.ultra_warm {
+                    rules.ultra_warm_lava_flow_scale
+                } else {
+                    rules.lava_flow_scale
+                };
+                push_by_fluid(state, lava, lava_flow_scale, rules.release);
+            }
+        }
+    }
     let support_effect = world.supporting_block_effect(state.bounds());
     if support_effect == BlockEffect::Magma && !state.stepping_carefully && !state.fall_flying {
         state.contact_damage += 1.0;
@@ -1488,7 +1509,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.fall_damage = 0.0;
     }
     let bounced = slime_bounce;
-    if state.on_ground {
+    if checks_fall_damage && state.on_ground {
         if state.on_ground {
             state.fall_damage = if state.fall_damage_immune {
                 0.0
@@ -1516,7 +1537,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             };
             state.fall_distance = 0.0;
         }
-    } else if !bounced && !reset_fall_distance && displacement.y < 0.0 && !post_movement_in_water {
+    } else if checks_fall_damage && !bounced && !reset_fall_distance && displacement.y < 0.0 {
         state.fall_distance += -displacement.y;
     }
 
@@ -1634,7 +1655,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         }
     }
     let horizontal_drag = if gliding { 1.0 } else { ground_inertia };
-    let liquid_horizontal_drag = if state.in_water {
+    let liquid_horizontal_drag = if matches!(fluid, FluidState::Water | FluidState::Waterlogged) {
         let mut water_drag = if state.sprinting {
             java_float(rules.water_sprint_drag)
         } else {
@@ -1655,7 +1676,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             water_drag = java_float(0.96);
         }
         water_drag
-    } else if state.in_lava {
+    } else if fluid == FluidState::Lava {
         java_float(rules.lava_drag)
     } else {
         horizontal_drag

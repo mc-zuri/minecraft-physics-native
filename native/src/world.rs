@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::math::{Aabb, Vec3};
+use crate::version::MinecraftVersion;
 use crate::voxel_shape::VoxelShape;
 
 type BlockPosition = (i32, i32, i32);
@@ -56,6 +57,14 @@ pub enum BlockEffect {
     SoulFire,
     BubbleUp,
     BubbleDown,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FluidContact {
+    pub touching: bool,
+    pub height: f64,
+    pub flow: Vec3,
+    pub flowing_blocks: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -386,66 +395,73 @@ impl WorldSnapshot {
         if fluids_match(block.fluid, above.fluid) {
             return 1.0;
         }
-        if block.fluid_source || block.fluid_level == 0 {
-            return 1.0;
+        let amount = if block.fluid_source || block.fluid_falling || !(1..8).contains(&block.fluid_level) {
+            8
+        } else {
+            8 - block.fluid_level
+        };
+        f64::from(f32::from(amount) / 9.0)
+    }
+
+    #[must_use]
+    pub fn fluid_contact(
+        &self,
+        fluid: FluidState,
+        bounds: Aabb,
+        release: MinecraftVersion,
+    ) -> FluidContact {
+        let area = bounds.deflate(Vec3::new(0.001, 0.001, 0.001));
+        let interaction = release.at_least(26, 1, 0);
+        let bottom = if interaction { bounds.min.y } else { area.min.y };
+        let mut contact = FluidContact::default();
+        for x in area.min.x.floor() as i32..area.max.x.ceil() as i32 {
+            for y in area.min.y.floor() as i32..area.max.y.ceil() as i32 {
+                for z in area.min.z.floor() as i32..area.max.z.ceil() as i32 {
+                    let block = self.block((x, y, z));
+                    if !fluid_matches_query(fluid, block.fluid) {
+                        continue;
+                    }
+                    let height = self.fluid_height_at((x, y, z));
+                    let top = if interaction {
+                        f64::from(y) + height
+                    } else {
+                        f64::from(y as f32 + height as f32)
+                    };
+                    if top < area.min.y {
+                        continue;
+                    }
+                    contact.touching = true;
+                    contact.height = contact.height.max(top - bottom);
+                    let flow = if contact.height < 0.4 {
+                        block.fluid_flow.scale(contact.height)
+                    } else {
+                        block.fluid_flow
+                    };
+                    contact.flow = contact.flow + flow;
+                    contact.flowing_blocks += 1;
+                }
+            }
         }
-        if block.fluid_falling && block.fluid_level > 8 {
-            let amount = 16_u8.saturating_sub(block.fluid_level).clamp(1, 8);
-            return f64::from(amount) / 9.0;
+        if interaction {
+            contact.touching = contact.height > 0.0;
         }
-        if block.fluid_level >= 8 {
-            return 8.0 / 9.0;
-        }
-        f64::from(8 - block.fluid_level) / 9.0
+        contact
+    }
+
+    #[must_use]
+    pub fn has_fluid_block_inside(&self, fluid: FluidState, bounds: Aabb) -> bool {
+        let area = bounds.deflate(Vec3::new(0.001, 0.001, 0.001));
+        (area.min.x.floor() as i32..=area.max.x.floor() as i32).any(|x| {
+            (area.min.y.floor() as i32..=area.max.y.floor() as i32).any(|y| {
+                (area.min.z.floor() as i32..=area.max.z.floor() as i32)
+                    .any(|z| fluid_matches_query(fluid, self.block((x, y, z)).fluid))
+            })
+        })
     }
 
     #[must_use]
     pub fn fluid_flow_at(&self, position: (i32, i32, i32)) -> Vec3 {
         self.block(position).fluid_flow
-    }
-
-    #[must_use]
-    pub fn fluid_flow_in_bounds(&self, fluid: FluidState, bounds: Aabb) -> Vec3 {
-        let min_x = (bounds.min.x + 0.001).floor() as i32;
-        let max_x = (bounds.max.x - 0.001).ceil() as i32;
-        let min_y = (bounds.min.y + 0.001).floor() as i32;
-        let max_y = (bounds.max.y - 0.001).ceil() as i32;
-        let min_z = (bounds.min.z + 0.001).floor() as i32;
-        let max_z = (bounds.max.z - 0.001).ceil() as i32;
-        let mut flow = Vec3::ZERO;
-        let mut count = 0.0;
-        let mut max_height: f64 = 0.0;
-        for x in min_x..max_x {
-            for y in min_y..max_y {
-                for z in min_z..max_z {
-                    let block = self.block((x, y, z));
-                    let matches = fluid_matches_query(fluid, block.fluid);
-                    if !matches {
-                        continue;
-                    }
-                    let top = y as f64 + self.fluid_height_at((x, y, z));
-                    if top < bounds.min.y {
-                        continue;
-                    }
-                    max_height = max_height.max(top - bounds.min.y);
-                    flow.x += block.fluid_flow.x;
-                    flow.y += block.fluid_flow.y;
-                    flow.z += block.fluid_flow.z;
-                    count += 1.0;
-                }
-            }
-        }
-        if count > 0.0 {
-            flow.x /= count;
-            flow.y /= count;
-            flow.z /= count;
-            if max_height < 0.4 {
-                flow.x *= max_height;
-                flow.y *= max_height;
-                flow.z *= max_height;
-            }
-        }
-        flow
     }
 
     #[must_use]
@@ -1263,7 +1279,7 @@ mod tests {
             },
         );
 
-        assert!((world.fluid_height_at((0, 0, 0)) - 4.0 / 9.0).abs() < f64::EPSILON);
+        assert_eq!(world.fluid_height_at((0, 0, 0)), f64::from(8.0_f32 / 9.0));
         assert_eq!(world.fluid_flow_at((0, 0, 0)), Vec3::new(1.0, 0.0, -0.5));
         assert!(world.block((0, 0, 0)).fluid_falling);
     }
@@ -1349,7 +1365,7 @@ mod tests {
     }
 
     #[test]
-    fn shallow_flow_scales_the_aggregate_after_sampling_all_blocks() {
+    fn shallow_flow_scales_each_block_by_the_fluid_height_reached_so_far() {
         let mut world = WorldSnapshot::default();
         for (x, level, flow) in [
             (0, 7, Vec3::new(1.0, 0.0, 0.0)),
@@ -1366,11 +1382,17 @@ mod tests {
             );
         }
 
-        let flow = world.fluid_flow_in_bounds(
+        let contact = world.fluid_contact(
             super::FluidState::Water,
             Aabb::new(Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 1.0, 1.0)),
+            crate::version::MinecraftVersion::new(1, 21, 1),
         );
-        assert_eq!(flow, Vec3::new(4.0 / 9.0, 0.0, 0.0));
+        let first = f64::from(1.0_f32 / 9.0) - 0.001;
+        let second = f64::from(2.0_f32 / 9.0) - 0.001;
+        assert!(contact.touching);
+        assert_eq!(contact.height, second);
+        assert_eq!(contact.flow, Vec3::new(1.0 * first + 3.0 * second, 0.0, 0.0));
+        assert_eq!(contact.flowing_blocks, 2);
     }
 
     #[test]
@@ -1402,7 +1424,7 @@ mod tests {
             },
         );
 
-        assert_eq!(world.fluid_height_at((0, 0, 0)), 8.0 / 9.0);
+        assert_eq!(world.fluid_height_at((0, 0, 0)), f64::from(8.0_f32 / 9.0));
     }
 
     #[test]
@@ -1418,11 +1440,11 @@ mod tests {
             },
         );
 
-        assert_eq!(world.fluid_height_at((0, 0, 0)), 4.0 / 9.0);
+        assert_eq!(world.fluid_height_at((0, 0, 0)), f64::from(8.0_f32 / 9.0));
     }
 
     #[test]
-    fn explicit_source_fluid_has_full_height_independent_of_level() {
+    fn source_fluid_is_eight_ninths_tall_without_the_same_fluid_above() {
         let mut world = WorldSnapshot::default();
         world.set_block(
             (0, 0, 0),
@@ -1434,7 +1456,7 @@ mod tests {
             },
         );
 
-        assert_eq!(world.fluid_height_at((0, 0, 0)), 1.0);
+        assert_eq!(world.fluid_height_at((0, 0, 0)), f64::from(8.0_f32 / 9.0));
     }
 
     #[test]
