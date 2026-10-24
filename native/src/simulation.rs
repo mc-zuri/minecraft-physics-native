@@ -1,5 +1,5 @@
 use crate::block_traversal::{blocks_visited, Movement};
-use crate::collision::{resolve_motion, resolve_step_motion, vanilla_equal};
+use crate::collision::{collide, vanilla_equal, StepUp};
 use crate::entity::{Dimensions, EntityFlags, EntityState};
 use crate::math::{java_cos, java_cos_legacy, java_float, java_sin, java_sin_legacy, Aabb, Vec3};
 use crate::version::MinecraftVersion;
@@ -1964,24 +1964,17 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     let desired =
         back_off_from_edge(state, world, &collision_context, movement, rules.step_height);
     let bounds = state.bounds();
-    let (normal_displacement, normal_collisions, obstacles) = if state.no_physics {
-        (desired, [false; 3], Vec::new())
+    let displacement = if state.no_physics {
+        desired
     } else {
-        let target = bounds.translated(desired);
+        let max_step = rules.step_height as f32;
+        let swept = bounds.expand_towards(desired);
         let query = Aabb::new(
+            swept.min,
             Vec3::new(
-                bounds.min.x.min(target.min.x),
-                bounds.min.y.min(target.min.y),
-                bounds.min.z.min(target.min.z),
-            ),
-            Vec3::new(
-                bounds.max.x.max(target.max.x),
-                bounds
-                    .max
-                    .y
-                    .max(target.max.y)
-                    .max(bounds.max.y + rules.step_height),
-                bounds.max.z.max(target.max.z),
+                swept.max.x,
+                swept.max.y.max(bounds.max.y + f64::from(max_step)),
+                swept.max.z,
             ),
         );
         let mut obstacles = world.collision_shapes_for_entity(query, &collision_context);
@@ -1995,30 +1988,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         if collides_with_border {
             obstacles.extend(border);
         }
-        let (displacement, collisions) = resolve_motion(bounds, desired, &obstacles);
-        (displacement, collisions, obstacles)
-    };
-    let can_step = state.on_ground || (normal_collisions[1] && desired.y < 0.0);
-    let displacement = if can_step
-        && !state.no_physics
-        && (normal_collisions[0] || normal_collisions[2])
-        && rules.step_height > 0.0
-    {
-        resolve_step_motion(
-            if desired.y < 0.0 {
-                bounds.translated(Vec3::new(0.0, normal_displacement.y, 0.0))
-            } else {
-                bounds
-            },
-            desired,
-            rules.step_height,
-            &obstacles,
-            normal_displacement,
-            normal_collisions,
-        )
-        .0
-    } else {
-        normal_displacement
+        collide(bounds, desired, &obstacles, state.on_ground, max_step, StepUp::Lifted)
     };
 
     if state.no_physics || moves_position(desired, displacement, rules.release) {
