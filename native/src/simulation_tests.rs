@@ -1129,7 +1129,70 @@ mod tests {
 
         tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
 
-        assert!(state.velocity.z > 0.19);
+        let ground_drag = java_float(java_float(0.6) * java_float(0.98));
+        assert_eq!(state.position.z, 0.5 + 0.2);
+        assert_eq!(state.velocity.z, 0.2 * ground_drag);
+    }
+
+    fn jump_height(state: SimulationState, release: MinecraftVersion) -> f64 {
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 1.0, 0.5),
+            on_ground: true,
+            jump_requested: true,
+            half_width: 0.3,
+            height: 1.8,
+            ..state
+        };
+        let rules = VersionPhysicsRules {
+            release,
+            ..VersionPhysicsRules::default()
+        };
+        tick_with_rules(&mut state, &WorldSnapshot::new(), PhysicsConfig::default(), rules);
+        state.position.y
+    }
+
+    #[test]
+    fn jump_boost_adds_a_tenth_per_level_in_the_precision_of_the_release() {
+        let boosted = SimulationState {
+            jump_boost_amplifier: Some(0),
+            ..SimulationState::default()
+        };
+
+        assert_eq!(
+            jump_height(boosted, MinecraftVersion::new(1, 16, 5)),
+            1.0 + f64::from(0.42_f32 + 0.1_f32)
+        );
+        assert_eq!(
+            jump_height(boosted, MinecraftVersion::new(1, 19, 2)),
+            1.0 + (f64::from(0.42_f32) + f64::from(0.1_f32))
+        );
+        assert_eq!(
+            jump_height(boosted, MinecraftVersion::new(1, 21, 1)),
+            1.0 + f64::from(0.42_f32 + 0.1_f32)
+        );
+    }
+
+    #[test]
+    fn jumping_keeps_a_faster_rise_from_1_21_2() {
+        let rising = SimulationState {
+            velocity: Vec3::new(0.0, 0.6, 0.0),
+            ..SimulationState::default()
+        };
+
+        assert_eq!(jump_height(rising, MinecraftVersion::new(1, 21, 1)), 1.0 + java_float(0.42));
+        assert_eq!(jump_height(rising, MinecraftVersion::new(1, 21, 2)), 1.0 + 0.6);
+    }
+
+    #[test]
+    fn releasing_jump_clears_the_jump_delay() {
+        let mut state = SimulationState {
+            jump_ticks: 5,
+            ..SimulationState::default()
+        };
+
+        tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
+
+        assert_eq!(state.jump_ticks, 0);
     }
 
     #[test]

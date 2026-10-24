@@ -650,6 +650,28 @@ fn flying_speed(state: &SimulationState, release: MinecraftVersion) -> f64 {
     }
 }
 
+fn jump_power(
+    state: &SimulationState,
+    config: PhysicsConfig,
+    release: MinecraftVersion,
+    block_jump_factor: f32,
+) -> f64 {
+    let strength = if state.jump_strength > 0.0 {
+        state.jump_strength
+    } else {
+        config.jump_velocity
+    };
+    let power = strength as f32 * block_jump_factor;
+    let boost = state
+        .jump_boost_amplifier
+        .map_or(0.0, |amplifier| 0.1_f32 * (f32::from(amplifier) + 1.0));
+    if release.at_least(1, 17, 1) && !release.at_least(1, 20, 0) {
+        f64::from(power) + f64::from(boost)
+    } else {
+        f64::from(power + boost)
+    }
+}
+
 fn friction_influenced_speed(speed: f64, friction: f64) -> f64 {
     let friction = friction as f32;
     f64::from(speed as f32 * (0.21600002_f32 / (friction * friction * friction)))
@@ -1037,28 +1059,45 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             state.velocity.y += (state.look.y - state.velocity.y) * steering;
         }
     }
+    let jumping = state.jump_requested && !(state.is_player && state.flying);
     if matches!(
         fluid,
         FluidState::Water | FluidState::Waterlogged | FluidState::Lava
-    ) && state.jump_requested
+    ) && jumping
     {
         state.velocity.y += 0.03999999910593033;
-    } else if state.on_ground && state.jump_requested && state.jump_ticks == 0 {
-        let jump_boost = state
-            .jump_boost_amplifier
-            .map_or(1.0, |amplifier| f64::from(amplifier) + 1.0);
-        state.velocity.y = if state.jump_strength > 0.0 {
-            state.jump_strength
+    } else if state.on_ground && jumping && state.jump_ticks == 0 {
+        let block_jump_factor = if world.effect_at(body_position) == BlockEffect::Honey
+            || feet_effect == BlockEffect::Honey
+        {
+            0.5
         } else {
-            config.jump_velocity
-        } + 0.1 * (jump_boost - 1.0);
-        if state.sprinting {
-            state.velocity.x -= mth_sin(state.yaw, rules.release) * 0.2;
-            state.velocity.z += mth_cos(state.yaw, rules.release) * 0.2;
+            1.0
+        };
+        let power = jump_power(state, config, rules.release, block_jump_factor);
+        if !rules.release.at_least(1, 20, 5) || power as f32 > 1.0e-5 {
+            state.velocity.y = if rules.release.at_least(1, 21, 2) {
+                power.max(state.velocity.y)
+            } else {
+                power
+            };
+            if state.sprinting {
+                let sin = mth_sin(state.yaw, rules.release);
+                let cos = mth_cos(state.yaw, rules.release);
+                if rules.release.at_least(1, 20, 5) {
+                    state.velocity.x += -sin * 0.2;
+                    state.velocity.z += cos * 0.2;
+                } else {
+                    state.velocity.x += f64::from(-(sin as f32) * 0.2);
+                    state.velocity.z += f64::from(cos as f32 * 0.2);
+                }
+            }
         }
-        state.on_ground = false;
         state.fall_distance = 0.0;
         state.jump_ticks = 10;
+    }
+    if !jumping {
+        state.jump_ticks = 0;
     }
     let travel_gravity = if state.slow_falling && state.velocity.y <= 0.0 {
         gravity.min(0.01)
