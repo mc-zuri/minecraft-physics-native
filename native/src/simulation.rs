@@ -283,6 +283,8 @@ pub struct SimulationState {
     pub moving_slowly: Option<bool>,
     pub stepping_carefully: bool,
     pub using_item: bool,
+    /// UseEffects.speedMultiplier of the item in use (1.21.11+); 0.2 when absent.
+    pub item_use_speed_multiplier: Option<f32>,
     pub swimming: bool,
     pub flying: bool,
     pub flying_speed: f64,
@@ -373,6 +375,7 @@ impl From<EntityState> for SimulationState {
             moving_slowly: None,
             stepping_carefully: false,
             using_item: false,
+            item_use_speed_multiplier: None,
             swimming: false,
             flying: false,
             flying_speed: 0.02,
@@ -1272,7 +1275,7 @@ fn modified_input(move_vector: [f32; 2], state: &SimulationState) -> [f32; 2] {
     }
     let mut input = scale_input(move_vector, 0.98);
     if state.using_item {
-        input = scale_input(input, 0.2);
+        input = scale_input(input, state.item_use_speed_multiplier.unwrap_or(0.2));
     }
     if state.moving_slowly.unwrap_or(state.sneaking) {
         input = scale_input(input, sneaking_speed(state));

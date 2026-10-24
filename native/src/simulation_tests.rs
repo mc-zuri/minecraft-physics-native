@@ -3126,6 +3126,28 @@ mod tests {
     }
 
     #[test]
+    fn item_in_use_slows_the_input_by_its_use_effects_speed() {
+        let walked = |using_item: bool, speed: Option<f32>| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.0, 2.0, 0.0),
+                input: Vec3::new(0.0, 0.0, 1.0),
+                is_player: true,
+                using_item,
+                item_use_speed_multiplier: speed,
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            tick_release(&mut state, &WorldSnapshot::new(), MinecraftVersion::new(1, 21, 11));
+            state.velocity
+        };
+
+        assert_eq!(walked(true, Some(1.0)), walked(false, None));
+        assert_eq!(walked(true, None), walked(true, Some(0.2)));
+        assert!(walked(true, None).z.abs() < walked(false, None).z.abs());
+    }
+
+    #[test]
     fn moving_slowly_decides_the_sneak_slowdown_not_the_sneak_key() {
         let mut world = WorldSnapshot::new();
         world.set_block(

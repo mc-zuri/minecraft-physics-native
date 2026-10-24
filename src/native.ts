@@ -80,6 +80,8 @@ export interface NativeSimulationState {
     movingSlowly?: boolean;
     steppingCarefully?: boolean;
     usingItem?: boolean;
+    /** UseEffects.speedMultiplier of the item in use (1.21.11+, a spear's 1.0); 0.2 when absent. */
+    itemUseSpeedMultiplier?: number;
     swimming?: boolean;
     flying?: boolean;
     flyingSpeed?: number;
