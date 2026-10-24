@@ -1414,28 +1414,26 @@ mod tests {
             v1_16_5::Profile::rules(),
             v1_17_1::Profile::rules(),
             v1_18_2::Profile::rules(),
+            v1_19::Profile::rules(),
+            v1_19_4::Profile::rules(),
+            v1_20_4::Profile::rules(),
         ] {
             assert!(!rules.fluid_falling_checks_gravity_argument);
         }
-
         for rules in [
-            v1_19::Profile::rules(),
-            v1_19_4::Profile::rules(),
+            v1_20_5::Profile::rules(),
             v1_20_6::Profile::rules(),
-        ] {
-            assert!(rules.fluid_falling_checks_gravity_argument);
-        }
-        for rules in [
             v1_21_1::Profile::rules(),
             v1_21_4::Profile::rules(),
             v1_21_11::Profile::rules(),
+            v26_2::Profile::rules(),
         ] {
-            assert!(!rules.fluid_falling_checks_gravity_argument);
+            assert!(rules.fluid_falling_checks_gravity_argument);
         }
     }
 
     #[test]
-    fn zero_gravity_fluid_falling_keeps_source_specific_behavior() {
+    fn fluid_falling_adjustment_needs_gravity_and_from_1_20_5_a_nonzero_one() {
         let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 0, 0),
@@ -1444,21 +1442,32 @@ mod tests {
                 ..crate::world::BlockState::default()
             },
         );
-        let initial = SimulationState {
+        let sinking = SimulationState {
             position: crate::math::Vec3::new(0.5, 0.5, 0.5),
-            velocity: crate::math::Vec3::new(0.0, 0.005 / crate::math::java_float(0.8), 0.0),
-            gravity: Some(0.08),
-            no_gravity: true,
+            velocity: crate::math::Vec3::new(0.0, -0.0035, 0.0),
+            half_width: 0.3,
+            height: 1.8,
             ..SimulationState::default()
         };
-        let mut legacy = initial;
-        let mut updated = initial;
+        let vertical = |version: &str, mut state: SimulationState| {
+            dispatch(version, &mut state, &world, PhysicsConfig::default()).unwrap();
+            state.velocity.y
+        };
+        let weightless = SimulationState {
+            gravity: Some(0.0),
+            ..sinking
+        };
+        let floating = SimulationState {
+            no_gravity: true,
+            ..sinking
+        };
+        let dragged = -0.0035 * crate::math::java_float(0.8);
 
-        dispatch("1.18.2", &mut legacy, &world, PhysicsConfig::default()).unwrap();
-        dispatch("1.19", &mut updated, &world, PhysicsConfig::default()).unwrap();
-
-        assert!((legacy.velocity.y - 0.005).abs() < 1.0e-6);
-        assert!(updated.velocity.y.abs() < 1.0e-6);
+        assert_eq!(vertical("1.20.4", weightless), -0.003);
+        assert_eq!(vertical("1.20.5", weightless), dragged);
+        for version in ["1.18.2", "1.19", "1.21.1"] {
+            assert_eq!(vertical(version, floating), dragged, "{version}");
+        }
     }
 
     #[test]
@@ -1529,23 +1538,23 @@ mod tests {
             ("1.18", false, 3.0, false),
             ("1.18.1", false, 3.0, false),
             ("1.18.2", false, 3.0, false),
-            ("1.19", false, 3.0, true),
-            ("1.19.1", false, 3.0, true),
-            ("1.19.2", false, 3.0, true),
-            ("1.19.3", false, 3.0, true),
-            ("1.19.4", false, 3.0, true),
-            ("1.20", false, 3.0, true),
-            ("1.20.1", false, 3.0, true),
-            ("1.20.2", false, 3.0, true),
-            ("1.20.3", false, 3.0, true),
-            ("1.20.4", false, 3.0, true),
+            ("1.19", false, 3.0, false),
+            ("1.19.1", false, 3.0, false),
+            ("1.19.2", false, 3.0, false),
+            ("1.19.3", false, 3.0, false),
+            ("1.19.4", false, 3.0, false),
+            ("1.20", false, 3.0, false),
+            ("1.20.1", false, 3.0, false),
+            ("1.20.2", false, 3.0, false),
+            ("1.20.3", false, 3.0, false),
+            ("1.20.4", false, 3.0, false),
             ("1.20.6", false, 3.0, true),
-            ("1.21.1", true, 1.0, false),
-            ("1.21.4", true, 1.0, false),
-            ("1.21.5", true, 1.0, false),
-            ("1.21.8", true, 1.0, false),
-            ("1.21.10", true, 1.0, false),
-            ("1.21.11", true, 1.0, false),
+            ("1.21.1", true, 1.0, true),
+            ("1.21.4", true, 1.0, true),
+            ("1.21.5", true, 1.0, true),
+            ("1.21.8", true, 1.0, true),
+            ("1.21.10", true, 1.0, true),
+            ("1.21.11", true, 1.0, true),
         ] {
             let rules = match version {
                 "1.14.4" => v1_14_4::Profile::rules(),

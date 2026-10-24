@@ -139,7 +139,7 @@ impl Default for VersionPhysicsRules {
             lava_flow_scale: 0.0023333333333333335,
             ultra_warm_lava_flow_scale: 0.007,
             fluid_travel_split: false,
-            fluid_falling_checks_gravity_argument: false,
+            fluid_falling_checks_gravity_argument: true,
             water_input_speed: 0.02,
             lava_input_speed: 0.02,
             step_height: 0.6,
@@ -971,15 +971,9 @@ fn fluid_falling_gravity_enabled(
     rules: VersionPhysicsRules,
     sprint_active: bool,
 ) -> bool {
-    if sprint_active {
-        return false;
-    }
-
-    if rules.fluid_falling_checks_gravity_argument {
-        rules.gravity != 0.0
-    } else {
-        !state.no_gravity
-    }
+    !sprint_active
+        && !state.no_gravity
+        && (!rules.fluid_falling_checks_gravity_argument || rules.gravity != 0.0)
 }
 
 fn flying_speed(state: &SimulationState, release: MinecraftVersion) -> f64 {
