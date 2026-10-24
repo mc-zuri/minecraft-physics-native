@@ -2686,6 +2686,50 @@ mod tests {
     }
 
     #[test]
+    fn creative_flight_ends_on_landing_but_spectators_keep_flying() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        let flying = SimulationState {
+            is_player: true,
+            flying: true,
+            flying_speed: java_float(0.05),
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+        let mut landing = SimulationState {
+            position: Vec3::new(0.5, 1.05, 0.5),
+            sneaking: true,
+            ..flying
+        };
+        tick(&mut landing, &world, PhysicsConfig::default());
+        let mut hovering = SimulationState {
+            position: Vec3::new(0.5, 3.0, 0.5),
+            ..flying
+        };
+        tick(&mut hovering, &world, PhysicsConfig::default());
+        let mut spectating = SimulationState {
+            position: Vec3::new(0.5, 1.0, 0.5),
+            on_ground: true,
+            no_physics: true,
+            ..flying
+        };
+        tick(&mut spectating, &world, PhysicsConfig::default());
+
+        assert!(landing.on_ground);
+        assert!(!landing.flying);
+        assert!(hovering.flying);
+        assert!(spectating.flying);
+    }
+
+    #[test]
     fn creative_flight_adds_the_impulse_before_negligible_motion_is_cut() {
         let world = WorldSnapshot::new();
         let mut state = SimulationState {

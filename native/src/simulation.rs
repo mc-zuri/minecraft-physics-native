@@ -1861,6 +1861,9 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     if state.flying {
         state.fall_distance = 0.0;
     }
+    if state.is_player && state.flying && state.on_ground && !state.no_physics {
+        state.flying = false;
+    }
     state.was_sprinting = state.sprinting;
 
     TickResult {
