@@ -554,6 +554,38 @@ mod tests {
     }
 
     #[test]
+    fn gliding_moves_with_the_dragged_velocity_and_ignores_the_keys() {
+        let glide = |input: Vec3| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 10.0, 0.5),
+                velocity: Vec3::new(0.0, 0.0, 1.0),
+                input,
+                look: Vec3::new(0.0, 0.0, 1.0),
+                fall_flying: true,
+                is_player: true,
+                half_width: 0.3,
+                height: 0.6,
+                ..SimulationState::default()
+            };
+            tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
+            state
+        };
+
+        let gliding = glide(Vec3::ZERO);
+        let lift = 1.0;
+        let falling = 0.08 * (-1.0 + lift * 0.75);
+        let dive = falling * -0.1 * lift;
+        assert_eq!(gliding.velocity.y, (falling + dive) * java_float(0.98));
+        assert_eq!(gliding.position.y, 10.0 + gliding.velocity.y);
+        assert_eq!(gliding.position.z, 0.5 + gliding.velocity.z);
+        let keyed = glide(Vec3::new(1.0, 0.0, 1.0));
+        assert_eq!(
+            (keyed.position, keyed.velocity),
+            (gliding.position, gliding.velocity)
+        );
+    }
+
+    #[test]
     fn rotates_input_by_yaw() {
         let mut state = SimulationState {
             position: Vec3::new(0.0, 2.0, 0.0),

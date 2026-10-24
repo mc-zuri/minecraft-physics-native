@@ -171,6 +171,7 @@ pub struct NativeSimulationState {
     pub position: NativeVec3,
     pub velocity: NativeVec3,
     pub yaw: Option<f64>,
+    pub pitch: Option<f64>,
     pub half_width: f64,
     pub height: f64,
     pub on_ground: bool,
@@ -473,6 +474,7 @@ impl From<NativeSimulationState> for SimulationState {
             position: value.position.into(),
             velocity: value.velocity.into(),
             yaw: value.yaw.unwrap_or(0.0),
+            pitch: value.pitch.unwrap_or(0.0),
             half_width: value.half_width,
             height: value.height,
             on_ground: value.on_ground,
@@ -561,6 +563,7 @@ impl From<SimulationState> for NativeSimulationState {
             position: value.position.into(),
             velocity: value.velocity.into(),
             yaw: Some(value.yaw),
+            pitch: Some(value.pitch),
             half_width: value.half_width,
             height: value.height,
             on_ground: value.on_ground,
@@ -1700,6 +1703,7 @@ pub fn create_simulation_state(
     state.depth_strider = descriptor.depth_strider.unwrap_or(0);
     state.soul_speed = descriptor.soul_speed.unwrap_or(0);
     state.water_movement_efficiency = descriptor.water_movement_efficiency.unwrap_or(0.0);
+    state.pitch = descriptor.pitch.unwrap_or(0.0);
     state.look = descriptor.look.map(Into::into).unwrap_or_else(|| {
         let horizontal = descriptor.pitch.unwrap_or(0.0).cos();
         Vec3::new(
@@ -2972,6 +2976,7 @@ mod tests {
                     z: 0.0,
                 },
                 yaw: Some(0.0),
+                pitch: None,
                 half_width: 0.3,
                 height: 1.8,
                 on_ground: false,

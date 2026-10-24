@@ -225,6 +225,7 @@ pub struct SimulationState {
     pub position: Vec3,
     pub velocity: Vec3,
     pub yaw: f64,
+    pub pitch: f64,
     pub half_width: f64,
     pub height: f64,
     pub on_ground: bool,
@@ -308,6 +309,7 @@ impl From<EntityState> for SimulationState {
             position: value.position,
             velocity: value.velocity,
             yaw: 0.0,
+            pitch: 0.0,
             half_width: value.dimensions.half_width,
             height: value.dimensions.height,
             on_ground: value.flags.on_ground,
@@ -685,6 +687,58 @@ fn jump_power(
 fn friction_influenced_speed(speed: f64, friction: f64) -> f64 {
     let friction = friction as f32;
     f64::from(speed as f32 * (0.21600002_f32 / (friction * friction * friction)))
+}
+
+fn glide(state: &mut SimulationState, gravity: f64, release: MinecraftVersion) {
+    let look = state.look;
+    let look_horizontal = (look.x * look.x + look.z * look.z).sqrt();
+    let horizontal_speed =
+        (state.velocity.x * state.velocity.x + state.velocity.z * state.velocity.z).sqrt();
+    let look_factor = if release.at_least(1, 21, 2) {
+        1.0
+    } else {
+        (look.length() / 0.4).min(1.0)
+    };
+    let lift = if release.at_least(1, 18, 2) {
+        let cos = state.pitch.cos();
+        cos * cos * look_factor
+    } else {
+        let cos = mth_cos(state.pitch, release);
+        java_float(cos * cos * look_factor)
+    };
+    let mut velocity = state.velocity;
+    velocity.y += gravity * (-1.0 + lift * 0.75);
+    if velocity.y < 0.0 && look_horizontal > 0.0 {
+        let dive = velocity.y * -0.1 * lift;
+        velocity = velocity
+            + Vec3::new(
+                look.x * dive / look_horizontal,
+                dive,
+                look.z * dive / look_horizontal,
+            );
+    }
+    if state.pitch < 0.0 && look_horizontal > 0.0 {
+        let climb = horizontal_speed * -mth_sin(state.pitch, release) * 0.04;
+        velocity = velocity
+            + Vec3::new(
+                -look.x * climb / look_horizontal,
+                climb * 3.2,
+                -look.z * climb / look_horizontal,
+            );
+    }
+    if look_horizontal > 0.0 {
+        velocity = velocity
+            + Vec3::new(
+                (look.x / look_horizontal * horizontal_speed - velocity.x) * 0.1,
+                0.0,
+                (look.z / look_horizontal * horizontal_speed - velocity.z) * 0.1,
+            );
+    }
+    state.velocity = Vec3::new(
+        velocity.x * java_float(0.99),
+        velocity.y * java_float(0.98),
+        velocity.z * java_float(0.99),
+    );
 }
 
 fn movement_input(state: &SimulationState, release: MinecraftVersion) -> Vec3 {
@@ -1256,8 +1310,12 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     } else {
         fluid_input_speed
     };
-    let input = movement_input(state, rules.release);
-    state.velocity = state.velocity + relative_movement(input, input_speed, state.yaw, rules.release);
+    let gliding = state.fall_flying && matches!(fluid, FluidState::Empty);
+    if !gliding {
+        let input = movement_input(state, rules.release);
+        state.velocity =
+            state.velocity + relative_movement(input, input_speed, state.yaw, rules.release);
+    }
     if in_web && !ignores_stuck_block {
         let (horizontal, vertical) = if state.weaving {
             (0.5, 0.25)
@@ -1296,40 +1354,15 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.fall_distance = 0.0;
     }
     state.add_delta_movement(state.firework_boost);
-    if state.fall_flying {
-        let look = state.look.normalized();
+    if gliding {
         state.check_fall_distance_accumulation();
-        let look_horizontal = (look.x * look.x + look.z * look.z).sqrt();
-        let horizontal_velocity =
-            (state.velocity.x * state.velocity.x + state.velocity.z * state.velocity.z).sqrt();
-        let look_length = (look.x * look.x + look.y * look.y + look.z * look.z).sqrt();
-        let pitch_cosine = (1.0 - look.y * look.y).max(0.0).sqrt();
-        let pitch_factor = pitch_cosine * pitch_cosine * (look_length / 0.4).min(1.0);
-        state.velocity.y += gravity * (-1.0 + pitch_factor * 0.75);
-        if state.velocity.y < 0.0 && look_horizontal > 0.0 {
-            let correction = state.velocity.y * -0.1 * pitch_factor;
-            state.velocity.x += look.x * correction / look_horizontal;
-            state.velocity.y += correction;
-            state.velocity.z += look.z * correction / look_horizontal;
-        }
-        if look.y > 0.0 && look_horizontal > 0.0 {
-            let correction = horizontal_velocity * look.y * 0.04;
-            state.velocity.x -= look.x * correction / look_horizontal;
-            state.velocity.y += correction * 3.2;
-            state.velocity.z -= look.z * correction / look_horizontal;
-        }
-        if look_horizontal > 0.0 {
-            state.velocity.x +=
-                (look.x / look_horizontal * horizontal_velocity - state.velocity.x) * 0.1;
-            state.velocity.z +=
-                (look.z / look_horizontal * horizontal_velocity - state.velocity.z) * 0.1;
-        }
+        glide(state, travel_gravity, rules.release);
     } else if state.flying {
         state.velocity.y = flying_vertical_velocity;
     } else if climbing {
         state.velocity.y = state.input.y.clamp(-0.15, 0.15);
     }
-    if climbing {
+    if climbing && !gliding {
         state.fall_distance = 0.0;
         state.velocity.x = state.velocity.x.clamp(-0.15, 0.15);
         state.velocity.z = state.velocity.z.clamp(-0.15, 0.15);
@@ -1598,11 +1631,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             state.velocity.y -= travel_gravity;
         }
     }
-    let horizontal_drag = if state.fall_flying {
-        0.99
-    } else {
-        ground_inertia
-    };
+    let horizontal_drag = if gliding { 1.0 } else { ground_inertia };
     let liquid_horizontal_drag = if state.in_water {
         let mut water_drag = if sprint_active {
             java_float(rules.water_sprint_drag)
@@ -1673,8 +1702,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         };
         state.velocity.y *= if state.flying {
             0.6
-        } else if state.fall_flying {
-            0.98
+        } else if gliding {
+            1.0
         } else {
             java_float(air_drag)
         };
