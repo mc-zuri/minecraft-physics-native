@@ -822,8 +822,13 @@ fn apply_block_effects(
             state.fall_distance = 0.0;
         }
     }
+    let pushed_by_bubbles = !(release.at_least(1, 21, 2) && state.is_player && state.flying);
     for position in blocks_inside(state, release) {
         match world.effect_at(position) {
+            effect @ (BlockEffect::BubbleUp | BlockEffect::BubbleDown) if pushed_by_bubbles => {
+                let drag_down = effect == BlockEffect::BubbleDown;
+                push_by_bubble_column(state, world, position, drag_down, release);
+            }
             BlockEffect::SoulSand if !release.at_least(1, 15, 0) => {
                 state.velocity.x *= 0.4;
                 state.velocity.z *= 0.4;
@@ -841,6 +846,32 @@ fn apply_block_effects(
             }
             _ => {}
         }
+    }
+}
+
+/// BubbleColumnBlock.entityInside: a column with nothing above it
+/// (Entity.onAboveBubbleCol) pushes harder and does not end a fall.
+fn push_by_bubble_column(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    (x, y, z): (i32, i32, i32),
+    drag_down: bool,
+    release: MinecraftVersion,
+) {
+    let above = (x, y + 1, z);
+    let nothing_above = if release.at_least(1, 21, 5) {
+        !world.has_collision_shape(above) && world.fluid_at(above) == FluidState::Empty
+    } else {
+        world.is_air_at(above)
+    };
+    state.velocity.y = match (nothing_above, drag_down) {
+        (true, true) => (state.velocity.y - 0.03).max(-0.9),
+        (true, false) => (state.velocity.y + 0.1).min(1.8),
+        (false, true) => (state.velocity.y - 0.03).max(-0.3),
+        (false, false) => (state.velocity.y + 0.06).min(0.7),
+    };
+    if !nothing_above {
+        state.fall_distance = 0.0;
     }
 }
 
@@ -1756,20 +1787,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         let input = movement_input(state, rules.release);
         state.velocity =
             state.velocity + relative_movement(input, input_speed, state.yaw, rules.release);
-    }
-    let bubble_surface = world.is_air_at((body_position.0, body_position.1 + 1, body_position.2));
-    if body_effect == BlockEffect::BubbleUp {
-        let (acceleration, maximum) = if bubble_surface {
-            (0.1, 1.8)
-        } else {
-            (0.06, 0.7)
-        };
-        state.velocity.y = (state.velocity.y + acceleration).min(maximum);
-        state.fall_distance = 0.0;
-    } else if body_effect == BlockEffect::BubbleDown {
-        let minimum = if bubble_surface { -0.9 } else { -0.3 };
-        state.velocity.y = (state.velocity.y - 0.03).max(minimum);
-        state.fall_distance = 0.0;
     }
     state.add_delta_movement(state.firework_boost);
     if gliding {

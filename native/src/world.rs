@@ -728,6 +728,12 @@ impl WorldSnapshot {
     }
 
     #[must_use]
+    pub fn has_collision_shape(&self, position: (i32, i32, i32)) -> bool {
+        self.block_collision_shapes(position)
+            .any(|shape| is_non_empty_shape(shape.bounds))
+    }
+
+    #[must_use]
     pub fn is_air_at(&self, position: (i32, i32, i32)) -> bool {
         let block = self.block(position);
         block.id == 0 && block.shape.is_none() && block.fluid == FluidState::Empty

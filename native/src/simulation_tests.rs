@@ -3560,44 +3560,117 @@ mod tests {
         );
     }
 
+    fn bubble_column(effect: BlockEffect) -> BlockState {
+        BlockState {
+            id: 2,
+            fluid: FluidState::Water,
+            fluid_source: true,
+            shape: Some(BlockShape {
+                bounds: Aabb::new(Vec3::ZERO, Vec3::ZERO),
+                effect,
+                ..BlockShape::full_block()
+            }),
+            ..BlockState::default()
+        }
+    }
+
+    fn bubble_push(
+        world: &WorldSnapshot,
+        state: SimulationState,
+        release: MinecraftVersion,
+    ) -> f64 {
+        let mut state = SimulationState {
+            half_width: 0.3,
+            no_gravity: true,
+            is_player: true,
+            ..state
+        };
+        let rules = VersionPhysicsRules {
+            release,
+            ..VersionPhysicsRules::default()
+        };
+        tick_with_rules(&mut state, world, PhysicsConfig::default(), rules);
+        state.velocity.y
+    }
+
     #[test]
-    fn bubble_columns_push_the_entity_inside() {
+    fn every_bubble_column_block_in_the_box_pushes_where_vanilla_applies_block_effects() {
         let mut world = WorldSnapshot::new();
+        for y in 0..3 {
+            world.set_block((0, y, 0), bubble_column(BlockEffect::BubbleUp));
+        }
+        world.set_block(
+            (0, 3, 0),
+            BlockState {
+                fluid: FluidState::Water,
+                fluid_source: true,
+                ..BlockState::default()
+            },
+        );
+        let submerged = SimulationState {
+            position: Vec3::new(0.5, 0.5, 0.5),
+            height: 1.8,
+            ..SimulationState::default()
+        };
+
+        assert_eq!(
+            bubble_push(&world, submerged, MinecraftVersion::new(1, 21, 1)),
+            (0.06 + 0.06 + 0.06) * java_float(0.8)
+        );
+        assert_eq!(
+            bubble_push(&world, submerged, MinecraftVersion::new(1, 21, 2)),
+            0.06 + 0.06 + 0.06
+        );
+        let flying = SimulationState {
+            flying: true,
+            ..submerged
+        };
+        assert_eq!(bubble_push(&world, flying, MinecraftVersion::new(1, 21, 1)), 0.0);
+        assert_eq!(bubble_push(&world, flying, MinecraftVersion::new(1, 21, 2)), 0.0);
+    }
+
+    #[test]
+    fn the_bubble_column_top_under_air_pushes_harder() {
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), bubble_column(BlockEffect::BubbleUp));
+        world.set_block((0, 1, 0), bubble_column(BlockEffect::BubbleUp));
+        world.set_block((1, 0, 0), bubble_column(BlockEffect::BubbleDown));
+        world.set_block((1, 1, 0), bubble_column(BlockEffect::BubbleDown));
+        let release = MinecraftVersion::new(1, 21, 2);
+        let at = |x: f64| SimulationState {
+            position: Vec3::new(x, 0.5, 0.5),
+            height: 1.8,
+            ..SimulationState::default()
+        };
+
+        assert_eq!(bubble_push(&world, at(0.5), release), 0.06 + 0.1);
+        assert_eq!(bubble_push(&world, at(1.5), release), -0.03 - 0.03);
+    }
+
+    #[test]
+    fn nothing_above_a_bubble_column_means_no_collision_and_no_fluid_from_1_21_5() {
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), bubble_column(BlockEffect::BubbleUp));
         world.set_block(
             (0, 1, 0),
             BlockState {
+                id: 3,
                 shape: Some(BlockShape {
-                    effect: crate::world::BlockEffect::BubbleUp,
+                    bounds: Aabb::new(Vec3::ZERO, Vec3::ZERO),
+                    effect: BlockEffect::Climbable,
                     ..BlockShape::full_block()
                 }),
                 ..BlockState::default()
             },
         );
-        let mut state = SimulationState {
-            position: Vec3::new(0.5, 1.5, 0.5),
-            half_width: 0.3,
-            height: 1.8,
-            no_gravity: true,
-            fall_distance: 12.0,
+        let low = SimulationState {
+            position: Vec3::new(0.5, 0.2, 0.5),
+            height: 0.6,
             ..SimulationState::default()
         };
-        tick(&mut state, &world, PhysicsConfig::default());
-        assert!(state.velocity.y > 0.0);
-        assert_eq!(state.fall_distance, 0.0);
-        assert!(!state.in_web);
 
-        world.set_block(
-            (0, 2, 0),
-            BlockState {
-                shape: Some(BlockShape::full_block()),
-                ..BlockState::default()
-            },
-        );
-        state.velocity = Vec3::ZERO;
-        state.position.y = 1.5;
-        tick(&mut state, &world, PhysicsConfig::default());
-        assert!(state.velocity.y > 0.0);
-        assert!(state.velocity.y < 0.1);
+        assert_eq!(bubble_push(&world, low, MinecraftVersion::new(1, 21, 4)), 0.06);
+        assert_eq!(bubble_push(&world, low, MinecraftVersion::new(1, 21, 5)), 0.1);
     }
 
     #[test]
