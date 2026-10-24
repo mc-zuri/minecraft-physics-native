@@ -1212,6 +1212,9 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     let old_position = state.position;
     state.contact_damage = 0.0;
     state.block_fall_callback = false;
+    if state.is_player && state.no_physics {
+        state.on_ground = false;
+    }
     if !state.velocity.is_finite() {
         state.velocity = Vec3::ZERO;
     }

@@ -2060,7 +2060,6 @@ mod tests {
             moving_slowly: Some(true),
             sneaking_speed: 0.45,
             on_ground: true,
-            no_physics: true,
             no_gravity: true,
             half_width: 0.3,
             height: 1.8,
@@ -2751,6 +2750,47 @@ mod tests {
 
         assert!(!glide(MinecraftVersion::new(1, 21, 1)));
         assert!(glide(MinecraftVersion::new(1, 21, 2)));
+    }
+
+    #[test]
+    fn spectators_are_never_on_the_ground() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        let flying = SimulationState {
+            is_player: true,
+            flying: true,
+            flying_speed: java_float(0.05),
+            movement_speed: 0.1,
+            input: Vec3::new(0.0, 0.0, 1.0),
+            position: Vec3::new(0.5, 1.0, 0.5),
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+        let mut spectating = SimulationState {
+            on_ground: true,
+            no_physics: true,
+            ..flying
+        };
+        tick(&mut spectating, &world, PhysicsConfig::default());
+        let mut airborne = flying;
+        tick(&mut airborne, &world, PhysicsConfig::default());
+        let mut grounded = SimulationState {
+            on_ground: true,
+            ..flying
+        };
+        tick(&mut grounded, &world, PhysicsConfig::default());
+
+        assert!(!spectating.on_ground);
+        assert_eq!(spectating.velocity.z, airborne.velocity.z);
+        assert_ne!(grounded.velocity.z, airborne.velocity.z);
     }
 
     #[test]
