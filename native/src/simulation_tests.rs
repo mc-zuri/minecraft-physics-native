@@ -169,6 +169,43 @@ mod tests {
     }
 
     #[test]
+    fn soul_sand_slows_whoever_it_affects_and_soul_soil_slows_no_one() {
+        let block = |effect| BlockState {
+            id: 1,
+            shape: Some(BlockShape {
+                effect,
+                ..BlockShape::full_block()
+            }),
+            ..BlockState::default()
+        };
+        let moved = |effect, position: Vec3| {
+            let mut world = WorldSnapshot::new();
+            world.set_block((0, 0, 0), block(effect));
+            let mut state = SimulationState {
+                position,
+                velocity: Vec3::new(0.0, 0.0, 0.1),
+                no_gravity: true,
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            let rules = VersionPhysicsRules {
+                release: MinecraftVersion::new(1, 19, 4),
+                ..VersionPhysicsRules::default()
+            };
+            tick_with_rules(&mut state, &world, PhysicsConfig::default(), rules);
+            state.velocity.z
+        };
+        let hovering = Vec3::new(0.5, 1.2, 0.5);
+
+        assert_eq!(
+            moved(BlockEffect::SoulSand, hovering),
+            0.1 * java_float(0.4) * java_float(0.98)
+        );
+        assert_eq!(moved(BlockEffect::SoulSoil, hovering), 0.1 * java_float(0.98));
+    }
+
+    #[test]
     fn friction_on_a_slab_comes_from_the_block_beneath_it() {
         let mut world = WorldSnapshot::new();
         world.set_block((0, 0, 0), ice());

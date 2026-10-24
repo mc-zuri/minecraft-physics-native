@@ -630,11 +630,7 @@ fn apply_fluid_travel_vertical(
     }
 }
 
-fn stuck_speed_multiplier_inside(
-    state: &SimulationState,
-    world: &WorldSnapshot,
-    release: MinecraftVersion,
-) -> Option<Vec3> {
+fn blocks_inside(state: &SimulationState, release: MinecraftVersion) -> Vec<(i32, i32, i32)> {
     let inset = if !release.at_least(1, 19, 3) {
         0.001
     } else if !release.at_least(1, 21, 2) {
@@ -645,24 +641,12 @@ fn stuck_speed_multiplier_inside(
     let inside = state.bounds().deflate(Vec3::new(inset, inset, inset));
     let min = block_position(inside.min);
     let max = block_position(inside.max);
-    let in_powder_snow = world.effect_at(block_position(state.position)) == BlockEffect::PowderSnow;
-    let multiplier_at = |position| match world.effect_at(position) {
-        BlockEffect::Web if state.weaving => Some(Vec3::new(0.5, 0.25, 0.5)),
-        BlockEffect::Web => Some(Vec3::new(0.25, java_float(0.05), 0.25)),
-        BlockEffect::SweetBerryBush if !state.sweet_berry_bush_immune => {
-            Some(Vec3::new(java_float(0.8), 0.75, java_float(0.8)))
-        }
-        BlockEffect::PowderSnow if in_powder_snow => {
-            Some(Vec3::new(java_float(0.9), 1.5, java_float(0.9)))
-        }
-        _ => None,
-    };
-    let mut multiplier = None;
+    let mut blocks = Vec::new();
     if release.at_least(1, 21, 2) {
         for z in min.2..=max.2 {
             for y in min.1..=max.1 {
                 for x in min.0..=max.0 {
-                    multiplier = multiplier_at((x, y, z)).or(multiplier);
+                    blocks.push((x, y, z));
                 }
             }
         }
@@ -670,12 +654,68 @@ fn stuck_speed_multiplier_inside(
         for x in min.0..=max.0 {
             for y in min.1..=max.1 {
                 for z in min.2..=max.2 {
-                    multiplier = multiplier_at((x, y, z)).or(multiplier);
+                    blocks.push((x, y, z));
                 }
             }
         }
     }
-    multiplier
+    blocks
+}
+
+fn stuck_speed_multiplier_inside(
+    state: &SimulationState,
+    world: &WorldSnapshot,
+    release: MinecraftVersion,
+) -> Option<Vec3> {
+    let in_powder_snow = world.effect_at(block_position(state.position)) == BlockEffect::PowderSnow;
+    blocks_inside(state, release)
+        .into_iter()
+        .filter_map(|position| match world.effect_at(position) {
+            BlockEffect::Web if state.weaving => Some(Vec3::new(0.5, 0.25, 0.5)),
+            BlockEffect::Web => Some(Vec3::new(0.25, java_float(0.05), 0.25)),
+            BlockEffect::SweetBerryBush if !state.sweet_berry_bush_immune => {
+                Some(Vec3::new(java_float(0.8), 0.75, java_float(0.8)))
+            }
+            BlockEffect::PowderSnow if in_powder_snow => {
+                Some(Vec3::new(java_float(0.9), 1.5, java_float(0.9)))
+            }
+            _ => None,
+        })
+        .last()
+}
+
+fn block_speed_factor(
+    world: &WorldSnapshot,
+    state: &SimulationState,
+    release: MinecraftVersion,
+) -> f32 {
+    if state.is_player && (state.flying || state.fall_flying) {
+        return 1.0;
+    }
+    let factor_at = |position| match world.effect_at(position) {
+        BlockEffect::SoulSand | BlockEffect::Honey => 0.4_f32,
+        _ => 1.0,
+    };
+    let below = block_below_affecting_movement(world, state, release);
+    let at_position = factor_at(block_position(state.position));
+    let factor = if at_position == 1.0 {
+        factor_at(below)
+    } else {
+        at_position
+    };
+    if release.at_least(1, 21, 0) {
+        factor + state.movement_efficiency as f32 * (1.0 - factor)
+    } else if release.at_least(1, 16, 0)
+        && state.soul_speed > 0
+        && matches!(
+            world.effect_at(below),
+            BlockEffect::SoulSand | BlockEffect::SoulSoil
+        )
+    {
+        1.0
+    } else {
+        factor
+    }
 }
 
 fn block_below_affecting_movement(
@@ -1586,6 +1626,14 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             state.fall_distance = 0.0;
         }
     }
+    if !rules.release.at_least(1, 15, 0) {
+        for position in blocks_inside(state, rules.release) {
+            if world.effect_at(position) == BlockEffect::SoulSand {
+                state.velocity.x *= 0.4;
+                state.velocity.z *= 0.4;
+            }
+        }
+    }
 
     if restitution_enabled {
         let current_movement = state.velocity;
@@ -1659,23 +1707,10 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.velocity.z *= scale;
         state.fall_distance = 0.0;
     }
-    if (matches!(feet_effect, BlockEffect::Honey)
-        || (soul_speed_block && (rules.fluid_travel_split || state.soul_speed == 0)))
-        && state.on_ground
-        && !state.fall_flying
-        && !(state.is_player && state.flying)
-    {
-        let block_slowdown = if soul_speed_block && rules.fluid_travel_split {
-            let efficiency = state
-                .movement_efficiency
-                .max(if state.soul_speed > 0 { 1.0 } else { 0.0 })
-                .clamp(0.0, 1.0) as f32;
-            f64::from(0.4_f32 + efficiency * (1.0 - 0.4_f32))
-        } else {
-            java_float(0.4)
-        };
-        state.velocity.x *= block_slowdown;
-        state.velocity.z *= block_slowdown;
+    if rules.release.at_least(1, 15, 0) {
+        let speed_factor = f64::from(block_speed_factor(world, state, rules.release));
+        state.velocity.x *= speed_factor;
+        state.velocity.z *= speed_factor;
     }
     let climbs_powder_snow = state.powder_snow_walkable
         && if rules.release.at_least(1, 21, 5) {
