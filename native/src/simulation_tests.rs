@@ -4092,6 +4092,93 @@ mod tests {
         assert!(damage(0.5, 20.0) < damage(2.5, 20.0));
     }
 
+    fn landing_in_26_2(world: &WorldSnapshot, state: SimulationState) -> SimulationState {
+        let mut state = state;
+        crate::versioned::dispatch("26.2", &mut state, world, PhysicsConfig::default()).unwrap();
+        state
+    }
+
+    #[test]
+    fn restitution_bounces_a_fall_by_the_block_landed_on_and_stays_on_ground() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape::full_block()),
+                bounce_restitution: 0.75,
+                ..BlockState::default()
+            },
+        );
+        let falling = SimulationState {
+            position: Vec3::new(0.5, 1.25, 0.5),
+            velocity: Vec3::new(0.0, -0.5, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            is_player: true,
+            ..SimulationState::default()
+        };
+
+        let player = landing_in_26_2(&world, falling);
+        let item = landing_in_26_2(
+            &world,
+            SimulationState {
+                is_player: false,
+                ..falling
+            },
+        );
+        let sneaking = landing_in_26_2(
+            &world,
+            SimulationState {
+                sneaking: true,
+                ..falling
+            },
+        );
+
+        let air_drag = f64::from(0.98_f32);
+        let portion = 0.5;
+        let bounce = |restitution: f64| {
+            ((portion * 0.08 + 0.5) * (1.0 + portion * (air_drag - 1.0)) * restitution - 0.08)
+                * air_drag
+        };
+        assert!(player.on_ground);
+        assert_eq!(player.velocity.y, bounce(0.75));
+        assert_eq!(item.velocity.y, bounce(f64::from(0.75_f32 * 0.8_f32)));
+        assert_eq!(sneaking.velocity.y, -0.08 * air_drag);
+    }
+
+    #[test]
+    fn restitution_leaves_slower_landings_and_old_slime_bounce_out() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape {
+                    effect: BlockEffect::Slime,
+                    slipperiness: 0.8,
+                    ..BlockShape::full_block()
+                }),
+                bounce_restitution: 1.0,
+                ..BlockState::default()
+            },
+        );
+        let walking = SimulationState {
+            position: Vec3::new(0.5, 1.0, 0.5),
+            velocity: Vec3::new(0.0, -0.0784000015258789, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            on_ground: true,
+            is_player: true,
+            ..SimulationState::default()
+        };
+
+        let walked = landing_in_26_2(&world, walking);
+
+        assert!(walked.on_ground);
+        assert_eq!(walked.velocity.y, -0.08 * f64::from(0.98_f32));
+    }
+
     #[test]
     fn honey_block_applies_source_downward_slide_velocity() {
         let mut world = WorldSnapshot::new();

@@ -1338,7 +1338,11 @@ mod tests {
         dispatch("26.2", &mut state, &world, PhysicsConfig::default()).unwrap();
 
         assert!(state.collided_vertically);
-        assert!((state.velocity.y - 0.8 * crate::math::java_float(0.98)).abs() < 1.0e-12);
+        let non_living_restitution = f64::from(0.8_f32);
+        assert!(
+            (state.velocity.y - non_living_restitution * crate::math::java_float(0.98)).abs()
+                < 1.0e-12
+        );
     }
 
     #[test]

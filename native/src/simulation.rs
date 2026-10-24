@@ -1206,6 +1206,69 @@ fn back_off_from_edge(
     Vec3::new(x, delta.y, z)
 }
 
+fn restitute_movement_after_collisions(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    rules: VersionPhysicsRules,
+    collisions: [bool; 3],
+    moved_y: f64,
+) {
+    let current = state.velocity;
+    let suppressing_bounce = state.sneaking;
+    let entity_restitution = if suppressing_bounce {
+        0.0
+    } else {
+        state.entity_bounciness
+    };
+    if collisions[0] {
+        state.velocity.x = -current.x * entity_restitution;
+    }
+    if collisions[2] {
+        state.velocity.z = -current.z * entity_restitution;
+    }
+    if !collisions[1] {
+        return;
+    }
+    let gravity = if state.no_gravity {
+        0.0
+    } else if state.slow_falling && current.y <= 0.0 {
+        rules.gravity.min(0.01)
+    } else {
+        rules.gravity
+    };
+    let restitution = if !state.vertical_collision_below {
+        entity_restitution
+    } else {
+        let effect_state = world.block(landing_position(world, state, rules.release));
+        if -current.y < gravity || suppressing_bounce || effect_state.suppresses_bounce {
+            0.0
+        } else {
+            let block_bounciness = if state.is_player {
+                effect_state.bounce_restitution
+            } else {
+                f64::from(effect_state.bounce_restitution as f32 * 0.8_f32)
+            };
+            entity_restitution
+                .max(block_bounciness)
+                .max(state.block_bounciness)
+        }
+    };
+    let (gravity_compensation, effective_drag) = if restitution > 0.0 {
+        let portion_with_movement = moved_y / current.y;
+        let air_drag = compute_modified_friction(
+            rules.vertical_drag,
+            effective_modifier(state.air_drag_modifier, state.air_drag_modifier_present),
+        );
+        (
+            portion_with_movement * gravity,
+            1.0 + portion_with_movement * (air_drag - 1.0),
+        )
+    } else {
+        (0.0, 1.0)
+    };
+    state.velocity.y = (gravity_compensation - current.y) * effective_drag * restitution;
+}
+
 pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     state: &mut SimulationState,
     world: &WorldSnapshot,
@@ -1714,7 +1777,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     }
     let landed_on = world.effect_at(landing_position(world, state, rules.release));
     let bounce_scale = if state.is_player { 1.0 } else { 0.8 };
-    let bounced = collisions[1] && landed_on == BlockEffect::Slime && !state.sneaking;
+    let bounced =
+        !restitution_enabled && collisions[1] && landed_on == BlockEffect::Slime && !state.sneaking;
     if bounced {
         if state.velocity.y < 0.0 {
             state.velocity.y = -state.velocity.y * bounce_scale;
@@ -1729,7 +1793,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     };
     if checks_fall_damage && state.on_ground && !bounced {
         if state.on_ground {
-            state.fall_damage = if state.fall_damage_immune {
+            let cushioned = restitution_enabled && landed_on == BlockEffect::Slime;
+            state.fall_damage = if state.fall_damage_immune || cushioned {
                 0.0
             } else if modern_fall_damage {
                 let fall_power = landing_fall_distance + 1.0e-6 - state.safe_fall_distance;
@@ -1760,45 +1825,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     }
 
     if restitution_enabled {
-        let current_movement = state.velocity;
-        let support_block = world.supporting_block_state(state.bounds());
-        let world_block_bounciness = if support_block.suppresses_bounce {
-            0.0
-        } else {
-            support_block.bounce_restitution * if state.is_player { 1.0 } else { 0.8 }
-        };
-        let entity_restitution = if state.sneaking {
-            0.0
-        } else {
-            state.entity_bounciness
-        };
-        let vertical_restitution = entity_restitution
-            .max(state.block_bounciness)
-            .max(world_block_bounciness);
-        if collisions[0] {
-            state.velocity.x = -current_movement.x * entity_restitution;
-        }
-        if collisions[2] {
-            state.velocity.z = -current_movement.z * entity_restitution;
-        }
-        if collisions[1] && !bounced {
-            let vertical_bounce_allowed = state.vertical_collision_below
-                && current_movement.y != 0.0
-                && -current_movement.y >= rules.gravity
-                && vertical_restitution > 0.0;
-            if vertical_bounce_allowed {
-                let portion_with_movement = displacement.y / current_movement.y;
-                let gravity_compensation = portion_with_movement * rules.gravity;
-                let effective_drag = 1.0 + portion_with_movement * (rules.air_drag - 1.0);
-                state.velocity.y = (gravity_compensation - current_movement.y)
-                    * effective_drag
-                    * vertical_restitution;
-                state.on_ground = false;
-            } else {
-                // restituteMovementAfterCollisions with no restitution: (0 - y) * 0, +0.0 after a fall.
-                state.velocity.y = -current_movement.y * 0.0;
-            }
-        }
+        restitute_movement_after_collisions(state, world, rules, collisions, displacement.y);
     } else {
         if collisions[0] {
             state.velocity.x = 0.0;
