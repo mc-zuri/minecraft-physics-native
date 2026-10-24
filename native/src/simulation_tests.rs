@@ -680,6 +680,80 @@ mod tests {
         assert!(state.on_ground);
     }
 
+    fn velocity_after_move(
+        world: &WorldSnapshot,
+        state: SimulationState,
+        release: MinecraftVersion,
+    ) -> Vec3 {
+        let mut state = SimulationState {
+            half_width: 0.3,
+            height: 1.8,
+            ..state
+        };
+        let config = PhysicsConfig {
+            negligible_velocity: 0.0,
+            ..PhysicsConfig::default()
+        };
+        let rules = VersionPhysicsRules {
+            release,
+            ..VersionPhysicsRules::default()
+        };
+        tick_with_rules(&mut state, world, config, rules);
+        state.velocity
+    }
+
+    #[test]
+    fn a_z_collision_keeps_the_x_motion_until_1_18_2() {
+        let mut world = WorldSnapshot::new();
+        for position in [(1, 0, 0), (0, 0, 1)] {
+            world.set_block(
+                position,
+                BlockState {
+                    shape: Some(BlockShape::full_block()),
+                    ..BlockState::default()
+                },
+            );
+        }
+        let into_corner = SimulationState {
+            position: Vec3::new(0.5, 0.0, 0.5),
+            velocity: Vec3::new(0.5, 0.0, 0.5),
+            no_gravity: true,
+            ..SimulationState::default()
+        };
+
+        let legacy = velocity_after_move(&world, into_corner, MinecraftVersion::new(1, 18, 1));
+        let modern = velocity_after_move(&world, into_corner, MinecraftVersion::new(1, 18, 2));
+
+        assert_eq!(legacy.x, 0.5 * java_float(0.98));
+        assert_eq!(legacy.z, 0.0);
+        assert_eq!(modern.x, 0.0);
+        assert_eq!(modern.z, 0.0);
+    }
+
+    #[test]
+    fn a_motion_cut_within_the_equality_tolerance_keeps_going_from_1_18_2() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, -1, 0),
+            BlockState {
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        let standing = SimulationState {
+            position: Vec3::new(0.5, 0.0, 0.5),
+            velocity: Vec3::new(-9.59e-8, -0.0784, 0.0136),
+            on_ground: true,
+            ..SimulationState::default()
+        };
+
+        let legacy = velocity_after_move(&world, standing, MinecraftVersion::new(1, 18, 1));
+        let modern = velocity_after_move(&world, standing, MinecraftVersion::new(1, 18, 2));
+
+        assert_eq!(legacy.x, 0.0);
+        assert!(modern.x < 0.0);
+    }
+
     #[test]
     fn player_minor_horizontal_collision_tracks_small_direction_change() {
         let mut world = WorldSnapshot::new();

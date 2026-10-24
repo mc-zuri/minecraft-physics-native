@@ -1979,7 +1979,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         (displacement, collisions, obstacles)
     };
     let can_step = state.on_ground || (normal_collisions[1] && desired.y < 0.0);
-    let (displacement, collisions) = if can_step
+    let displacement = if can_step
         && !state.no_physics
         && (normal_collisions[0] || normal_collisions[2])
         && rules.step_height > 0.0
@@ -1996,8 +1996,9 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             normal_displacement,
             normal_collisions,
         )
+        .0
     } else {
-        (normal_displacement, normal_collisions)
+        normal_displacement
     };
 
     if state.no_physics || moves_position(desired, displacement, rules.release) {
@@ -2012,10 +2013,11 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.fall_distance = 0.0;
         reset_fall_distance = true;
     }
+    let x_collision = !vanilla_equal(desired.x, displacement.x);
     let y_collision = desired.y != displacement.y;
+    let z_collision = !vanilla_equal(desired.z, displacement.z);
     if !state.no_physics {
-        state.collided_horizontally =
-            !vanilla_equal(desired.x, displacement.x) || !vanilla_equal(desired.z, displacement.z);
+        state.collided_horizontally = x_collision || z_collision;
         state.minor_horizontal_collision = false;
         if state.minor_horizontal_collision_supported
             && state.is_player
@@ -2123,11 +2125,18 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             world,
             support,
             rules,
-            [collisions[0], y_collision, collisions[2]],
+            [x_collision, y_collision, z_collision],
             displacement.y,
         );
     } else {
-        if collisions[0] {
+        // Before 1.18.2 the z reset puts back the x motion it read before the x reset.
+        let (stops_x, stops_z) = if rules.release.at_least(1, 18, 2) {
+            (x_collision, z_collision)
+        } else {
+            let stops_z = desired.z != displacement.z;
+            (desired.x != displacement.x && !stops_z, stops_z)
+        };
+        if stops_x {
             state.velocity.x = 0.0;
         }
         if y_collision && !bounced {
@@ -2140,7 +2149,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
                 state.velocity.y *= 0.0;
             }
         }
-        if collisions[2] {
+        if stops_z {
             state.velocity.z = 0.0;
         }
     }
