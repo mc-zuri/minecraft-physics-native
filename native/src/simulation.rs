@@ -773,6 +773,9 @@ fn apply_block_effects(
     world: &WorldSnapshot,
     release: MinecraftVersion,
 ) {
+    if state.no_physics {
+        return;
+    }
     let stepping_carefully = state.stepping_carefully || state.sneaking;
     if state.on_ground {
         match world.effect_at(landing_position(world, state, release)) {
@@ -1332,7 +1335,11 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.position.z.floor() as i32,
     );
     let body_effect = world.effect_at(body_position);
-    let inside_effects = world.effects_in_bounds(bounds);
+    let inside_effects = if state.no_physics {
+        Vec::new()
+    } else {
+        world.effects_in_bounds(bounds)
+    };
     let in_web = inside_effects.contains(&BlockEffect::Web);
     state.in_web = in_web;
     let in_powder_snow = inside_effects.contains(&BlockEffect::PowderSnow);
@@ -1630,7 +1637,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
 
     state.position = state.position + displacement;
     let mut reset_fall_distance = false;
-    if state.fall_distance != 0.0
+    if !state.no_physics
+        && state.fall_distance != 0.0
         && displacement.length_squared() >= 1.0
         && world.intersects_fall_damage_resetting_block(old_position, displacement)
     {
@@ -1668,7 +1676,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.vertical_collision_below = false;
     }
     let checks_fall_damage =
-        !(state.is_player && rules.release == MinecraftVersion::new(1, 21, 4));
+        !state.no_physics && !(state.is_player && rules.release == MinecraftVersion::new(1, 21, 4));
     if checks_fall_damage && !state.in_water {
         let water = world.fluid_contact(FluidState::Water, state.bounds(), rules.release);
         if water.touching {
@@ -1788,7 +1796,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     if !rules.release.at_least(1, 21, 2) {
         apply_block_effects(state, world, rules.release);
     }
-    if rules.release.at_least(1, 15, 0) {
+    if rules.release.at_least(1, 15, 0) && !state.no_physics {
         let speed_factor = f64::from(block_speed_factor(world, state, rules.release));
         state.velocity.x *= speed_factor;
         state.velocity.z *= speed_factor;

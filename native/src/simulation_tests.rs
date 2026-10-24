@@ -457,6 +457,63 @@ mod tests {
     }
 
     #[test]
+    fn no_physics_touches_no_blocks() {
+        let mut world = WorldSnapshot::new();
+        for (position, effect) in [
+            ((1, 1, 0), BlockEffect::SoulSand),
+            ((0, 1, 0), BlockEffect::Cactus),
+            ((0, 2, 0), BlockEffect::Web),
+        ] {
+            world.set_block(
+                position,
+                BlockState {
+                    shape: Some(BlockShape {
+                        effect,
+                        ..BlockShape::full_block()
+                    }),
+                    ..BlockState::default()
+                },
+            );
+        }
+        let mut state = SimulationState {
+            position: Vec3::new(1.0, 1.0, 0.5),
+            velocity: Vec3::new(0.2, 0.0, 0.0),
+            no_physics: true,
+            no_gravity: true,
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+
+        tick(&mut state, &world, PhysicsConfig::default());
+
+        assert_eq!(state.velocity.x, 0.2 * java_float(0.98));
+        assert_eq!(state.stuck_speed_multiplier, Vec3::ZERO);
+        assert!(!state.in_web);
+        assert_eq!(state.contact_damage, 0.0);
+    }
+
+    #[test]
+    fn spectators_gather_no_fall_distance() {
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 10.0, 0.5),
+            is_player: true,
+            no_physics: true,
+            flying: true,
+            flying_speed: java_float(0.05),
+            sneaking: true,
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+
+        tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
+
+        assert!(state.position.y < 10.0);
+        assert_eq!(state.fall_distance, 0.0);
+    }
+
+    #[test]
     fn zero_vertical_motion_preserves_vanilla_vertical_state() {
         let mut state = SimulationState {
             velocity: Vec3::new(0.0, 0.0, 0.0),
@@ -2461,7 +2518,10 @@ mod tests {
         world.set_block(
             (0, 0, 0),
             BlockState {
-                shape: Some(BlockShape::full_block()),
+                shape: Some(BlockShape {
+                    bounds: Aabb::new(Vec3::new(0.0, 0.5, 0.0), Vec3::new(1.0, 0.5, 1.0)),
+                    ..BlockShape::full_block()
+                }),
                 fall_damage_resetting: true,
                 ..BlockState::default()
             },
@@ -2470,7 +2530,6 @@ mod tests {
             position: Vec3::new(0.5, 2.0, 0.5),
             velocity: Vec3::new(0.0, -2.0, 0.0),
             fall_distance: 5.0,
-            no_physics: true,
             ..SimulationState::default()
         };
 
@@ -2485,7 +2544,6 @@ mod tests {
         world.set_block(
             (0, 0, 0),
             BlockState {
-                shape: Some(BlockShape::full_block()),
                 fall_damage_resetting: true,
                 ..BlockState::default()
             },
@@ -2494,7 +2552,6 @@ mod tests {
             position: Vec3::new(0.5, 0.8, 0.5),
             velocity: Vec3::new(0.0, -0.2, 0.0),
             fall_distance: 5.0,
-            no_physics: true,
             ..SimulationState::default()
         };
 
