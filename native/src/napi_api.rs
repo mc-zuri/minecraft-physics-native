@@ -7,6 +7,7 @@ use crate::entity::{
     push_by_nearby_entities, Dimensions, EntityFlags, EntityState, NearbyEntity, NearbyEntityKind,
 };
 use crate::math::{Aabb, Vec3};
+use crate::piston::{push_by_moving_pistons, MovingPiston};
 use crate::projectile::{
     tick_arrow, tick_projectile, tick_projectile_with_bubble_column, tick_trident, ArrowState,
     ProjectileKind, ProjectileState, TridentState,
@@ -272,6 +273,38 @@ pub struct NativeSimulationState {
     pub nearby_entities: Option<Vec<NativeNearbyEntity>>,
     pub firework_rockets: Option<u32>,
     pub firework_rockets_before_player: Option<u32>,
+    pub moving_pistons: Option<Vec<NativeMovingPiston>>,
+}
+
+#[napi(object)]
+pub struct NativeMovingPiston {
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    /// The piston's facing as Direction.from3DDataValue: down, up, north, south, west, east.
+    pub facing: u8,
+    pub extending: bool,
+    pub source: bool,
+    pub progress: f64,
+    pub shapes: Vec<NativeAabb>,
+}
+
+impl TryFrom<NativeMovingPiston> for MovingPiston {
+    type Error = Error;
+
+    fn try_from(value: NativeMovingPiston) -> Result<Self> {
+        if value.facing > 5 || !value.progress.is_finite() {
+            return Err(Error::from_reason("moving piston contains invalid values"));
+        }
+        Ok(Self {
+            position: (value.x, value.y, value.z),
+            facing: value.facing,
+            extending: value.extending,
+            source: value.source,
+            progress: value.progress as f32,
+            shapes: value.shapes.into_iter().map(Into::into).collect(),
+        })
+    }
 }
 
 #[napi(object)]
@@ -750,6 +783,7 @@ impl From<SimulationState> for NativeSimulationState {
             nearby_entities: None,
             firework_rockets: None,
             firework_rockets_before_player: None,
+            moving_pistons: None,
         }
     }
 }
@@ -1467,8 +1501,8 @@ pub fn simulate_tick(
 }
 
 /// One client tick of the local player: the attached rockets and nearby entities the client ticks
-/// before it boost and push it, it ticks (colliding with the entities that are colliders), then
-/// the other rockets and entities boost and push it.
+/// before it boost and push it, it ticks (colliding with the entities that are colliders), the
+/// other rockets and entities boost and push it, then the moving pistons push it.
 #[napi]
 pub fn simulate_versioned_tick(
     version: String,
@@ -1483,6 +1517,13 @@ pub fn simulate_versioned_tick(
         .into_iter()
         .map(Into::into)
         .collect();
+    let moving_pistons = state
+        .moving_pistons
+        .take()
+        .unwrap_or_default()
+        .into_iter()
+        .map(MovingPiston::try_from)
+        .collect::<Result<Vec<_>>>()?;
     let rockets = state.firework_rockets.unwrap_or(0);
     let rockets_before_player = state
         .firework_rockets_before_player
@@ -1508,10 +1549,10 @@ pub fn simulate_versioned_tick(
     );
     world
         .inner
-        .set_entity_colliders(nearby_entity_colliders(&nearby_entities));
+        .set_entity_colliders(nearby_entity_colliders(&nearby_entities, false));
     let result = versioned::dispatch(&version, &mut simulation_state, world.snapshot(), config);
     world.inner.set_entity_colliders(Vec::new());
-    let result = result.map_err(Error::from_reason)?;
+    result.map_err(Error::from_reason)?;
     boost_by_attached_rockets(
         &mut simulation_state,
         rockets - rockets_before_player,
@@ -1524,11 +1565,20 @@ pub fn simulate_versioned_tick(
         false,
         minecraft_version,
     );
-    let mut output: NativeSimulationState = simulation_state.into();
-    output.collided_horizontally = result.collided_horizontally;
-    output.minor_horizontal_collision = Some(simulation_state.minor_horizontal_collision);
-    output.collided_vertically = result.collided_vertically;
-    Ok(output)
+    if !moving_pistons.is_empty() {
+        world
+            .inner
+            .set_entity_colliders(nearby_entity_colliders(&nearby_entities, true));
+        push_by_moving_pistons(
+            &mut simulation_state,
+            world.snapshot(),
+            &moving_pistons,
+            config,
+            minecraft_version,
+        );
+        world.inner.set_entity_colliders(Vec::new());
+    }
+    Ok(simulation_state.into())
 }
 
 #[napi]
@@ -2623,8 +2673,8 @@ mod tests {
         create_simulation_state, refresh_versioned_pose, simulate_versioned_entity_push,
         simulate_versioned_entity_ticks, simulate_versioned_tick, simulate_versioned_ticks,
         NativeAabb, NativeBlockShape, NativeBlockUpdate, NativeEntityDescriptor,
-        NativeEntityPushState, NativeNearbyEntity, NativeSimulationConfig, NativeSimulationState,
-        NativeVec3, NativeVersionedEntityState, NativeWorld,
+        NativeEntityPushState, NativeMovingPiston, NativeNearbyEntity, NativeSimulationConfig,
+        NativeSimulationState, NativeVec3, NativeVersionedEntityState, NativeWorld,
     };
 
     fn block_shape(min: (f64, f64, f64), max: (f64, f64, f64), effect: u8) -> NativeBlockShape {
@@ -2862,6 +2912,41 @@ mod tests {
         assert_eq!(after.velocity.z, boosted);
         let before = tick(gliding(1, 1));
         assert!(before.position.z > plain.position.z);
+    }
+
+    fn moving_head(facing: u8) -> NativeMovingPiston {
+        NativeMovingPiston {
+            x: 0,
+            y: 0,
+            z: 0,
+            facing,
+            extending: true,
+            source: true,
+            progress: 0.0,
+            shapes: vec![NativeAabb {
+                min: vec3(0.75, 0.0, 0.0),
+                max: vec3(1.0, 1.0, 1.0),
+            }],
+        }
+    }
+
+    #[test]
+    fn moving_pistons_push_the_player_after_its_tick() {
+        let mut world = NativeWorld::new();
+        let mut state = pose_state();
+        state.moving_pistons = Some(vec![moving_head(5)]);
+        let pushed =
+            simulate_versioned_tick("1.21.1".to_string(), &mut world, state, default_config())
+                .expect("1.21.1 is supported");
+        assert_eq!(pushed.position.x, 0.5 + 0.01);
+        assert_eq!(pushed.velocity.x, 0.0);
+
+        let mut state = pose_state();
+        state.moving_pistons = Some(vec![moving_head(6)]);
+        assert!(
+            simulate_versioned_tick("1.21.1".to_string(), &mut world, state, default_config())
+                .is_err()
+        );
     }
 
     #[test]
@@ -3333,6 +3418,7 @@ mod tests {
                 nearby_entities: None,
                 firework_rockets: None,
                 firework_rockets_before_player: None,
+                moving_pistons: None,
             },
             no_physics: false,
             vehicle_id: None,

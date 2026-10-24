@@ -7,6 +7,7 @@ pub use data as generated_data;
 mod legacy_fluid;
 pub mod math;
 mod napi_api;
+pub mod piston;
 pub mod player;
 pub mod projectile;
 pub mod ridden;

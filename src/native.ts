@@ -131,6 +131,26 @@ export interface NativeSimulationState {
     fireworkRockets?: number;
     /** How many of `fireworkRockets` the client ticks before the player: they boost it before its move. */
     fireworkRocketsBeforePlayer?: number;
+    /**
+     * The blocks pistons move, as they are before this tick (simulateVersionedTick only): the client ticks them after
+     * its entities, and each moves the player out of its way. The caller advances them (0.5F a tick).
+     */
+    movingPistons?: NativeMovingPiston[];
+}
+
+export interface NativeMovingPiston {
+    x: number;
+    y: number;
+    z: number;
+    /** The piston's facing as Direction.from3DDataValue: down, up, north, south, west, east (0 - 5). */
+    facing: number;
+    extending: boolean;
+    /** The piston's own head or base rather than a block it pushes. */
+    source: boolean;
+    /** How far it has moved before this tick, a float. */
+    progress: number;
+    /** The collision boxes of the block it moves (getCollisionRelatedBlockState) in its cell; used from 1.11. */
+    shapes: NativeAabb[];
 }
 
 export interface NativeNearbyEntity {

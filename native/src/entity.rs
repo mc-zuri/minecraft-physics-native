@@ -187,12 +187,23 @@ pub struct NearbyEntity {
     pub ticks_before_player: bool,
 }
 
-/// The colliders the player's move meets among the entities near it.
+/// The colliders among the entities near the player: where the player's move meets them, or
+/// where their own ticks leave them (for what moves the player after every entity ticked).
 #[must_use]
-pub fn nearby_entity_colliders(entities: &[NearbyEntity]) -> Vec<EntityCollider> {
+pub fn nearby_entity_colliders(
+    entities: &[NearbyEntity],
+    after_their_ticks: bool,
+) -> Vec<EntityCollider> {
     entities
         .iter()
-        .filter_map(|entity| entity.kind.collider(entity.bounding_box))
+        .filter_map(|entity| {
+            let bounds = if after_their_ticks {
+                entity.tick_bounding_box
+            } else {
+                entity.bounding_box
+            };
+            entity.kind.collider(bounds)
+        })
         .collect()
 }
 
@@ -497,18 +508,31 @@ mod tests {
 
     #[test]
     fn boats_shulkers_and_happy_ghasts_collide_and_mobs_do_not() {
-        let colliders = nearby_entity_colliders(&[
-            entity_at(NearbyEntityKind::Boat, 0.0, 0.0, 0.6875),
-            entity_at(NearbyEntityKind::Shulker, 2.0, 0.0, 0.5),
-            entity_at(NearbyEntityKind::HappyGhast, 6.0, 0.0, 2.0),
-            entity_at(NearbyEntityKind::Living, 9.0, 0.0, 0.45),
-            entity_at(NearbyEntityKind::Inert, 9.0, 0.0, 0.125),
-        ]);
+        let colliders = nearby_entity_colliders(
+            &[
+                entity_at(NearbyEntityKind::Boat, 0.0, 0.0, 0.6875),
+                entity_at(NearbyEntityKind::Shulker, 2.0, 0.0, 0.5),
+                entity_at(NearbyEntityKind::HappyGhast, 6.0, 0.0, 2.0),
+                entity_at(NearbyEntityKind::Living, 9.0, 0.0, 0.45),
+                entity_at(NearbyEntityKind::Inert, 9.0, 0.0, 0.125),
+            ],
+            false,
+        );
         let flags: Vec<bool> = colliders
             .iter()
             .map(|collider| collider.only_from_above)
             .collect();
         assert_eq!(flags, vec![false, false, true]);
+    }
+
+    #[test]
+    fn after_every_entity_ticked_the_colliders_are_where_their_ticks_left_them() {
+        let mut boat = entity_at(NearbyEntityKind::Boat, 0.0, 0.0, 0.6875);
+        boat.tick_bounding_box = boat.bounding_box.translated(Vec3::new(0.25, 0.0, 0.0));
+        let during_move = nearby_entity_colliders(&[boat], false);
+        let after_ticks = nearby_entity_colliders(&[boat], true);
+        assert_eq!(during_move[0].bounds, boat.bounding_box);
+        assert_eq!(after_ticks[0].bounds, boat.tick_bounding_box);
     }
 
     fn collider_world(bounds: Aabb, only_from_above: bool) -> WorldSnapshot {

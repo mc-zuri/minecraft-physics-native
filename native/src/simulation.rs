@@ -1363,7 +1363,7 @@ pub(crate) fn moves_position(requested: Vec3, movement: Vec3, release: Minecraft
         || (release.at_least(1, 21, 2) && requested.length_squared() - length_squared < 1.0e-7)
 }
 
-fn horizontal_collision_is_minor(
+pub(crate) fn horizontal_collision_is_minor(
     state: &SimulationState,
     movement: Vec3,
     release: MinecraftVersion,
@@ -1383,7 +1383,7 @@ fn horizontal_collision_is_minor(
     (dot / (input_length_squared * movement_length_squared).sqrt()).acos() < 0.13962633907794952
 }
 
-fn back_off_from_edge(
+pub(crate) fn back_off_from_edge(
     state: &SimulationState,
     world: &WorldSnapshot,
     context: &EntityCollisionContext,
@@ -1692,7 +1692,7 @@ fn restitute_movement_after_collisions(
     state.velocity.y = (gravity_compensation - current.y) * effective_drag * restitution;
 }
 
-fn entity_collision_context(state: &SimulationState) -> EntityCollisionContext {
+pub(crate) fn entity_collision_context(state: &SimulationState) -> EntityCollisionContext {
     EntityCollisionContext {
         bottom: state.position.y,
         descending: state.sneaking,
@@ -1703,7 +1703,7 @@ fn entity_collision_context(state: &SimulationState) -> EntityCollisionContext {
 
 /// Entity.move inside cobwebs, berry bushes and powder snow: the movement scaled by the stuck
 /// speed multiplier, which the move uses up along with the motion.
-fn slowed_by_stuck_speed(state: &mut SimulationState, movement: Vec3) -> Vec3 {
+pub(crate) fn slowed_by_stuck_speed(state: &mut SimulationState, movement: Vec3) -> Vec3 {
     if state.no_physics || state.stuck_speed_multiplier.length_squared() <= 1.0e-7 {
         return movement;
     }
@@ -1714,12 +1714,12 @@ fn slowed_by_stuck_speed(state: &mut SimulationState, movement: Vec3) -> Vec3 {
 }
 
 /// Entity.collide: how much of `desired` the blocks and the world border let the entity move.
-struct WorldCollision {
-    movement: Vec3,
+pub(crate) struct WorldCollision {
+    pub(crate) movement: Vec3,
     moved_bounds: Option<Aabb>,
 }
 
-fn collide_with_world(
+pub(crate) fn collide_with_world(
     state: &SimulationState,
     world: &WorldSnapshot,
     context: &EntityCollisionContext,
@@ -1784,7 +1784,7 @@ fn collide_with_world(
 
 /// Moves the entity by the collided movement, and before 1.17 the bounding box it keeps, which the
 /// position follows: before 1.14 to where the collision moved the box.
-fn displace(
+pub(crate) fn displace(
     state: &mut SimulationState,
     desired: Vec3,
     collision: WorldCollision,
