@@ -443,6 +443,37 @@ mod tests {
     }
 
     #[test]
+    fn landing_leaves_a_positive_zero_vertical_velocity_before_1_14() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        let land = |version| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 1.2, 0.5),
+                velocity: Vec3::new(0.0, -0.5, 0.0),
+                no_gravity: true,
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .expect("the release is supported");
+            assert!(state.on_ground);
+            state.velocity.y
+        };
+
+        assert!(land("1.8.8") == 0.0 && land("1.8.8").is_sign_positive());
+        assert!(land("1.13.2") == 0.0 && land("1.13.2").is_sign_positive());
+        assert!(land("1.14.4") == 0.0 && land("1.14.4").is_sign_negative());
+    }
+
+    #[test]
     fn no_physics_bypasses_collision_and_clears_collision_flags() {
         let mut world = WorldSnapshot::new();
         world.set_block(

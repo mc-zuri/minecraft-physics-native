@@ -2161,7 +2161,12 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
                 }
             } else {
                 // Block.updateEntityAfterFallOn multiplies by zero: a landing leaves -0.0.
-                state.velocity.y *= 0.0;
+                // Before 1.14 Block.onLanded sets 0.0.
+                state.velocity.y = if rules.release.at_least(1, 14, 0) {
+                    state.velocity.y * 0.0
+                } else {
+                    0.0
+                };
             }
         }
         if stops_z {
