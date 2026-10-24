@@ -1579,6 +1579,10 @@ mod tests {
         };
 
         assert_eq!(
+            jump_height(boosted, MinecraftVersion::new(1, 13, 2)),
+            1.0 + (f64::from(0.42_f32) + f64::from(0.1_f32))
+        );
+        assert_eq!(
             jump_height(boosted, MinecraftVersion::new(1, 16, 5)),
             1.0 + f64::from(0.42_f32 + 0.1_f32)
         );

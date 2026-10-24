@@ -915,7 +915,9 @@ fn jump_power(
     let boost = state
         .jump_boost_amplifier
         .map_or(0.0, |amplifier| 0.1_f32 * (f32::from(amplifier) + 1.0));
-    if release.at_least(1, 17, 1) && !release.at_least(1, 20, 0) {
+    let boost_added_in_double = !release.at_least(1, 14, 0)
+        || (release.at_least(1, 17, 1) && !release.at_least(1, 20, 0));
+    if boost_added_in_double {
         f64::from(power) + f64::from(boost)
     } else {
         f64::from(power + boost)
