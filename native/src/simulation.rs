@@ -592,6 +592,14 @@ fn push_by_fluid(
     state.velocity = state.velocity + push;
 }
 
+fn water_contact(world: &WorldSnapshot, bounds: Aabb, release: MinecraftVersion) -> FluidContact {
+    if release.at_least(1, 14, 0) {
+        world.fluid_contact(FluidState::Water, bounds, release)
+    } else {
+        legacy_fluid::fluid_contact_1_13(world, FluidState::Water, bounds)
+    }
+}
+
 fn vector_length(vector: Vec3, release: MinecraftVersion) -> f64 {
     let length = vector.length_squared().sqrt();
     if release.at_least(1, 17, 0) {
@@ -1723,7 +1731,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         legacy_fluid::handle_water_movement(state, world, affected_by_fluids, rules.release);
         FluidContact::default()
     } else {
-        let water = world.fluid_contact(FluidState::Water, bounds, rules.release);
+        let water = water_contact(world, bounds, rules.release);
         state.in_water = water.touching;
         if state.in_water {
             state.fall_distance = 0.0;
@@ -2173,7 +2181,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     if checks_fall_damage && !state.in_water && legacy_fluids {
         legacy_fluid::handle_water_movement(state, world, affected_by_fluids, rules.release);
     } else if checks_fall_damage && !state.in_water {
-        let water = world.fluid_contact(FluidState::Water, state.bounds(), rules.release);
+        let water = water_contact(world, state.bounds(), rules.release);
         if water.touching {
             state.in_water = true;
             state.fall_distance = 0.0;

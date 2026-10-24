@@ -2614,6 +2614,25 @@ mod tests {
         assert_eq!(state.velocity.y, 0.03999999910593033 * 0.6);
     }
 
+    #[test]
+    fn water_under_water_keeps_its_own_height_in_1_13() {
+        let world = legacy_water_world(&[
+            ((0, 0, 0), Vec3::new(100.0, 0.0, 0.0)),
+            ((0, 1, 0), Vec3::ZERO),
+        ]);
+        let pushed = |version| {
+            let mut state = legacy_water_player(Vec3::new(0.5, 0.7, 0.5), Vec3::ZERO);
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            state.velocity.x
+        };
+
+        let height = f64::from(8.0_f32 / 9.0) - (0.7 + 0.001);
+        assert_eq!(pushed("1.13.2"), 100.0 * height * 0.5 * 0.014 * f64::from(0.8_f32));
+        let height = 1.0 - (0.7 + 0.001);
+        assert_eq!(pushed("1.14.4"), 100.0 * height * 0.5 * 0.014 * f64::from(0.8_f32));
+    }
+
     fn lava_world(position: (i32, i32, i32)) -> WorldSnapshot {
         let mut world = WorldSnapshot::new();
         world.set_block(

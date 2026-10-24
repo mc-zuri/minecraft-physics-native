@@ -3,7 +3,7 @@ use std::ops::{Range, RangeInclusive};
 use crate::math::{Aabb, Vec3};
 use crate::simulation::SimulationState;
 use crate::version::MinecraftVersion;
-use crate::world::{BlockState, FluidState, WorldSnapshot};
+use crate::world::{BlockState, FluidContact, FluidState, WorldSnapshot};
 
 #[must_use]
 pub(crate) fn applies(release: MinecraftVersion) -> bool {
@@ -59,14 +59,64 @@ pub(crate) fn handle_water_movement(
     }
 }
 
+/// 1.13's Entity.handleFluidAcceleration: as from 1.14, but a fluid under the same fluid keeps
+/// its own height.
+#[must_use]
+pub(crate) fn fluid_contact_1_13(
+    world: &WorldSnapshot,
+    fluid: FluidState,
+    bounds: Aabb,
+) -> FluidContact {
+    let area = bounds.deflate(Vec3::new(0.001, 0.001, 0.001));
+    let mut contact = FluidContact::default();
+    for x in area.min.x.floor() as i32..area.max.x.ceil() as i32 {
+        for y in area.min.y.floor() as i32..area.max.y.ceil() as i32 {
+            for z in area.min.z.floor() as i32..area.max.z.ceil() as i32 {
+                let block = world.block((x, y, z));
+                let matches = block.fluid == fluid
+                    || (fluid == FluidState::Water && block.fluid == FluidState::Waterlogged);
+                if !matches {
+                    continue;
+                }
+                let top = f64::from(y as f32 + own_height(&block));
+                if top < area.min.y {
+                    continue;
+                }
+                contact.touching = true;
+                contact.height = contact.height.max(top - area.min.y);
+                let flow = if contact.height < 0.4 {
+                    block.fluid_flow.scale(contact.height)
+                } else {
+                    block.fluid_flow
+                };
+                contact.flow = contact.flow + flow;
+                contact.flowing_blocks += 1;
+            }
+        }
+    }
+    contact
+}
+
 /// Entity.isInLava before 1.14: any lava in the box shrunk by 0.1F sideways and 0.4F vertically.
 #[must_use]
-pub(crate) fn touching_lava(world: &WorldSnapshot, bounds: Aabb, release: MinecraftVersion) -> bool {
+pub(crate) fn touching_lava(
+    world: &WorldSnapshot,
+    bounds: Aabb,
+    release: MinecraftVersion,
+) -> bool {
     let side = f64::from(0.1_f32);
     let vertical = f64::from(0.4_f32);
     let area = Aabb::new(
-        Vec3::new(bounds.min.x + side, bounds.min.y + vertical, bounds.min.z + side),
-        Vec3::new(bounds.max.x - side, bounds.max.y - vertical, bounds.max.z - side),
+        Vec3::new(
+            bounds.min.x + side,
+            bounds.min.y + vertical,
+            bounds.min.z + side,
+        ),
+        Vec3::new(
+            bounds.max.x - side,
+            bounds.max.y - vertical,
+            bounds.max.z - side,
+        ),
     );
     cells(area.min.x, area.max.x, release).any(|x| {
         cells(area.min.y, area.max.y, release).any(|y| {
@@ -120,6 +170,16 @@ fn height_percent(block: &BlockState) -> f32 {
         block.fluid_level
     };
     f32::from(level + 1) / 9.0
+}
+
+fn own_height(block: &BlockState) -> f32 {
+    let amount =
+        if block.fluid_source || block.fluid_falling || !(1..8).contains(&block.fluid_level) {
+            8
+        } else {
+            8 - block.fluid_level
+        };
+    f32::from(amount) / 9.0
 }
 
 fn length(vector: Vec3) -> f64 {
