@@ -18,6 +18,7 @@ export interface NativeSimulationState {
     position: NativeVec3;
     velocity: NativeVec3;
     yaw?: number;
+    pitch?: number;
     halfWidth: number;
     height: number;
     onGround: boolean;
