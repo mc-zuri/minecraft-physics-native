@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::simulation::{
-        landing_damage, movement_speed_multiplier, tick, tick_with_rules, LandingDamageRounding,
+        landing_damage, movement_speed_attribute, tick, tick_with_rules, LandingDamageRounding,
         PhysicsConfig, SimulationState, TickInputSnapshot, VersionPhysicsProfile,
         VersionPhysicsRules,
     };
@@ -327,12 +327,32 @@ mod tests {
     }
 
     #[test]
-    fn speed_slowness_and_sprinting_sum_attribute_modifiers() {
-        let multiplier = movement_speed_multiplier(Some(0), Some(0), true, 1.3);
+    fn speed_slowness_and_sprinting_multiply_the_movement_speed() {
+        let base = java_float(0.1);
+        let sprint = 1.0 + 0.30000001192092896;
+        let speed = 1.0 + 0.20000000298023224;
+        let slowness = 1.0 - 0.15000000596046448;
 
-        // All three vanilla modifiers use ADD_MULTIPLIED_TOTAL:
-        // 1 + 0.20 - 0.15 + 0.30, not 1.20 * 0.85 * 1.30.
-        assert!((multiplier - 1.35).abs() < 1e-12);
+        assert_eq!(
+            movement_speed_attribute(base, None, None, true, 1.3, MinecraftVersion::new(1, 21, 1)),
+            base * sprint
+        );
+        assert_eq!(
+            movement_speed_attribute(base, Some(0), Some(0), true, 1.3, MinecraftVersion::new(1, 21, 1)),
+            base * sprint * speed * slowness
+        );
+        assert_eq!(
+            movement_speed_attribute(base, Some(0), Some(0), true, 1.3, MinecraftVersion::new(1, 20, 5)),
+            base * sprint * slowness * speed
+        );
+        assert_eq!(
+            movement_speed_attribute(base, Some(0), Some(0), true, 1.3, MinecraftVersion::new(1, 20, 4)),
+            base * slowness * sprint * speed
+        );
+        assert_eq!(
+            movement_speed_attribute(base, None, Some(9), false, 1.3, MinecraftVersion::new(1, 21, 1)),
+            0.0
+        );
     }
 
     #[test]

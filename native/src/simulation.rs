@@ -189,27 +189,35 @@ impl PhysicsConfig {
     }
 }
 
-/// Returns the combined `ADD_MULTIPLIED_TOTAL` movement-speed modifier.
-///
-/// Vanilla installs speed, slowness, and sprinting as modifiers on the same
-/// movement-speed attribute. They are summed before the attribute value is
-/// used, rather than multiplied in effect/sprint application order.
+/// The movement speed attribute with the sprint, speed and slowness
+/// modifiers. They are all `ADD_MULTIPLIED_TOTAL`: each multiplies the value
+/// by one plus its amount, in the order vanilla's modifier map iterates them.
 #[must_use]
-pub(crate) fn movement_speed_multiplier(
+pub(crate) fn movement_speed_attribute(
+    base: f64,
     speed_effect_amplifier: Option<u8>,
     slowness_effect_amplifier: Option<u8>,
     sprint_active: bool,
     sprint_multiplier: f64,
+    release: MinecraftVersion,
 ) -> f64 {
-    let speed = speed_effect_amplifier.map_or(0.0, |amplifier| 0.2 * (f64::from(amplifier) + 1.0));
-    let slowness =
-        slowness_effect_amplifier.map_or(0.0, |amplifier| 0.15 * (f64::from(amplifier) + 1.0));
-    let sprint = if sprint_active {
-        sprint_multiplier - 1.0
+    let sprint = sprint_active.then(|| java_float(sprint_multiplier - 1.0));
+    let speed = speed_effect_amplifier
+        .map(|amplifier| 0.20000000298023224 * (f64::from(amplifier) + 1.0));
+    let slowness = slowness_effect_amplifier
+        .map(|amplifier| -0.15000000596046448 * (f64::from(amplifier) + 1.0));
+    let modifiers = if release.at_least(1, 21, 0) {
+        [sprint, speed, slowness]
+    } else if release.at_least(1, 20, 5) {
+        [sprint, slowness, speed]
     } else {
-        0.0
+        [slowness, sprint, speed]
     };
-    (1.0 + speed - slowness + sprint).max(0.0)
+    modifiers
+        .into_iter()
+        .flatten()
+        .fold(base, |value, amount| value * (1.0 + amount))
+        .clamp(0.0, 1024.0)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -1122,13 +1130,14 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         base_speed += 0.0405 + (level - 1.0) * 0.0105;
     }
     let sprint_active = state.sprinting && !state.sneaking && !state.using_item;
-    let movement_speed = base_speed
-        * movement_speed_multiplier(
-            state.speed_effect_amplifier,
-            state.slowness_effect_amplifier,
-            sprint_active,
-            config.sprint_multiplier,
-        );
+    let movement_speed = movement_speed_attribute(
+        base_speed,
+        state.speed_effect_amplifier,
+        state.slowness_effect_amplifier,
+        sprint_active,
+        config.sprint_multiplier,
+        rules.release,
+    );
     let mut fluid_input_speed = match fluid {
         FluidState::Water | FluidState::Waterlogged => java_float(rules.water_input_speed),
         FluidState::Lava => java_float(rules.lava_input_speed),
