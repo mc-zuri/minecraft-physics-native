@@ -1,6 +1,7 @@
 use crate::collision::{resolve_motion, resolve_step_motion, vanilla_equal};
 use crate::entity::{Dimensions, EntityFlags, EntityState};
 use crate::math::{java_float, Aabb, Vec3};
+use crate::version::MinecraftVersion;
 use crate::world::WorldSnapshot;
 use crate::world::{BlockEffect, FluidState};
 
@@ -17,6 +18,7 @@ pub struct PhysicsConfig {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VersionPhysicsRules {
+    pub release: MinecraftVersion,
     pub gravity: f64,
     pub water_gravity_divisor: f64,
     pub lava_gravity_divisor: f64,
@@ -120,6 +122,7 @@ pub fn tick_with_profile_and_modern_fall_damage<P: VersionPhysicsProfile>(
 impl Default for VersionPhysicsRules {
     fn default() -> Self {
         Self {
+            release: MinecraftVersion::new(26, 2, 0),
             gravity: 0.08,
             water_gravity_divisor: 5.0,
             lava_gravity_divisor: 4.0,

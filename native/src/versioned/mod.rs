@@ -860,6 +860,25 @@ mod tests {
     }
 
     #[test]
+    fn profiles_carry_their_release() {
+        macro_rules! assert_releases {
+            ($($module:ident),*) => {
+                $(assert_eq!(
+                    crate::version::MinecraftVersion::parse($module::Engine::VERSION),
+                    Some($module::Profile::rules().release),
+                );)*
+            };
+        }
+        assert_releases!(
+            v1_14_4, v1_15, v1_15_1, v1_15_2, v1_16, v1_16_1, v1_16_2, v1_16_3, v1_16_4, v1_16_5,
+            v1_17, v1_17_1, v1_18, v1_18_1, v1_18_2, v1_19, v1_19_1, v1_19_2, v1_19_3, v1_19_4,
+            v1_20, v1_20_1, v1_20_2, v1_20_3, v1_20_4, v1_20_5, v1_20_6, v1_21, v1_21_1, v1_21_2,
+            v1_21_3, v1_21_4, v1_21_5, v1_21_6, v1_21_7, v1_21_8, v1_21_9, v1_21_10, v1_21_11,
+            v26_1, v26_1_1, v26_1_2, v26_2
+        );
+    }
+
+    #[test]
     fn rejects_versions_without_source_snapshot() {
         let world = WorldSnapshot::new();
         let mut state = SimulationState::default();

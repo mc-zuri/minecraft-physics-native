@@ -2,6 +2,7 @@ use crate::simulation::{
     tick_with_profile, LandingDamageRounding, PhysicsConfig, SimulationState, TickResult,
     VersionPhysicsProfile, VersionPhysicsRules,
 };
+use crate::version::MinecraftVersion;
 use crate::versioned::VersionEngine;
 use crate::world::WorldSnapshot;
 pub struct Engine;
@@ -13,6 +14,7 @@ impl VersionPhysicsProfile for Profile {
 
     fn rules() -> VersionPhysicsRules {
         VersionPhysicsRules {
+            release: MinecraftVersion::new(1, 21, 1),
             gravity: 0.08,
             water_gravity_divisor: 16.0,
             lava_gravity_divisor: 4.0,
