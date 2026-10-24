@@ -78,6 +78,7 @@ export interface NativeSimulationState {
     noGravity?: boolean;
     gravity?: number;
     stepHeight?: number;
+    /** The movement speed attribute with its additive modifiers; the engine applies sprint, speed and slowness. */
     movementSpeed?: number;
     jumpStrength?: number;
     speedEffectAmplifier?: number;

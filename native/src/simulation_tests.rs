@@ -3273,13 +3273,13 @@ mod tests {
     }
 
     #[test]
-    fn modern_soul_speed_applies_location_speed_and_efficiency_effects() {
+    fn movement_efficiency_lifts_the_soul_sand_slowdown() {
         let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 1, 0),
             BlockState {
                 shape: Some(BlockShape {
-                    effect: crate::world::BlockEffect::SoulSoil,
+                    effect: crate::world::BlockEffect::SoulSand,
                     ..BlockShape::full_block()
                 }),
                 ..BlockState::default()
@@ -3296,7 +3296,7 @@ mod tests {
         };
         let mut without = base;
         let mut with = base;
-        with.soul_speed = 1;
+        with.movement_efficiency = 1.0;
 
         crate::versioned::dispatch("26.2", &mut without, &world, PhysicsConfig::default()).unwrap();
         crate::versioned::dispatch("26.2", &mut with, &world, PhysicsConfig::default()).unwrap();

@@ -1193,8 +1193,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         (state.position.y + state.height - 0.1).floor() as i32,
         state.position.z.floor() as i32,
     );
-    let feet_effect = world.effect_at(feet_position);
-    let soul_speed_block = matches!(feet_effect, BlockEffect::SoulSand | BlockEffect::SoulSoil);
     let body_effect = world.effect_at(body_position);
     let inside_effects = world.effects_in_bounds(bounds);
     let in_web = inside_effects.contains(&BlockEffect::Web);
@@ -1332,15 +1330,11 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     } else {
         rules.gravity
     };
-    let mut base_speed = if state.movement_speed > 0.0 {
+    let base_speed = if state.movement_speed > 0.0 {
         state.movement_speed
     } else {
         config.movement_speed
     };
-    if rules.fluid_travel_split && soul_speed_block && state.soul_speed > 0 {
-        let level = f64::from(state.soul_speed);
-        base_speed += 0.0405 + (level - 1.0) * 0.0105;
-    }
     let movement_speed = movement_speed_attribute(
         base_speed,
         state.speed_effect_amplifier,
