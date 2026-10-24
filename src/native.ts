@@ -28,6 +28,7 @@ export interface NativeSimulationState {
     blockFallCallback?: boolean;
     entityBounciness?: number;
     blockBounciness?: number;
+    /** The movement keys held: x is left (1) or right (-1), z forward (1) or back (-1). */
     input?: NativeVec3;
     jumpRequested?: boolean;
     jumpTicks?: number;
@@ -64,6 +65,8 @@ export interface NativeSimulationState {
     fallDamageImmune?: boolean;
     fallDamageMultiplier?: number;
     sneaking?: boolean;
+    /** LocalPlayer.isMovingSlowly: crouching or crawling slows the input; defaults to `sneaking`. */
+    movingSlowly?: boolean;
     steppingCarefully?: boolean;
     usingItem?: boolean;
     swimming?: boolean;

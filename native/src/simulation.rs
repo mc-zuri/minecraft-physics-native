@@ -270,6 +270,7 @@ pub struct SimulationState {
     pub fall_damage_immune: bool,
     pub fall_damage_multiplier: Option<f64>,
     pub sneaking: bool,
+    pub moving_slowly: Option<bool>,
     pub stepping_carefully: bool,
     pub using_item: bool,
     pub swimming: bool,
@@ -352,6 +353,7 @@ impl From<EntityState> for SimulationState {
             fall_damage_immune: false,
             fall_damage_multiplier: Some(1.0),
             sneaking: false,
+            moving_slowly: None,
             stepping_carefully: false,
             using_item: false,
             swimming: false,
@@ -683,6 +685,67 @@ fn jump_power(
 fn friction_influenced_speed(speed: f64, friction: f64) -> f64 {
     let friction = friction as f32;
     f64::from(speed as f32 * (0.21600002_f32 / (friction * friction * friction)))
+}
+
+fn movement_input(state: &SimulationState, release: MinecraftVersion) -> Vec3 {
+    let keys = [state.input.x as f32, state.input.z as f32];
+    let [strafe, forward] = if !state.is_player {
+        scale_input(keys, 0.98)
+    } else if release.at_least(1, 21, 5) {
+        modified_input(keys, state)
+    } else {
+        let item_slows_first = release.at_least(1, 21, 4);
+        let mut input = keys;
+        if state.using_item && item_slows_first {
+            input = scale_input(input, 0.2);
+        }
+        if state.moving_slowly.unwrap_or(state.sneaking) {
+            input = if release.at_least(1, 19, 0) {
+                scale_input(input, sneaking_speed(state))
+            } else {
+                input.map(|impulse| (f64::from(impulse) * 0.3) as f32)
+            };
+        }
+        if state.using_item && !item_slows_first {
+            input = scale_input(input, 0.2);
+        }
+        scale_input(input, 0.98)
+    };
+    Vec3::new(f64::from(strafe), state.input.y, f64::from(forward))
+}
+
+fn modified_input(keys: [f32; 2], state: &SimulationState) -> [f32; 2] {
+    let length = (keys[0] * keys[0] + keys[1] * keys[1]).sqrt();
+    if length < 1.0e-4 {
+        return [0.0, 0.0];
+    }
+    let mut input = scale_input([keys[0] / length, keys[1] / length], 0.98);
+    if state.using_item {
+        input = scale_input(input, 0.2);
+    }
+    if state.moving_slowly.unwrap_or(state.sneaking) {
+        input = scale_input(input, sneaking_speed(state));
+    }
+    let length = (input[0] * input[0] + input[1] * input[1]).sqrt();
+    if length <= 0.0 {
+        return input;
+    }
+    let direction = scale_input(input, 1.0 / length);
+    let (x, y) = (direction[0].abs(), direction[1].abs());
+    let ratio = if y > x { x / y } else { y / x };
+    scale_input(direction, (length * (1.0 + ratio * ratio).sqrt()).min(1.0))
+}
+
+fn scale_input(input: [f32; 2], factor: f32) -> [f32; 2] {
+    [input[0] * factor, input[1] * factor]
+}
+
+fn sneaking_speed(state: &SimulationState) -> f32 {
+    if state.sneaking_speed > 0.0 {
+        state.sneaking_speed as f32
+    } else {
+        0.3
+    }
 }
 
 fn mth_sin(radians: f64, release: MinecraftVersion) -> f64 {
@@ -1193,16 +1256,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     } else {
         fluid_input_speed
     };
-    let sneaking_speed = if state.sneaking && state.sneaking_speed > 0.0 {
-        state.sneaking_speed
-    } else if state.sneaking {
-        0.3
-    } else {
-        1.0
-    };
-    let input_speed = input_speed * sneaking_speed;
-    let input_speed = input_speed * if state.using_item { 0.2 } else { 1.0 };
-    state.velocity = state.velocity + relative_movement(state.input, input_speed, state.yaw, rules.release);
+    let input = movement_input(state, rules.release);
+    state.velocity = state.velocity + relative_movement(input, input_speed, state.yaw, rules.release);
     if in_web && !ignores_stuck_block {
         let (horizontal, vertical) = if state.weaving {
             (0.5, 0.25)

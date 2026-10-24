@@ -162,7 +162,7 @@ mod tests {
                         / crate::math::java_float(0.98_f64 * 0.98 * 0.98),
                 ),
         );
-        assert!((state.position.x - (0.5 + expected)).abs() < 1.0e-7);
+        assert!((state.position.x - (0.5 + crate::math::java_float(0.98) * expected)).abs() < 1.0e-7);
     }
 
     #[test]
@@ -369,7 +369,7 @@ mod tests {
 
         // Base 0.1 * (1 - 0.30), then the drag of the default 0.6 friction.
         let ground_drag = java_float(java_float(0.6) * java_float(0.98));
-        assert!((state.velocity.z - java_float(0.1 * 0.7) * ground_drag).abs() < 1e-12);
+        assert!((state.velocity.z - java_float(0.98) * java_float(0.1 * 0.7) * ground_drag).abs() < 1e-12);
     }
 
     #[test]
@@ -392,7 +392,7 @@ mod tests {
 
         // clamp(1 - (1 - 0.98) * 0.5, 0, 1) == 0.99, in float.
         let drag = f64::from(1.0_f32 - (1.0_f32 - 0.98_f32) * 0.5_f32);
-        assert!((state.velocity.z - java_float(0.02) * drag).abs() < 1e-12);
+        assert!((state.velocity.z - java_float(0.98) * java_float(0.02) * drag).abs() < 1e-12);
     }
 
     #[test]
@@ -414,7 +414,7 @@ mod tests {
             rules,
         );
 
-        assert!((state.velocity.z - java_float(0.02)).abs() < 1e-12);
+        assert!((state.velocity.z - java_float(0.98) * java_float(0.02)).abs() < 1e-12);
     }
 
     #[test]
@@ -472,14 +472,15 @@ mod tests {
         };
         let modern = MinecraftVersion::new(1, 21, 1);
 
-        assert_eq!(airborne_displacement(player, modern), java_float(0.02));
+        let input = java_float(0.98);
+        assert_eq!(airborne_displacement(player, modern), input * java_float(0.02));
         assert_eq!(
             airborne_displacement(sprinting, modern),
-            f64::from(0.025999999_f32)
+            input * f64::from(0.025999999_f32)
         );
         assert_eq!(
             airborne_displacement(SimulationState::default(), modern),
-            java_float(0.02)
+            input * java_float(0.02)
         );
     }
 
@@ -496,17 +497,18 @@ mod tests {
             ..SimulationState::default()
         };
 
+        let input = java_float(0.98);
         assert_eq!(
             airborne_displacement(started_sprinting, MinecraftVersion::new(1, 19, 2)),
-            java_float(0.02)
+            input * java_float(0.02)
         );
         assert_eq!(
             airborne_displacement(sprinted_before, MinecraftVersion::new(1, 19, 2)),
-            f64::from(0.02_f32 + 0.006_f32)
+            input * f64::from(0.02_f32 + 0.006_f32)
         );
         assert_eq!(
             airborne_displacement(sprinted_before, MinecraftVersion::new(1, 14, 4)),
-            f64::from((f64::from(0.02_f32) + 0.005999999865889549) as f32)
+            input * f64::from((f64::from(0.02_f32) + 0.005999999865889549) as f32)
         );
     }
 
@@ -522,7 +524,7 @@ mod tests {
 
         assert_eq!(
             airborne_displacement(flying, MinecraftVersion::new(1, 21, 1)),
-            f64::from(0.05_f32 * 2.0)
+            java_float(0.98) * f64::from(0.05_f32 * 2.0)
         );
     }
 
@@ -547,7 +549,7 @@ mod tests {
             tick_with_rules(&mut state, &WorldSnapshot::new(), PhysicsConfig::default(), rules);
 
             assert_eq!(state.position.z, 0.5);
-            assert_eq!(state.position.x, 0.5 + java_float(0.1));
+            assert_eq!(state.position.x, 0.5 + java_float(0.98) * java_float(0.1));
         }
     }
 
@@ -669,7 +671,7 @@ mod tests {
             crate::versioned::v1_20_6::Profile::rules(),
         );
 
-        assert!((state.velocity.z - 0.054600006).abs() < 1e-7);
+        assert!((state.velocity.z - 0.054600006 * java_float(0.98)).abs() < 1e-7);
     }
 
     #[test]
@@ -751,7 +753,7 @@ mod tests {
 
         tick(&mut state, &world, PhysicsConfig::default());
 
-        assert!((state.velocity.z - 0.016).abs() < 1e-7);
+        assert!((state.velocity.z - 0.016 * java_float(0.98)).abs() < 1e-7);
     }
 
     #[test]
@@ -1735,11 +1737,44 @@ mod tests {
     }
 
     #[test]
+    fn moving_slowly_decides_the_sneak_slowdown_not_the_sneak_key() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        let walking = |sneaking: bool, moving_slowly: bool| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 1.0, 0.5),
+                velocity: Vec3::new(0.0, -0.08 * java_float(0.98), 0.0),
+                input: Vec3::new(1.0, 0.0, 0.0),
+                on_ground: true,
+                is_player: true,
+                sneaking,
+                moving_slowly: Some(moving_slowly),
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            tick(&mut state, &world, PhysicsConfig::default());
+            state.position.x - 0.5
+        };
+
+        assert_eq!(walking(true, false), java_float(0.98) * java_float(0.1));
+        assert!((walking(false, true) - 0.98 * 0.3 * 0.1).abs() < 1.0e-8);
+    }
+
+    #[test]
     fn swift_sneak_uses_the_sneaking_speed_attribute() {
         let mut state = SimulationState {
             position: Vec3::new(0.0, 2.0, 0.0),
             input: Vec3::new(1.0, 0.0, 0.0),
-            sneaking: true,
+            is_player: true,
+            moving_slowly: Some(true),
             sneaking_speed: 0.45,
             on_ground: true,
             no_physics: true,
@@ -1751,7 +1786,7 @@ mod tests {
 
         tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
 
-        assert!((state.position.x - java_float(0.1) * 0.45).abs() < 1.0e-12);
+        assert!((state.position.x - f64::from(0.98_f32 * 0.45_f32) * java_float(0.1)).abs() < 1.0e-12);
     }
 
     #[test]
@@ -2887,8 +2922,9 @@ mod tests {
         tick(&mut state, &world, PhysicsConfig::default());
 
         let ground_drag = java_float(java_float(0.6) * java_float(0.98));
-        assert!((state.position.x - (0.5 + java_float(0.1))).abs() < 1.0e-12);
-        assert!((state.velocity.x - java_float(0.1) * java_float(0.4) * ground_drag).abs() < 1.0e-12);
+        let moved = java_float(0.98) * java_float(0.1);
+        assert!((state.position.x - (0.5 + moved)).abs() < 1.0e-12);
+        assert!((state.velocity.x - moved * java_float(0.4) * ground_drag).abs() < 1.0e-12);
     }
 
     #[test]
@@ -2918,8 +2954,9 @@ mod tests {
         tick(&mut state, &world, PhysicsConfig::default());
 
         let ground_drag = java_float(java_float(0.6) * java_float(0.98));
-        assert!((state.position.x - (0.5 + java_float(0.1))).abs() < 1.0e-12);
-        assert!((state.velocity.x - java_float(0.1) * ground_drag).abs() < 1.0e-12);
+        let moved = java_float(0.98) * java_float(0.1);
+        assert!((state.position.x - (0.5 + moved)).abs() < 1.0e-12);
+        assert!((state.velocity.x - moved * ground_drag).abs() < 1.0e-12);
     }
 
     #[test]
