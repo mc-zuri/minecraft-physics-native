@@ -2724,6 +2724,36 @@ mod tests {
     }
 
     #[test]
+    fn creative_flight_ends_elytra_flight_after_travel_until_1_21_2() {
+        let glide = |release: MinecraftVersion| {
+            let mut state = SimulationState {
+                is_player: true,
+                flying: true,
+                fall_flying: true,
+                flying_speed: java_float(0.05),
+                position: Vec3::new(0.5, 10.0, 0.5),
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            let rules = VersionPhysicsRules {
+                release,
+                ..VersionPhysicsRules::default()
+            };
+            tick_with_rules(
+                &mut state,
+                &WorldSnapshot::new(),
+                PhysicsConfig::default(),
+                rules,
+            );
+            state.fall_flying
+        };
+
+        assert!(!glide(MinecraftVersion::new(1, 21, 1)));
+        assert!(glide(MinecraftVersion::new(1, 21, 2)));
+    }
+
+    #[test]
     fn creative_flight_ends_on_landing_but_spectators_keep_flying() {
         let mut world = WorldSnapshot::new();
         world.set_block(

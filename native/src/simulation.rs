@@ -1857,6 +1857,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.velocity.y = flying_vertical_velocity * 0.6;
         if !flight_resets_fall_before_travel {
             state.fall_distance = 0.0;
+            state.fall_flying = false;
         }
     }
 
