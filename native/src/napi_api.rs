@@ -3,8 +3,8 @@ use napi::Error;
 use napi_derive::napi;
 
 use crate::entity::{
-    entity_push_impulses_with_pushthrough, nearby_entity_colliders, push_by_nearby_entities,
-    Dimensions, EntityFlags, EntityState, NearbyEntity, NearbyEntityKind,
+    boost_by_attached_rockets, entity_push_impulses_with_pushthrough, nearby_entity_colliders,
+    push_by_nearby_entities, Dimensions, EntityFlags, EntityState, NearbyEntity, NearbyEntityKind,
 };
 use crate::math::{Aabb, Vec3};
 use crate::projectile::{
@@ -270,6 +270,8 @@ pub struct NativeSimulationState {
     pub previous_position: Option<NativeVec3>,
     pub bounding_box: Option<NativeAabb>,
     pub nearby_entities: Option<Vec<NativeNearbyEntity>>,
+    pub firework_rockets: Option<u32>,
+    pub firework_rockets_before_player: Option<u32>,
 }
 
 #[napi(object)]
@@ -746,6 +748,8 @@ impl From<SimulationState> for NativeSimulationState {
             previous_position: value.previous_position.map(Into::into),
             bounding_box: value.bounding_box.map(Into::into),
             nearby_entities: None,
+            firework_rockets: None,
+            firework_rockets_before_player: None,
         }
     }
 }
@@ -1462,8 +1466,9 @@ pub fn simulate_tick(
     ))
 }
 
-/// One client tick of the local player: the nearby entities the client ticks before it push it,
-/// it ticks (colliding with the entities that are colliders), then the others push it.
+/// One client tick of the local player: the attached rockets and nearby entities the client ticks
+/// before it boost and push it, it ticks (colliding with the entities that are colliders), then
+/// the other rockets and entities boost and push it.
 #[napi]
 pub fn simulate_versioned_tick(
     version: String,
@@ -1478,12 +1483,22 @@ pub fn simulate_versioned_tick(
         .into_iter()
         .map(Into::into)
         .collect();
+    let rockets = state.firework_rockets.unwrap_or(0);
+    let rockets_before_player = state
+        .firework_rockets_before_player
+        .unwrap_or(0)
+        .min(rockets);
     let mut simulation_state: SimulationState = state.into();
     let minecraft_version = MinecraftVersion::parse(&version)
         .ok_or_else(|| Error::from_reason(format!("invalid Minecraft version: {version}")))?;
     simulation_state.minor_horizontal_collision_supported =
         minecraft_version.supports_minor_horizontal_collision();
     let config = validated_simulation_config(config)?;
+    boost_by_attached_rockets(
+        &mut simulation_state,
+        rockets_before_player,
+        minecraft_version,
+    );
     push_by_nearby_entities(
         &mut simulation_state,
         world.snapshot(),
@@ -1494,14 +1509,14 @@ pub fn simulate_versioned_tick(
     world
         .inner
         .set_entity_colliders(nearby_entity_colliders(&nearby_entities));
-    let result = versioned::dispatch(
-        &version,
-        &mut simulation_state,
-        world.snapshot(),
-        config,
-    );
+    let result = versioned::dispatch(&version, &mut simulation_state, world.snapshot(), config);
     world.inner.set_entity_colliders(Vec::new());
     let result = result.map_err(Error::from_reason)?;
+    boost_by_attached_rockets(
+        &mut simulation_state,
+        rockets - rockets_before_player,
+        minecraft_version,
+    );
     push_by_nearby_entities(
         &mut simulation_state,
         world.snapshot(),
@@ -2823,6 +2838,33 @@ mod tests {
     }
 
     #[test]
+    fn attached_rockets_boost_the_player_before_or_after_its_tick() {
+        let mut world = NativeWorld::new();
+        let gliding = |rockets: u32, before: u32| {
+            let mut state = pose_state();
+            state.on_ground = false;
+            state.position = vec3(0.0, 10.0, 0.0);
+            state.fall_flying = Some(true);
+            state.look = Some(vec3(0.0, 0.0, 1.0));
+            state.firework_rockets = Some(rockets);
+            state.firework_rockets_before_player = Some(before);
+            state
+        };
+        let mut tick = |state| {
+            simulate_versioned_tick("1.21.1".to_string(), &mut world, state, default_config())
+                .expect("1.21.1 is supported")
+        };
+
+        let plain = tick(gliding(0, 0));
+        let after = tick(gliding(1, 0));
+        assert_eq!(after.position.z, plain.position.z);
+        let boosted = plain.velocity.z + (1.0 * 0.1 + (1.0 * 1.5 - plain.velocity.z) * 0.5);
+        assert_eq!(after.velocity.z, boosted);
+        let before = tick(gliding(1, 1));
+        assert!(before.position.z > plain.position.z);
+    }
+
+    #[test]
     fn colliding_entities_stop_the_move_of_their_tick_only() {
         let mut world = NativeWorld::new();
         let shulker = nearby_entity("shulker", vec3(-0.5, -1.0, -0.5), vec3(0.5, 0.0, 0.5), true);
@@ -3289,6 +3331,8 @@ mod tests {
                 previous_position: None,
                 bounding_box: None,
                 nearby_entities: None,
+                firework_rockets: None,
+                firework_rockets_before_player: None,
             },
             no_physics: false,
             vehicle_id: None,

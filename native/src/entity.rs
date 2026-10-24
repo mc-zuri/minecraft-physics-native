@@ -269,11 +269,34 @@ fn push_impulse(from: Vec3, to: Vec3, release: MinecraftVersion) -> Option<(f64,
     Some((x, z))
 }
 
+/// FireworkRocketEntity.tick of the rockets attached to the player (from 1.11): each pulls a
+/// gliding player toward 1.5 times its look vector.
+pub fn boost_by_attached_rockets(
+    state: &mut SimulationState,
+    rockets: u32,
+    release: MinecraftVersion,
+) {
+    if !release.at_least(1, 11, 0) || !state.fall_flying {
+        return;
+    }
+    let look = state.look;
+    for _ in 0..rockets {
+        let movement = state.velocity;
+        state.velocity = movement
+            + Vec3::new(
+                look.x * 0.1 + (look.x * 1.5 - movement.x) * 0.5,
+                look.y * 0.1 + (look.y * 1.5 - movement.y) * 0.5,
+                look.z * 0.1 + (look.z * 1.5 - movement.z) * 0.5,
+            );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        entity_push_impulses, entity_push_impulses_with_pushthrough, nearby_entity_colliders,
-        push_by_nearby_entities, Dimensions, EntityState, NearbyEntity, NearbyEntityKind,
+        boost_by_attached_rockets, entity_push_impulses, entity_push_impulses_with_pushthrough,
+        nearby_entity_colliders, push_by_nearby_entities, Dimensions, EntityState, NearbyEntity,
+        NearbyEntityKind,
     };
     use crate::math::{Aabb, Vec3};
     use crate::simulation::{PhysicsConfig, SimulationState};
@@ -537,6 +560,46 @@ mod tests {
         crate::versioned::dispatch("1.21.6", &mut inside, &world, PhysicsConfig::default())
             .unwrap();
         assert!(inside.position.y < 63.9);
+    }
+
+    fn gliding_player() -> SimulationState {
+        SimulationState {
+            velocity: Vec3::new(0.25, -0.5, 1.0),
+            look: Vec3::new(0.0, -0.17364817766693033, 0.984807753012208),
+            fall_flying: true,
+            ..player_at(0.0, 0.0)
+        }
+    }
+
+    #[test]
+    fn each_attached_rocket_pulls_a_gliding_player_toward_its_look() {
+        let release = MinecraftVersion::new(1, 21, 1);
+        let mut state = gliding_player();
+        boost_by_attached_rockets(&mut state, 2, release);
+        let look = gliding_player().look;
+        let mut expected = gliding_player().velocity;
+        for _ in 0..2 {
+            expected = expected
+                + Vec3::new(
+                    look.x * 0.1 + (look.x * 1.5 - expected.x) * 0.5,
+                    look.y * 0.1 + (look.y * 1.5 - expected.y) * 0.5,
+                    look.z * 0.1 + (look.z * 1.5 - expected.z) * 0.5,
+                );
+        }
+        assert_eq!(state.velocity, expected);
+    }
+
+    #[test]
+    fn rockets_boost_only_a_gliding_player_and_only_from_1_11() {
+        let mut walking = SimulationState {
+            fall_flying: false,
+            ..gliding_player()
+        };
+        boost_by_attached_rockets(&mut walking, 1, MinecraftVersion::new(1, 21, 1));
+        assert_eq!(walking.velocity, gliding_player().velocity);
+        let mut legacy = gliding_player();
+        boost_by_attached_rockets(&mut legacy, 1, MinecraftVersion::new(1, 10, 2));
+        assert_eq!(legacy.velocity, gliding_player().velocity);
     }
 
     #[test]

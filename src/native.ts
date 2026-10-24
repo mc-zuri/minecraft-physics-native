@@ -124,6 +124,13 @@ export interface NativeSimulationState {
      * after its move.
      */
     nearbyEntities?: NativeNearbyEntity[];
+    /**
+     * The firework rockets attached to the player that tick this tick (simulateVersionedTick only, 1.11+): each pulls a
+     * gliding player toward 1.5 times its look vector (FireworkRocketEntity.tick).
+     */
+    fireworkRockets?: number;
+    /** How many of `fireworkRockets` the client ticks before the player: they boost it before its move. */
+    fireworkRocketsBeforePlayer?: number;
 }
 
 export interface NativeNearbyEntity {
