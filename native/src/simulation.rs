@@ -1,5 +1,5 @@
 use crate::block_traversal::{blocks_visited, Movement};
-use crate::collision::{collide, vanilla_equal, CollisionRules, StepUp};
+use crate::collision::{collide, collide_legacy, vanilla_equal, CollisionRules, StepUp};
 use crate::entity::{Dimensions, EntityFlags, EntityState};
 use crate::math::{java_cos, java_cos_legacy, java_float, java_sin, java_sin_legacy, Aabb, Vec3};
 use crate::version::MinecraftVersion;
@@ -1984,6 +1984,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     let desired =
         back_off_from_edge(state, world, &collision_context, movement, rules.step_height);
     let bounds = state.bounds();
+    let mut legacy_bounds = None;
     let displacement = if state.no_physics {
         desired
     } else {
@@ -2018,10 +2019,34 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
                 && rules.release.at_least(1, 13, 0)
                 && !rules.release.at_least(1, 18, 0),
         };
-        collide(bounds, desired, &obstacles, state.on_ground, max_step, collision)
+        if rules.release.at_least(1, 14, 0) {
+            collide(
+                bounds,
+                desired,
+                &obstacles,
+                state.on_ground,
+                max_step,
+                collision,
+            )
+        } else {
+            let voxel_shapes = rules.release.at_least(1, 13, 0);
+            let legacy = collide_legacy(
+                bounds,
+                desired,
+                &obstacles,
+                state.on_ground,
+                max_step,
+                voxel_shapes,
+            );
+            legacy_bounds = Some(legacy.bounds);
+            legacy.movement
+        }
     };
 
-    if state.no_physics || moves_position(desired, displacement, rules.release) {
+    if let Some(moved) = legacy_bounds {
+        state.bounding_box = Some(moved);
+        state.position = position_of_bounding_box(moved);
+    } else if state.no_physics || moves_position(desired, displacement, rules.release) {
         match state.bounding_box {
             Some(bounds) => {
                 let moved = bounds.translated(displacement);

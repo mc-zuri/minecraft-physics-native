@@ -762,7 +762,7 @@ mod tests {
     }
 
     #[test]
-    fn a_negligible_movement_meets_the_world_border_only_from_1_13() {
+    fn a_negligible_movement_meets_the_world_border_only_from_1_14() {
         let drifting = SimulationState {
             position: Vec3::new(0.5, 0.0, 0.5),
             velocity: Vec3::new(0.5e-7, 0.0, 0.0),
@@ -771,11 +771,13 @@ mod tests {
         };
         let world = WorldSnapshot::new();
 
-        let legacy = velocity_after_move(&world, drifting, MinecraftVersion::new(1, 12, 2));
-        let voxel = velocity_after_move(&world, drifting, MinecraftVersion::new(1, 13, 2));
+        let boxes = velocity_after_move(&world, drifting, MinecraftVersion::new(1, 12, 2));
+        let voxels = velocity_after_move(&world, drifting, MinecraftVersion::new(1, 13, 2));
+        let bordered = velocity_after_move(&world, drifting, MinecraftVersion::new(1, 14, 4));
 
-        assert!(legacy.x > 0.0);
-        assert_eq!(voxel.x, 0.0);
+        assert!(boxes.x > 0.0);
+        assert!(voxels.x > 0.0);
+        assert_eq!(bordered.x, 0.0);
     }
 
     #[test]
