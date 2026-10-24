@@ -4010,6 +4010,88 @@ mod tests {
         assert_eq!(state.fall_damage, 0.0);
     }
 
+    fn bed() -> BlockState {
+        BlockState {
+            id: 1,
+            shape: Some(BlockShape {
+                bounds: Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.5625, 1.0)),
+                effect: BlockEffect::Bed,
+                ..BlockShape::full_block()
+            }),
+            bounce_restitution: 0.75,
+            ..BlockState::default()
+        }
+    }
+
+    #[test]
+    fn bed_bounces_a_fall_back_up_with_two_thirds_of_its_speed() {
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), bed());
+        let falling = SimulationState {
+            position: Vec3::new(0.5, 0.8, 0.5),
+            velocity: Vec3::new(0.0, -0.5, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            is_player: true,
+            no_gravity: true,
+            ..SimulationState::default()
+        };
+        let mut player = falling;
+        let mut item = SimulationState {
+            is_player: false,
+            ..falling
+        };
+        let mut sneaking = SimulationState {
+            sneaking: true,
+            ..falling
+        };
+
+        for state in [&mut player, &mut item, &mut sneaking] {
+            crate::versioned::dispatch("1.21.1", state, &world, PhysicsConfig::default()).unwrap();
+        }
+
+        let drag = java_float(0.98);
+        assert!(player.on_ground);
+        assert_eq!(player.velocity.y, 0.5 * 0.6600000262260437 * drag);
+        assert_eq!(item.velocity.y, 0.5 * 0.6600000262260437 * 0.8 * drag);
+        assert_eq!(sneaking.velocity.y, 0.0);
+    }
+
+    #[test]
+    fn bed_halves_the_fall_distance_that_hurts() {
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), bed());
+        world.set_block(
+            (2, 0, 0),
+            BlockState {
+                id: 2,
+                shape: Some(BlockShape {
+                    bounds: Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.5625, 1.0)),
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        let damage = |x: f64, fall_distance: f64| {
+            let mut state = SimulationState {
+                position: Vec3::new(x, 0.8, 0.5),
+                velocity: Vec3::new(0.0, -1.0, 0.0),
+                half_width: 0.3,
+                height: 1.8,
+                is_player: true,
+                fall_distance,
+                safe_fall_distance: 3.0,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch("1.21.1", &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            state.fall_damage
+        };
+
+        assert_eq!(damage(0.5, 20.0), damage(2.5, 10.0));
+        assert!(damage(0.5, 20.0) < damage(2.5, 20.0));
+    }
+
     #[test]
     fn honey_block_applies_source_downward_slide_velocity() {
         let mut world = WorldSnapshot::new();

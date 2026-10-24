@@ -1713,21 +1713,26 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         }
     }
     let landed_on = world.effect_at(landing_position(world, state, rules.release));
+    let bounce_scale = if state.is_player { 1.0 } else { 0.8 };
     let bounced = collisions[1] && landed_on == BlockEffect::Slime && !state.sneaking;
     if bounced {
         if state.velocity.y < 0.0 {
-            let bounce_scale = if state.is_player { 1.0 } else { 0.8 };
             state.velocity.y = -state.velocity.y * bounce_scale;
         }
         state.fall_distance = 0.0;
         state.fall_damage = 0.0;
     }
+    let landing_fall_distance = if landed_on == BlockEffect::Bed {
+        state.fall_distance * 0.5
+    } else {
+        state.fall_distance
+    };
     if checks_fall_damage && state.on_ground && !bounced {
         if state.on_ground {
             state.fall_damage = if state.fall_damage_immune {
                 0.0
             } else if modern_fall_damage {
-                let fall_power = state.fall_distance + 1.0e-6 - state.safe_fall_distance;
+                let fall_power = landing_fall_distance + 1.0e-6 - state.safe_fall_distance;
                 if fall_power > 0.0 {
                     let damage = fall_power * state.fall_damage_multiplier.unwrap_or(1.0);
                     match landing_damage_rounding {
@@ -1737,9 +1742,9 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
                 } else {
                     0.0
                 }
-            } else if state.fall_distance > 3.0 + state.safe_fall_distance {
+            } else if landing_fall_distance > 3.0 + state.safe_fall_distance {
                 landing_damage(
-                    state.fall_distance,
+                    landing_fall_distance,
                     state.safe_fall_distance,
                     state.fall_damage_multiplier.unwrap_or(1.0),
                     state.jump_boost_amplifier,
@@ -1799,8 +1804,14 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             state.velocity.x = 0.0;
         }
         if collisions[1] && !bounced {
-            // Block.updateEntityAfterFallOn multiplies by zero: a landing leaves -0.0.
-            state.velocity.y *= 0.0;
+            if landed_on == BlockEffect::Bed && !state.sneaking {
+                if state.velocity.y < 0.0 {
+                    state.velocity.y = -state.velocity.y * 0.6600000262260437 * bounce_scale;
+                }
+            } else {
+                // Block.updateEntityAfterFallOn multiplies by zero: a landing leaves -0.0.
+                state.velocity.y *= 0.0;
+            }
         }
         if collisions[2] {
             state.velocity.z = 0.0;

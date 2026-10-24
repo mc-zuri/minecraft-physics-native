@@ -3379,6 +3379,7 @@ fn block_effect_code(effect: BlockEffect) -> u8 {
         BlockEffect::SoulCampfire => 15,
         BlockEffect::Fire => 16,
         BlockEffect::SoulFire => 17,
+        BlockEffect::Bed => 18,
     }
 }
 
@@ -3570,6 +3571,7 @@ fn block_effect(value: u8) -> Result<BlockEffect> {
         15 => Ok(BlockEffect::SoulCampfire),
         16 => Ok(BlockEffect::Fire),
         17 => Ok(BlockEffect::SoulFire),
-        _ => Err(Error::from_reason("block effect must be between 0 and 10")),
+        18 => Ok(BlockEffect::Bed),
+        _ => Err(Error::from_reason("block effect must be between 0 and 18")),
     }
 }

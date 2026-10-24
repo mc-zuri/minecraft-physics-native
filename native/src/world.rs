@@ -57,6 +57,7 @@ pub enum BlockEffect {
     SoulFire,
     BubbleUp,
     BubbleDown,
+    Bed,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
