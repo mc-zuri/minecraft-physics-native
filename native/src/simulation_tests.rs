@@ -601,6 +601,17 @@ mod tests {
     }
 
     #[test]
+    fn position_is_read_back_from_the_moved_box_before_1_17() {
+        let velocity = Vec3::new(0.1087654312, 0.0, 0.0);
+
+        let legacy = position_after_free_move(velocity, MinecraftVersion::new(1, 16, 5));
+        let modern = position_after_free_move(velocity, MinecraftVersion::new(1, 17, 0));
+
+        assert_eq!(legacy.x, -1.9479448195011386);
+        assert_eq!(modern.x, -1.9479448195011388);
+    }
+
+    #[test]
     fn zero_vertical_motion_preserves_vanilla_vertical_state() {
         let mut state = SimulationState {
             velocity: Vec3::new(0.0, 0.0, 0.0),
@@ -2397,9 +2408,10 @@ mod tests {
     fn players_inside_a_suffocating_block_move_toward_its_nearest_open_side() {
         let world = wall_along_z(None);
 
-        for version in ["1.15.2", "1.21.1"] {
+        let box_centre = ((0.2 - 0.3 + -0.1) + (0.2 + 0.3 + -0.1)) / 2.0;
+        for (version, x) in [("1.15.2", box_centre), ("1.21.1", 0.2 + -0.1)] {
             let player = pushed_out(&world, version, true);
-            assert_eq!(player.position.x, 0.2 + -0.1, "{version}");
+            assert_eq!(player.position.x, x, "{version}");
             assert_eq!(player.position.z, 0.5, "{version}");
         }
         assert_eq!(pushed_out(&world, "1.21.1", false).position.x, 0.2);

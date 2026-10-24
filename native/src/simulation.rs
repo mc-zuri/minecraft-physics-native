@@ -1276,6 +1276,23 @@ fn moves_position(requested: Vec3, movement: Vec3, release: MinecraftVersion) ->
         || (release.at_least(1, 21, 2) && requested.length_squared() - length_squared < 1.0e-7)
 }
 
+fn position_after_move(
+    position: Vec3,
+    bounds: Aabb,
+    movement: Vec3,
+    release: MinecraftVersion,
+) -> Vec3 {
+    if release.at_least(1, 17, 0) {
+        return position + movement;
+    }
+    let moved = bounds.translated(movement);
+    Vec3::new(
+        (moved.min.x + moved.max.x) / 2.0,
+        moved.min.y,
+        (moved.min.z + moved.max.z) / 2.0,
+    )
+}
+
 fn back_off_from_edge(
     state: &SimulationState,
     world: &WorldSnapshot,
@@ -1984,7 +2001,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     };
 
     if state.no_physics || moves_position(desired, displacement, rules.release) {
-        state.position = state.position + displacement;
+        state.position = position_after_move(state.position, bounds, displacement, rules.release);
     }
     let mut reset_fall_distance = false;
     if !state.no_physics
