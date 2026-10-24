@@ -22,6 +22,14 @@ pub struct VersionBehaviorContract {
     pub landing_damage_rounding: LandingDamageRounding,
 }
 
+#[path = "v-1_10_2.rs"]
+pub mod v1_10_2;
+#[path = "v-1_11_2.rs"]
+pub mod v1_11_2;
+#[path = "v-1_12_2.rs"]
+pub mod v1_12_2;
+#[path = "v-1_13_2.rs"]
+pub mod v1_13_2;
 #[path = "v-1_14_4.rs"]
 pub mod v1_14_4;
 #[path = "v-1_15.rs"]
@@ -100,6 +108,10 @@ pub mod v1_21_7;
 pub mod v1_21_8;
 #[path = "v-1_21_9.rs"]
 pub mod v1_21_9;
+#[path = "v-1_8_8.rs"]
+pub mod v1_8_8;
+#[path = "v-1_9_4.rs"]
+pub mod v1_9_4;
 #[path = "v-26_1.rs"]
 pub mod v26_1;
 #[path = "v-26_1_1.rs"]
@@ -118,6 +130,12 @@ pub fn dispatch(
     config: PhysicsConfig,
 ) -> Result<TickResult, String> {
     match version {
+        v1_8_8::Engine::VERSION => Ok(v1_8_8::Engine::tick(state, world, config)),
+        v1_9_4::Engine::VERSION => Ok(v1_9_4::Engine::tick(state, world, config)),
+        v1_10_2::Engine::VERSION => Ok(v1_10_2::Engine::tick(state, world, config)),
+        v1_11_2::Engine::VERSION => Ok(v1_11_2::Engine::tick(state, world, config)),
+        v1_12_2::Engine::VERSION => Ok(v1_12_2::Engine::tick(state, world, config)),
+        v1_13_2::Engine::VERSION => Ok(v1_13_2::Engine::tick(state, world, config)),
         v1_14_4::Engine::VERSION => Ok(v1_14_4::Engine::tick(state, world, config)),
         v1_15::Engine::VERSION => Ok(v1_15::Engine::tick(state, world, config)),
         v1_15_1::Engine::VERSION => Ok(v1_15_1::Engine::tick(state, world, config)),
@@ -169,6 +187,22 @@ pub fn dispatch(
 }
 
 pub fn is_supported(version: &str) -> bool {
+    is_legacy(version) || is_source_backed(version)
+}
+
+fn is_legacy(version: &str) -> bool {
+    matches!(
+        version,
+        v1_8_8::Engine::VERSION
+            | v1_9_4::Engine::VERSION
+            | v1_10_2::Engine::VERSION
+            | v1_11_2::Engine::VERSION
+            | v1_12_2::Engine::VERSION
+            | v1_13_2::Engine::VERSION
+    )
+}
+
+fn is_source_backed(version: &str) -> bool {
     matches!(
         version,
         v1_14_4::Engine::VERSION
@@ -221,6 +255,60 @@ pub fn is_supported(version: &str) -> bool {
 
 pub fn contract_for_version(version: &str) -> Result<VersionBehaviorContract, String> {
     let contract = match version {
+        v1_8_8::Engine::VERSION => VersionBehaviorContract {
+            fluid_travel_split: false,
+            fluid_falling_checks_gravity_argument: false,
+            water_movement_efficiency_attribute: false,
+            water_movement_efficiency_divisor: v1_8_8::Profile::rules()
+                .water_movement_efficiency_divisor,
+            landing_damage_rounding:
+                <v1_8_8::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
+        },
+        v1_9_4::Engine::VERSION => VersionBehaviorContract {
+            fluid_travel_split: false,
+            fluid_falling_checks_gravity_argument: false,
+            water_movement_efficiency_attribute: false,
+            water_movement_efficiency_divisor: v1_9_4::Profile::rules()
+                .water_movement_efficiency_divisor,
+            landing_damage_rounding:
+                <v1_9_4::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
+        },
+        v1_10_2::Engine::VERSION => VersionBehaviorContract {
+            fluid_travel_split: false,
+            fluid_falling_checks_gravity_argument: false,
+            water_movement_efficiency_attribute: false,
+            water_movement_efficiency_divisor: v1_10_2::Profile::rules()
+                .water_movement_efficiency_divisor,
+            landing_damage_rounding:
+                <v1_10_2::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
+        },
+        v1_11_2::Engine::VERSION => VersionBehaviorContract {
+            fluid_travel_split: false,
+            fluid_falling_checks_gravity_argument: false,
+            water_movement_efficiency_attribute: false,
+            water_movement_efficiency_divisor: v1_11_2::Profile::rules()
+                .water_movement_efficiency_divisor,
+            landing_damage_rounding:
+                <v1_11_2::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
+        },
+        v1_12_2::Engine::VERSION => VersionBehaviorContract {
+            fluid_travel_split: false,
+            fluid_falling_checks_gravity_argument: false,
+            water_movement_efficiency_attribute: false,
+            water_movement_efficiency_divisor: v1_12_2::Profile::rules()
+                .water_movement_efficiency_divisor,
+            landing_damage_rounding:
+                <v1_12_2::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
+        },
+        v1_13_2::Engine::VERSION => VersionBehaviorContract {
+            fluid_travel_split: false,
+            fluid_falling_checks_gravity_argument: false,
+            water_movement_efficiency_attribute: false,
+            water_movement_efficiency_divisor: v1_13_2::Profile::rules()
+                .water_movement_efficiency_divisor,
+            landing_damage_rounding:
+                <v1_13_2::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
+        },
         v1_14_4::Engine::VERSION => VersionBehaviorContract {
             fluid_travel_split: false,
             fluid_falling_checks_gravity_argument: false,
@@ -675,7 +763,13 @@ pub fn contract_for_version(version: &str) -> Result<VersionBehaviorContract, St
 
 pub fn entity_pushthrough_enabled(version: &str) -> Result<bool, String> {
     match version {
-        v1_14_4::Engine::VERSION
+        v1_8_8::Engine::VERSION
+        | v1_9_4::Engine::VERSION
+        | v1_10_2::Engine::VERSION
+        | v1_11_2::Engine::VERSION
+        | v1_12_2::Engine::VERSION
+        | v1_13_2::Engine::VERSION
+        | v1_14_4::Engine::VERSION
         | v1_15::Engine::VERSION
         | v1_15_1::Engine::VERSION
         | v1_15_2::Engine::VERSION
@@ -862,11 +956,12 @@ mod tests {
     fn dispatches_decompiled_versions() {
         let world = WorldSnapshot::new();
         for version in [
-            "1.14.4", "1.15", "1.15.1", "1.15.2", "1.16", "1.16.1", "1.16.2", "1.16.3", "1.16.4",
-            "1.16.5", "1.17", "1.17.1", "1.18", "1.18.1", "1.18.2", "1.19", "1.19.1", "1.19.2",
-            "1.19.3", "1.19.4", "1.20", "1.20.1", "1.20.2", "1.20.3", "1.20.4", "1.20.5", "1.20.6",
-            "1.21", "1.21.1", "1.21.2", "1.21.3", "1.21.4", "1.21.5", "1.21.6", "1.21.7", "1.21.8",
-            "1.21.9", "1.21.10", "1.21.11", "26.1", "26.1.1", "26.1.2", "26.2", "26.3",
+            "1.8.8", "1.9.4", "1.10.2", "1.11.2", "1.12.2", "1.13.2", "1.14.4", "1.15", "1.15.1",
+            "1.15.2", "1.16", "1.16.1", "1.16.2", "1.16.3", "1.16.4", "1.16.5", "1.17", "1.17.1",
+            "1.18", "1.18.1", "1.18.2", "1.19", "1.19.1", "1.19.2", "1.19.3", "1.19.4", "1.20",
+            "1.20.1", "1.20.2", "1.20.3", "1.20.4", "1.20.5", "1.20.6", "1.21", "1.21.1", "1.21.2",
+            "1.21.3", "1.21.4", "1.21.5", "1.21.6", "1.21.7", "1.21.8", "1.21.9", "1.21.10",
+            "1.21.11", "26.1", "26.1.1", "26.1.2", "26.2", "26.3",
         ] {
             let mut state = SimulationState::default();
             assert!(dispatch(version, &mut state, &world, PhysicsConfig::default()).is_ok());
@@ -886,11 +981,11 @@ mod tests {
             };
         }
         assert_releases!(
-            v1_14_4, v1_15, v1_15_1, v1_15_2, v1_16, v1_16_1, v1_16_2, v1_16_3, v1_16_4, v1_16_5,
-            v1_17, v1_17_1, v1_18, v1_18_1, v1_18_2, v1_19, v1_19_1, v1_19_2, v1_19_3, v1_19_4,
-            v1_20, v1_20_1, v1_20_2, v1_20_3, v1_20_4, v1_20_5, v1_20_6, v1_21, v1_21_1, v1_21_2,
-            v1_21_3, v1_21_4, v1_21_5, v1_21_6, v1_21_7, v1_21_8, v1_21_9, v1_21_10, v1_21_11,
-            v26_1, v26_1_1, v26_1_2, v26_2, v26_3
+            v1_8_8, v1_9_4, v1_10_2, v1_11_2, v1_12_2, v1_13_2, v1_14_4, v1_15, v1_15_1, v1_15_2,
+            v1_16, v1_16_1, v1_16_2, v1_16_3, v1_16_4, v1_16_5, v1_17, v1_17_1, v1_18, v1_18_1,
+            v1_18_2, v1_19, v1_19_1, v1_19_2, v1_19_3, v1_19_4, v1_20, v1_20_1, v1_20_2, v1_20_3,
+            v1_20_4, v1_20_5, v1_20_6, v1_21, v1_21_1, v1_21_2, v1_21_3, v1_21_4, v1_21_5, v1_21_6,
+            v1_21_7, v1_21_8, v1_21_9, v1_21_10, v1_21_11, v26_1, v26_1_1, v26_1_2, v26_2, v26_3
         );
     }
 
@@ -942,14 +1037,21 @@ mod tests {
     #[test]
     fn all_supported_versions_expose_explicit_behavior_contract() {
         for version in [
-            "1.14.4", "1.15", "1.15.1", "1.15.2", "1.16", "1.16.1", "1.16.2", "1.16.3", "1.16.4",
-            "1.16.5", "1.17", "1.17.1", "1.18", "1.18.1", "1.18.2", "1.19", "1.19.1", "1.19.2",
-            "1.19.3", "1.19.4", "1.20", "1.20.1", "1.20.2", "1.20.3", "1.20.4", "1.20.5", "1.20.6",
-            "1.21", "1.21.1", "1.21.2", "1.21.3", "1.21.4", "1.21.5", "1.21.6", "1.21.7", "1.21.8",
-            "1.21.9", "1.21.10", "1.21.11", "26.1", "26.1.1", "26.1.2", "26.2", "26.3",
+            "1.8.8", "1.9.4", "1.10.2", "1.11.2", "1.12.2", "1.13.2", "1.14.4", "1.15", "1.15.1",
+            "1.15.2", "1.16", "1.16.1", "1.16.2", "1.16.3", "1.16.4", "1.16.5", "1.17", "1.17.1",
+            "1.18", "1.18.1", "1.18.2", "1.19", "1.19.1", "1.19.2", "1.19.3", "1.19.4", "1.20",
+            "1.20.1", "1.20.2", "1.20.3", "1.20.4", "1.20.5", "1.20.6", "1.21", "1.21.1", "1.21.2",
+            "1.21.3", "1.21.4", "1.21.5", "1.21.6", "1.21.7", "1.21.8", "1.21.9", "1.21.10",
+            "1.21.11", "26.1", "26.1.1", "26.1.2", "26.2", "26.3",
         ] {
             let contract = contract_for_version(version).unwrap();
             let rules = match version {
+                "1.8.8" => v1_8_8::Profile::rules(),
+                "1.9.4" => v1_9_4::Profile::rules(),
+                "1.10.2" => v1_10_2::Profile::rules(),
+                "1.11.2" => v1_11_2::Profile::rules(),
+                "1.12.2" => v1_12_2::Profile::rules(),
+                "1.13.2" => v1_13_2::Profile::rules(),
                 "1.14.4" => v1_14_4::Profile::rules(),
                 "1.15" => v1_15::Profile::rules(),
                 "1.15.1" => v1_15_1::Profile::rules(),
@@ -1015,6 +1117,12 @@ mod tests {
                 "{version}"
             );
             let landing_rounding = match version {
+                "1.8.8" => <v1_8_8::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
+                "1.9.4" => <v1_9_4::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
+                "1.10.2" => <v1_10_2::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
+                "1.11.2" => <v1_11_2::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
+                "1.12.2" => <v1_12_2::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
+                "1.13.2" => <v1_13_2::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
                 "1.14.4" => <v1_14_4::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
                 "1.15" => <v1_15::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
                 "1.15.1" => <v1_15_1::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
@@ -1501,6 +1609,7 @@ mod tests {
 
     #[test]
     fn entity_pushthrough_ownership_matches_source_breakpoint() {
+        assert!(entity_pushthrough_enabled("1.8.8").unwrap());
         assert!(entity_pushthrough_enabled("1.14.4").unwrap());
         assert!(entity_pushthrough_enabled("1.16.5").unwrap());
         assert!(!entity_pushthrough_enabled("1.17.1").unwrap());
