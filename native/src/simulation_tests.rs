@@ -5917,6 +5917,38 @@ mod tests {
     }
 
     #[test]
+    fn a_landing_as_fast_as_gravity_bounces_only_before_26_3() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape::full_block()),
+                bounce_restitution: 0.75,
+                ..BlockState::default()
+            },
+        );
+        let landing = |version| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 1.05, 0.5),
+                velocity: Vec3::new(0.0, -0.08, 0.0),
+                half_width: 0.3,
+                height: 1.8,
+                is_player: true,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            state
+        };
+
+        assert!(landing("26.2").velocity.y > 0.0);
+        let rested = landing("26.3");
+        assert!(rested.on_ground);
+        assert_eq!(rested.velocity.y, -0.08 * f64::from(0.98_f32));
+    }
+
+    #[test]
     fn restitution_leaves_slower_landings_and_old_slime_bounce_out() {
         let mut world = WorldSnapshot::new();
         world.set_block(

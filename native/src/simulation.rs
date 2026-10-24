@@ -1644,7 +1644,12 @@ fn restitute_movement_after_collisions(
         entity_restitution
     } else {
         let effect_state = world.block(landing_position(state, support, rules.release));
-        if -current.y < gravity || suppressing_bounce || effect_state.suppresses_bounce {
+        let resting = if rules.release.at_least(26, 3, 0) {
+            -current.y <= gravity
+        } else {
+            -current.y < gravity
+        };
+        if resting || suppressing_bounce || effect_state.suppresses_bounce {
             0.0
         } else {
             let block_bounciness = if state.is_player {
