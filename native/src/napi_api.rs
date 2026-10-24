@@ -532,7 +532,7 @@ impl From<NativeSimulationState> for SimulationState {
             gravity: value.gravity,
             step_height: value.step_height,
             movement_speed: value.movement_speed.unwrap_or(0.0),
-            jump_strength: value.jump_strength.unwrap_or(0.0),
+            jump_strength: value.jump_strength,
             speed_effect_amplifier: value.speed_effect_amplifier,
             slowness_effect_amplifier: value.slowness_effect_amplifier,
             jump_boost_amplifier: value.jump_boost_amplifier,
@@ -620,7 +620,7 @@ impl From<SimulationState> for NativeSimulationState {
             gravity: value.gravity,
             step_height: value.step_height,
             movement_speed: Some(value.movement_speed),
-            jump_strength: Some(value.jump_strength),
+            jump_strength: value.jump_strength,
             speed_effect_amplifier: value.speed_effect_amplifier,
             slowness_effect_amplifier: value.slowness_effect_amplifier,
             jump_boost_amplifier: value.jump_boost_amplifier,
@@ -1695,7 +1695,7 @@ pub fn create_simulation_state(
     state.levitation = descriptor.levitation.unwrap_or(false);
     state.levitation_amplifier = descriptor.levitation_amplifier;
     state.movement_speed = descriptor.movement_speed.unwrap_or(0.0);
-    state.jump_strength = descriptor.jump_strength.unwrap_or(0.0);
+    state.jump_strength = descriptor.jump_strength;
     state.speed_effect_amplifier = descriptor.speed_effect_amplifier;
     state.slowness_effect_amplifier = descriptor.slowness_effect_amplifier;
     state.jump_boost_amplifier = descriptor.jump_boost_amplifier;
@@ -2457,7 +2457,7 @@ fn valid_state(state: SimulationState) -> bool {
             value.is_finite() && (0.0..=10.0).contains(&value)
         })
         && state.movement_speed.is_finite()
-        && state.jump_strength.is_finite()
+        && state.jump_strength.map_or(true, f64::is_finite)
         && state.flying_speed.is_finite()
         && state.firework_boost.is_finite()
 }

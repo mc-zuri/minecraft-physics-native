@@ -283,7 +283,7 @@ pub struct SimulationState {
     pub gravity: Option<f64>,
     pub step_height: Option<f64>,
     pub movement_speed: f64,
-    pub jump_strength: f64,
+    pub jump_strength: Option<f64>,
     pub speed_effect_amplifier: Option<u8>,
     pub slowness_effect_amplifier: Option<u8>,
     pub jump_boost_amplifier: Option<u8>,
@@ -367,7 +367,7 @@ impl From<EntityState> for SimulationState {
             gravity: None,
             step_height: None,
             movement_speed: 0.0,
-            jump_strength: 0.0,
+            jump_strength: None,
             speed_effect_amplifier: None,
             slowness_effect_amplifier: None,
             jump_boost_amplifier: None,
@@ -668,11 +668,7 @@ fn jump_power(
     release: MinecraftVersion,
     block_jump_factor: f32,
 ) -> f64 {
-    let strength = if state.jump_strength > 0.0 {
-        state.jump_strength
-    } else {
-        config.jump_velocity
-    };
+    let strength = state.jump_strength.unwrap_or(config.jump_velocity);
     let power = strength as f32 * block_jump_factor;
     let boost = state
         .jump_boost_amplifier

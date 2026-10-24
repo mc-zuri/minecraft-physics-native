@@ -1272,6 +1272,16 @@ mod tests {
     }
 
     #[test]
+    fn a_zero_jump_strength_does_not_jump_from_1_20_5() {
+        let grounded = SimulationState {
+            jump_strength: Some(0.0),
+            ..SimulationState::default()
+        };
+
+        assert_eq!(jump_height(grounded, MinecraftVersion::new(1, 21, 1)), 1.0);
+    }
+
+    #[test]
     fn releasing_jump_clears_the_jump_delay() {
         let mut state = SimulationState {
             jump_ticks: 5,
@@ -2025,7 +2035,7 @@ mod tests {
             position: Vec3::new(0.0, 1.0, 0.0),
             on_ground: true,
             jump_requested: true,
-            jump_strength: 0.5,
+            jump_strength: Some(0.5),
             jump_boost_amplifier: Some(1),
             half_width: 0.3,
             height: 1.8,
