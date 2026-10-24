@@ -3469,6 +3469,79 @@ mod tests {
         assert!(falling.position.y < walkable.position.y);
     }
 
+    fn powder_snow_world() -> WorldSnapshot {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                shape: Some(BlockShape {
+                    bounds: Aabb::new(Vec3::ZERO, Vec3::ZERO),
+                    effect: BlockEffect::PowderSnow,
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        world
+    }
+
+    #[test]
+    fn powder_snow_catches_a_long_fall_on_its_lower_shape() {
+        let world = powder_snow_world();
+        let falling = SimulationState {
+            position: Vec3::new(0.5, 1.2, 0.5),
+            velocity: Vec3::new(0.0, -0.5, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            is_player: true,
+            fall_distance: 3.0,
+            ..SimulationState::default()
+        };
+        let mut long_fall = falling;
+        let mut short_fall = SimulationState {
+            fall_distance: 2.0,
+            ..falling
+        };
+
+        crate::versioned::dispatch("1.21.1", &mut long_fall, &world, PhysicsConfig::default())
+            .unwrap();
+        crate::versioned::dispatch("1.21.1", &mut short_fall, &world, PhysicsConfig::default())
+            .unwrap();
+
+        assert!(long_fall.on_ground);
+        assert_eq!(long_fall.position.y, 1.2 + (f64::from(0.9_f32) - 1.2));
+        assert!(!short_fall.on_ground);
+        assert!(short_fall.position.y < 0.9);
+    }
+
+    #[test]
+    fn powder_snow_walkers_sink_when_they_descend() {
+        let world = powder_snow_world();
+        let mut standing = SimulationState {
+            position: Vec3::new(0.5, 1.0, 0.5),
+            velocity: Vec3::new(0.0, -0.0784000015258789, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            on_ground: true,
+            powder_snow_walkable: true,
+            ..SimulationState::default()
+        };
+        let mut descending = SimulationState {
+            sneaking: true,
+            ..standing
+        };
+
+        crate::versioned::dispatch("1.21.1", &mut standing, &world, PhysicsConfig::default())
+            .unwrap();
+        crate::versioned::dispatch("1.21.1", &mut descending, &world, PhysicsConfig::default())
+            .unwrap();
+
+        assert!(standing.on_ground);
+        assert_eq!(standing.position.y, 1.0);
+        assert!(!descending.on_ground);
+        assert!(descending.position.y < 1.0);
+    }
+
     #[test]
     fn fully_frozen_entities_take_periodic_freeze_damage() {
         let mut world = WorldSnapshot::new();

@@ -60,6 +60,29 @@ pub enum BlockEffect {
     Bed,
 }
 
+/// What vanilla's EntityCollisionContext tells the blocks whose collision shape depends on the
+/// entity (powder snow): its feet when the context is made, whether it descends (the sneak key),
+/// its fall distance and whether it can walk on powder snow.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct EntityCollisionContext {
+    pub bottom: f64,
+    pub descending: bool,
+    pub fall_distance: f64,
+    pub walks_on_powder_snow: bool,
+}
+
+impl EntityCollisionContext {
+    fn is_above(&self, shape_top: f64, y: i32) -> bool {
+        self.bottom > f64::from(y) + shape_top - 9.999999747378752e-6
+    }
+}
+
+enum EntityCollisionShape {
+    Stored,
+    Empty,
+    Box(Aabb),
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FluidContact {
     pub touching: bool,
@@ -725,38 +748,46 @@ impl WorldSnapshot {
         result
     }
 
+    #[must_use]
     pub fn collision_shapes_for_entity(
         &self,
         query: Aabb,
-        powder_snow_walkable: bool,
-        entity_bounds: Aabb,
-        descending: bool,
+        context: &EntityCollisionContext,
     ) -> Vec<Aabb> {
-        let mut shapes = self.collision_shapes(query);
-        if !powder_snow_walkable || descending {
-            return shapes;
-        }
-        let min_x = query.min.x.floor() as i32;
-        let max_x = query.max.x.ceil() as i32;
-        let min_y = query.min.y.floor() as i32;
-        let max_y = query.max.y.ceil() as i32;
-        let min_z = query.min.z.floor() as i32;
-        let max_z = query.max.z.ceil() as i32;
-        for y in min_y..max_y {
-            for z in min_z..max_z {
-                for x in min_x..max_x {
-                    if self.effect_at((x, y, z)) == BlockEffect::PowderSnow
-                        && entity_bounds.min.y >= (y + 1) as f64 - 1.0e-7
-                    {
-                        shapes.push(Aabb::new(
-                            Vec3::new(x as f64, y as f64, z as f64),
-                            Vec3::new((x + 1) as f64, (y + 1) as f64, (z + 1) as f64),
-                        ));
-                    }
-                }
-            }
-        }
+        let mut shapes = Vec::new();
+        self.collect_collision_shapes(query, Some(context), &mut shapes);
         shapes
+    }
+
+    #[must_use]
+    pub fn no_collision_for_entity(&self, bounds: Aabb, context: &EntityCollisionContext) -> bool {
+        self.collision_shapes_for_entity(bounds, context).is_empty()
+    }
+
+    fn entity_collision_shape(
+        &self,
+        position: BlockPosition,
+        context: &EntityCollisionContext,
+    ) -> EntityCollisionShape {
+        let (x, y, z) = position;
+        let cell = |top: f64| {
+            let min = Vec3::new(f64::from(x), f64::from(y), f64::from(z));
+            Aabb::new(min, min + Vec3::new(1.0, top, 1.0))
+        };
+        match self.effect_at(position) {
+            BlockEffect::PowderSnow if context.fall_distance > 2.5 => {
+                EntityCollisionShape::Box(cell(f64::from(0.9_f32)))
+            }
+            BlockEffect::PowderSnow
+                if context.walks_on_powder_snow
+                    && context.is_above(1.0, y)
+                    && !context.descending =>
+            {
+                EntityCollisionShape::Box(cell(1.0))
+            }
+            BlockEffect::PowderSnow => EntityCollisionShape::Empty,
+            _ => EntityCollisionShape::Stored,
+        }
     }
 
     #[must_use]
@@ -822,6 +853,15 @@ impl WorldSnapshot {
     }
 
     pub fn collision_shapes_into(&self, query: Aabb, shapes: &mut Vec<Aabb>) {
+        self.collect_collision_shapes(query, None, shapes);
+    }
+
+    fn collect_collision_shapes(
+        &self,
+        query: Aabb,
+        context: Option<&EntityCollisionContext>,
+        shapes: &mut Vec<Aabb>,
+    ) {
         shapes.clear();
         let cells_x = query.min.x.floor() as i32..query.max.x.ceil() as i32;
         let cells_y = query.min.y.floor() as i32..query.max.y.ceil() as i32;
@@ -849,12 +889,22 @@ impl WorldSnapshot {
                             continue;
                         }
                         let offset = Vec3::new(x as f64, y as f64, z as f64);
-                        shapes.extend(
-                            self.block_collision_shapes((x, y, z))
-                                .filter(|shape| is_non_empty_shape(shape.bounds))
-                                .map(|shape| shape.bounds.translated(offset))
-                                .filter(|bounds| inside || bounds.intersects(query)),
-                        );
+                        match context.map_or(EntityCollisionShape::Stored, |context| {
+                            self.entity_collision_shape((x, y, z), context)
+                        }) {
+                            EntityCollisionShape::Stored => shapes.extend(
+                                self.block_collision_shapes((x, y, z))
+                                    .filter(|shape| is_non_empty_shape(shape.bounds))
+                                    .map(|shape| shape.bounds.translated(offset))
+                                    .filter(|bounds| inside || bounds.intersects(query)),
+                            ),
+                            EntityCollisionShape::Box(bounds) => {
+                                if inside || bounds.intersects(query) {
+                                    shapes.push(bounds);
+                                }
+                            }
+                            EntityCollisionShape::Empty => {}
+                        }
                     }
                 }
             }

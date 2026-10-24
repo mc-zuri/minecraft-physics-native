@@ -3,7 +3,7 @@ use crate::entity::{Dimensions, EntityFlags, EntityState};
 use crate::math::{java_cos, java_cos_legacy, java_float, java_sin, java_sin_legacy, Aabb, Vec3};
 use crate::version::MinecraftVersion;
 use crate::world::WorldSnapshot;
-use crate::world::{BlockEffect, FluidContact, FluidState};
+use crate::world::{BlockEffect, EntityCollisionContext, FluidContact, FluidState};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PhysicsConfig {
@@ -1135,6 +1135,7 @@ fn effective_modifier(modifier: f64, present: bool) -> f64 {
 fn back_off_from_edge(
     state: &SimulationState,
     world: &WorldSnapshot,
+    context: &EntityCollisionContext,
     delta: Vec3,
     max_down_step: f64,
 ) -> Vec3 {
@@ -1150,11 +1151,10 @@ fn back_off_from_edge(
     let bounds = state.bounds();
     let above_ground = state.on_ground
         || (state.fall_distance < max_down_step
-            && !world.no_collision(bounds.translated(Vec3::new(
-                0.0,
-                -max_down_step + state.fall_distance,
-                0.0,
-            ))));
+            && !world.no_collision_for_entity(
+                bounds.translated(Vec3::new(0.0, -max_down_step + state.fall_distance, 0.0)),
+                context,
+            ));
     if !above_ground {
         return delta;
     }
@@ -1175,7 +1175,7 @@ fn back_off_from_edge(
                 bounds.max.z - 1.0e-7 + z,
             ),
         );
-        world.no_collision(lowered)
+        world.no_collision_for_entity(lowered, context)
     };
     while x != 0.0 && can_fall(x, 0.0) {
         if x.abs() <= 0.05 {
@@ -1658,7 +1658,14 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.stuck_speed_multiplier = Vec3::ZERO;
         state.velocity = Vec3::ZERO;
     }
-    let desired = back_off_from_edge(state, world, movement, rules.step_height);
+    let collision_context = EntityCollisionContext {
+        bottom: state.position.y,
+        descending: state.sneaking,
+        fall_distance: state.fall_distance,
+        walks_on_powder_snow: state.powder_snow_walkable,
+    };
+    let desired =
+        back_off_from_edge(state, world, &collision_context, movement, rules.step_height);
     let bounds = state.bounds();
     let (normal_displacement, normal_collisions, obstacles) = if state.no_physics {
         (desired, [false; 3], Vec::new())
@@ -1680,12 +1687,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
                 bounds.max.z.max(target.max.z),
             ),
         );
-        let obstacles = world.collision_shapes_for_entity(
-            query,
-            state.powder_snow_walkable,
-            bounds,
-            state.sneaking,
-        );
+        let obstacles = world.collision_shapes_for_entity(query, &collision_context);
         let (displacement, collisions) = resolve_motion(bounds, desired, &obstacles);
         (displacement, collisions, obstacles)
     };
