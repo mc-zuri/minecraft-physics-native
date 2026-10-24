@@ -2604,6 +2604,43 @@ mod tests {
     }
 
     #[test]
+    fn creative_flight_adds_the_vertical_impulse_in_float() {
+        let world = WorldSnapshot::new();
+        let flying = SimulationState {
+            is_player: true,
+            flying: true,
+            flying_speed: java_float(0.05),
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+        let impulse = f64::from(0.05_f32 * 3.0);
+
+        let mut ascending = SimulationState {
+            jump_requested: true,
+            ..flying
+        };
+        tick(&mut ascending, &world, PhysicsConfig::default());
+        let mut descending = SimulationState {
+            sneaking: true,
+            ..flying
+        };
+        tick(&mut descending, &world, PhysicsConfig::default());
+        let mut both = SimulationState {
+            jump_requested: true,
+            sneaking: true,
+            velocity: Vec3::new(0.0, 0.25, 0.0),
+            ..flying
+        };
+        tick(&mut both, &world, PhysicsConfig::default());
+
+        assert_eq!(ascending.velocity.y, impulse * 0.6);
+        assert_eq!(ascending.position.y, impulse);
+        assert_eq!(descending.velocity.y, -impulse * 0.6);
+        assert_eq!(both.velocity.y, 0.25 * 0.6);
+    }
+
+    #[test]
     fn firework_boost_adds_velocity() {
         let mut state = SimulationState {
             position: Vec3::new(0.0, 20.0, 0.0),

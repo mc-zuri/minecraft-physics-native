@@ -1377,9 +1377,10 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     ) && eye_fluid_top > eye_y;
     state.eye_in_lava = head_fluid.fluid == FluidState::Lava && eye_fluid_top > eye_y;
     if state.flying {
-        let vertical_input =
-            if state.jump_requested { 1.0 } else { 0.0 } - if state.sneaking { 1.0 } else { 0.0 };
-        state.velocity.y += vertical_input * state.flying_speed * 3.0;
+        let direction = i8::from(state.jump_requested) - i8::from(state.sneaking);
+        if direction != 0 {
+            state.velocity.y += f64::from(f32::from(direction) * state.flying_speed as f32 * 3.0);
+        }
     }
     let flying_vertical_velocity = state.velocity.y;
     let vertical_drag = match fluid {
