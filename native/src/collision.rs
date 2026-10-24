@@ -1,6 +1,6 @@
 use crate::math::{Aabb, Vec3};
 
-pub const VANILLA_EQUAL_EPSILON: f64 = 1.0e-5;
+pub const VANILLA_EQUAL_EPSILON: f64 = 9.999999747378752e-6;
 
 #[must_use]
 pub fn vanilla_equal(left: f64, right: f64) -> bool {
@@ -237,6 +237,8 @@ mod tests {
     fn matches_vanilla_equality_tolerance() {
         assert!(vanilla_equal(1.0, 1.0 + 0.5e-5));
         assert!(!vanilla_equal(1.0, 1.0 + 2.0e-5));
+        assert!(vanilla_equal(0.0, 9.9999997e-6));
+        assert!(!vanilla_equal(0.0, 9.9999998e-6));
     }
 
     #[test]
