@@ -2690,6 +2690,45 @@ mod tests {
     }
 
     #[test]
+    fn sneaking_players_sink_in_water_before_the_motion_cutoff() {
+        let mut world = WorldSnapshot::new();
+        for y in 0..3 {
+            world.set_block(
+                (0, y, 0),
+                BlockState {
+                    fluid: FluidState::Water,
+                    fluid_source: true,
+                    ..BlockState::default()
+                },
+            );
+        }
+        let sink = |is_player: bool, flying: bool, release: MinecraftVersion| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 0.5, 0.5),
+                half_width: 0.3,
+                height: 1.8,
+                is_player,
+                sneaking: true,
+                flying,
+                no_gravity: true,
+                ..SimulationState::default()
+            };
+            let rules = VersionPhysicsRules {
+                release,
+                ..VersionPhysicsRules::default()
+            };
+            tick_with_rules(&mut state, &world, PhysicsConfig::default(), rules);
+            state.velocity.y
+        };
+        let modern = MinecraftVersion::new(1, 21, 1);
+
+        assert_eq!(sink(true, false, modern), -0.03999999910593033 * java_float(0.8));
+        assert_eq!(sink(false, false, modern), 0.0);
+        assert_eq!(sink(true, true, modern), 0.0);
+        assert!(sink(true, true, MinecraftVersion::new(1, 15, 2)) < 0.0);
+    }
+
+    #[test]
     fn grounded_entities_swim_up_in_any_lava_before_1_16() {
         let shallow_lava = |release| jump_on_ground_in_fluid(FluidState::Lava, 6, 1.62, release);
 
