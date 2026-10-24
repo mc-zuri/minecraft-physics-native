@@ -334,6 +334,20 @@ mod tests {
     }
 
     #[test]
+    fn input_before_1_14_is_rotated_in_float() {
+        let world = WorldSnapshot::new();
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 100.0, 0.5),
+            input: Vec3::new(0.0, 0.0, 1.0),
+            is_player: true,
+            ..SimulationState::default()
+        };
+        crate::versioned::dispatch("1.12.2", &mut state, &world, PhysicsConfig::default())
+            .unwrap();
+        assert_eq!(state.position.z, 0.5 + f64::from(0.98_f32 * 0.02_f32));
+    }
+
+    #[test]
     fn no_physics_bypasses_collision_and_clears_collision_flags() {
         let mut world = WorldSnapshot::new();
         world.set_block(

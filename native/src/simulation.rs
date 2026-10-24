@@ -1054,6 +1054,9 @@ fn mth_cos(radians: f64, release: MinecraftVersion) -> f64 {
 }
 
 fn relative_movement(input: Vec3, speed: f64, yaw: f64, release: MinecraftVersion) -> Vec3 {
+    if !release.at_least(1, 14, 0) {
+        return relative_movement_in_float(input, speed as f32, yaw as f32);
+    }
     let length_squared = input.x * input.x + input.y * input.y + input.z * input.z;
     if length_squared < 1.0e-7 {
         return Vec3::ZERO;
@@ -1071,6 +1074,23 @@ fn relative_movement(input: Vec3, speed: f64, yaw: f64, release: MinecraftVersio
         scaled.x * cos - scaled.z * sin,
         scaled.y,
         scaled.z * cos + scaled.x * sin,
+    )
+}
+
+fn relative_movement_in_float(input: Vec3, speed: f32, yaw: f32) -> Vec3 {
+    let (strafe, up, forward) = (input.x as f32, input.y as f32, input.z as f32);
+    let length_squared = strafe * strafe + up * up + forward * forward;
+    if length_squared < 1.0e-4 {
+        return Vec3::ZERO;
+    }
+    let scale = speed / length_squared.sqrt().max(1.0);
+    let (strafe, up, forward) = (strafe * scale, up * scale, forward * scale);
+    let sin = java_sin_legacy(yaw) as f32;
+    let cos = java_cos_legacy(yaw) as f32;
+    Vec3::new(
+        f64::from(strafe * cos - forward * sin),
+        f64::from(up),
+        f64::from(forward * cos + strafe * sin),
     )
 }
 
