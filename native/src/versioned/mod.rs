@@ -108,6 +108,8 @@ pub mod v26_1_1;
 pub mod v26_1_2;
 #[path = "v-26_2.rs"]
 pub mod v26_2;
+#[path = "v-26_3.rs"]
+pub mod v26_3;
 
 pub fn dispatch(
     version: &str,
@@ -159,6 +161,7 @@ pub fn dispatch(
         v26_1_1::Engine::VERSION => Ok(v26_1_1::Engine::tick(state, world, config)),
         v26_1_2::Engine::VERSION => Ok(v26_1_2::Engine::tick(state, world, config)),
         v26_2::Engine::VERSION => Ok(v26_2::Engine::tick(state, world, config)),
+        v26_3::Engine::VERSION => Ok(v26_3::Engine::tick(state, world, config)),
         _ => Err(format!(
             "unsupported decompiled Minecraft version: {version}"
         )),
@@ -211,6 +214,7 @@ pub fn is_supported(version: &str) -> bool {
             | v26_1_1::Engine::VERSION
             | v26_1_2::Engine::VERSION
             | v26_2::Engine::VERSION
+            | v26_3::Engine::VERSION
     ) && crate::generated_data::fluid(version, "water").is_some()
         && crate::generated_data::fluid(version, "lava").is_some()
 }
@@ -649,6 +653,17 @@ pub fn contract_for_version(version: &str) -> Result<VersionBehaviorContract, St
             landing_damage_rounding:
                 <v26_2::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
         },
+        v26_3::Engine::VERSION => VersionBehaviorContract {
+            fluid_travel_split: v26_3::Profile::rules().fluid_travel_split,
+            fluid_falling_checks_gravity_argument: v26_3::Profile::rules()
+                .fluid_falling_checks_gravity_argument,
+            water_movement_efficiency_attribute: v26_3::Profile::rules()
+                .water_movement_efficiency_attribute,
+            water_movement_efficiency_divisor: v26_3::Profile::rules()
+                .water_movement_efficiency_divisor,
+            landing_damage_rounding:
+                <v26_3::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
+        },
         _ => {
             return Err(format!(
                 "unsupported decompiled Minecraft version: {version}"
@@ -702,7 +717,8 @@ pub fn entity_pushthrough_enabled(version: &str) -> Result<bool, String> {
         | v26_1::Engine::VERSION
         | v26_1_1::Engine::VERSION
         | v26_1_2::Engine::VERSION
-        | v26_2::Engine::VERSION => Ok(false),
+        | v26_2::Engine::VERSION
+        | v26_3::Engine::VERSION => Ok(false),
         _ => Err(format!(
             "unsupported decompiled Minecraft version: {version}"
         )),
@@ -850,7 +866,7 @@ mod tests {
             "1.16.5", "1.17", "1.17.1", "1.18", "1.18.1", "1.18.2", "1.19", "1.19.1", "1.19.2",
             "1.19.3", "1.19.4", "1.20", "1.20.1", "1.20.2", "1.20.3", "1.20.4", "1.20.5", "1.20.6",
             "1.21", "1.21.1", "1.21.2", "1.21.3", "1.21.4", "1.21.5", "1.21.6", "1.21.7", "1.21.8",
-            "1.21.9", "1.21.10", "1.21.11", "26.1", "26.1.1", "26.1.2", "26.2",
+            "1.21.9", "1.21.10", "1.21.11", "26.1", "26.1.1", "26.1.2", "26.2", "26.3",
         ] {
             let mut state = SimulationState::default();
             assert!(dispatch(version, &mut state, &world, PhysicsConfig::default()).is_ok());
@@ -874,7 +890,7 @@ mod tests {
             v1_17, v1_17_1, v1_18, v1_18_1, v1_18_2, v1_19, v1_19_1, v1_19_2, v1_19_3, v1_19_4,
             v1_20, v1_20_1, v1_20_2, v1_20_3, v1_20_4, v1_20_5, v1_20_6, v1_21, v1_21_1, v1_21_2,
             v1_21_3, v1_21_4, v1_21_5, v1_21_6, v1_21_7, v1_21_8, v1_21_9, v1_21_10, v1_21_11,
-            v26_1, v26_1_1, v26_1_2, v26_2
+            v26_1, v26_1_1, v26_1_2, v26_2, v26_3
         );
     }
 
@@ -917,6 +933,10 @@ mod tests {
             <v26_2::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
             LandingDamageRounding::Floor
         );
+        assert_eq!(
+            <v26_3::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
+            LandingDamageRounding::Floor
+        );
     }
 
     #[test]
@@ -926,7 +946,7 @@ mod tests {
             "1.16.5", "1.17", "1.17.1", "1.18", "1.18.1", "1.18.2", "1.19", "1.19.1", "1.19.2",
             "1.19.3", "1.19.4", "1.20", "1.20.1", "1.20.2", "1.20.3", "1.20.4", "1.20.5", "1.20.6",
             "1.21", "1.21.1", "1.21.2", "1.21.3", "1.21.4", "1.21.5", "1.21.6", "1.21.7", "1.21.8",
-            "1.21.9", "1.21.10", "1.21.11", "26.1", "26.1.1", "26.1.2", "26.2",
+            "1.21.9", "1.21.10", "1.21.11", "26.1", "26.1.1", "26.1.2", "26.2", "26.3",
         ] {
             let contract = contract_for_version(version).unwrap();
             let rules = match version {
@@ -973,6 +993,7 @@ mod tests {
                 "26.1.1" => v26_1_1::Profile::rules(),
                 "26.1.2" => v26_1_2::Profile::rules(),
                 "26.2" => v26_2::Profile::rules(),
+                "26.3" => v26_3::Profile::rules(),
                 _ => unreachable!(),
             };
             assert_eq!(
@@ -1041,6 +1062,7 @@ mod tests {
                 "26.1.1" => <v26_1_1::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
                 "26.1.2" => <v26_1_2::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
                 "26.2" => <v26_2::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
+                "26.3" => <v26_3::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
                 _ => unreachable!(),
             };
             assert_eq!(

@@ -2221,7 +2221,7 @@ pub fn simulate_versioned_projectile_ticks(
             let result = tick_projectile_with_bubble_column(
                 state,
                 snapshot,
-                version.starts_with("26.1") || version == "26.2",
+                version.starts_with("26.1") || version == "26.2" || version == "26.3",
             );
             results.push(native_projectile_tick_result(result, state));
         }
