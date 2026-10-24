@@ -1228,7 +1228,9 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     if let Some(step_height) = state.step_height {
         rules.step_height = step_height;
     }
-    if state.slow_falling || state.levitation {
+    let flight_resets_fall_before_travel = rules.release.at_least(1, 21, 2);
+    if state.slow_falling || state.levitation || (state.flying && flight_resets_fall_before_travel)
+    {
         state.fall_distance = 0.0;
     }
     state.jump_ticks = state.jump_ticks.saturating_sub(1);
@@ -1853,13 +1855,13 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     }
     if state.flying {
         state.velocity.y = flying_vertical_velocity * 0.6;
+        if !flight_resets_fall_before_travel {
+            state.fall_distance = 0.0;
+        }
     }
 
     if rules.release.at_least(1, 21, 2) {
         apply_block_effects(state, world, rules.release);
-    }
-    if state.flying {
-        state.fall_distance = 0.0;
     }
     if state.is_player && state.flying && state.on_ground && !state.no_physics {
         state.flying = false;
