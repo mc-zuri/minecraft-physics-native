@@ -762,6 +762,23 @@ mod tests {
     }
 
     #[test]
+    fn a_negligible_movement_meets_the_world_border_only_from_1_13() {
+        let drifting = SimulationState {
+            position: Vec3::new(0.5, 0.0, 0.5),
+            velocity: Vec3::new(0.5e-7, 0.0, 0.0),
+            no_gravity: true,
+            ..SimulationState::default()
+        };
+        let world = WorldSnapshot::new();
+
+        let legacy = velocity_after_move(&world, drifting, MinecraftVersion::new(1, 12, 2));
+        let voxel = velocity_after_move(&world, drifting, MinecraftVersion::new(1, 13, 2));
+
+        assert!(legacy.x > 0.0);
+        assert_eq!(voxel.x, 0.0);
+    }
+
+    #[test]
     fn a_corner_collision_stops_both_axes_before_1_14() {
         let mut world = WorldSnapshot::new();
         for position in [(1, 0, 0), (0, 0, 1)] {

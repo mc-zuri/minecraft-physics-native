@@ -2014,7 +2014,9 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             } else {
                 StepUp::Lifted
             },
-            border_always_collides: collides_with_border && !rules.release.at_least(1, 18, 0),
+            border_always_collides: collides_with_border
+                && rules.release.at_least(1, 13, 0)
+                && !rules.release.at_least(1, 18, 0),
         };
         collide(bounds, desired, &obstacles, state.on_ground, max_step, collision)
     };
