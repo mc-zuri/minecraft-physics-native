@@ -2666,6 +2666,29 @@ mod tests {
         assert_eq!(climb("1.14.4"), 0.2 * f64::from(0.8_f32));
     }
 
+    #[test]
+    fn sneaking_players_sink_in_water_only_from_1_13() {
+        let world = legacy_water_world(&[
+            ((0, 0, 0), Vec3::ZERO),
+            ((0, 1, 0), Vec3::ZERO),
+            ((0, 2, 0), Vec3::ZERO),
+        ]);
+        let sink = |version| {
+            let mut state = SimulationState {
+                sneaking: true,
+                ..legacy_water_player(Vec3::new(0.5, 0.5, 0.5), Vec3::ZERO)
+            };
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            assert!(state.in_water, "{version}");
+            state.velocity.y
+        };
+
+        assert_eq!(sink("1.8.8"), 0.0);
+        assert_eq!(sink("1.12.2"), 0.0);
+        assert_eq!(sink("1.13.2"), -0.03999999910593033 * f64::from(0.8_f32));
+    }
+
     fn lava_world(position: (i32, i32, i32)) -> WorldSnapshot {
         let mut world = WorldSnapshot::new();
         world.set_block(

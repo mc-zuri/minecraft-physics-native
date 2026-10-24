@@ -1758,7 +1758,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     if state.is_player && !state.no_physics {
         move_towards_closest_space(state, world, rules.release);
     }
-    let sinks_in_water = affected_by_fluids || !rules.release.at_least(1, 16, 0);
+    let sinks_in_water =
+        !legacy_fluids && (affected_by_fluids || !rules.release.at_least(1, 16, 0));
     if state.is_player && state.in_water && state.sneaking && sinks_in_water {
         state.velocity.y -= 0.03999999910593033;
     }
