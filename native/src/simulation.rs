@@ -1970,7 +1970,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         let max_step = rules.step_height as f32;
         let swept = bounds.expand_towards(desired);
         let query = Aabb::new(
-            swept.min,
+            Vec3::new(swept.min.x, swept.min.y - 1.0e-5, swept.min.z),
             Vec3::new(
                 swept.max.x,
                 swept.max.y.max(bounds.max.y + f64::from(max_step)),
@@ -1988,7 +1988,12 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         if collides_with_border {
             obstacles.extend(border);
         }
-        collide(bounds, desired, &obstacles, state.on_ground, max_step, StepUp::Lifted)
+        let step_up = if rules.release.at_least(1, 21, 0) {
+            StepUp::CandidateHeights
+        } else {
+            StepUp::Lifted
+        };
+        collide(bounds, desired, &obstacles, state.on_ground, max_step, step_up)
     };
 
     if state.no_physics || moves_position(desired, displacement, rules.release) {

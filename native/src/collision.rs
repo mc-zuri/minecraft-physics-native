@@ -88,6 +88,9 @@ pub enum StepUp {
     /// Until 1.20.6: the movement lifted by the step height, or after the highest lift the
     /// swept box allows, then lowered back.
     Lifted,
+    /// From 1.21: the movement lifted to each height of a collider's faces within the step,
+    /// lowest first, until one goes further.
+    CandidateHeights,
 }
 
 /// Entity.collide: the movement collided with the obstacles, stepping up when a grounded or
@@ -113,6 +116,9 @@ pub fn collide(
     }
     match step_up {
         StepUp::Lifted => lifted_step_up(bounds, movement, collided, obstacles, f64::from(max_step)),
+        StepUp::CandidateHeights => {
+            candidate_step_up(bounds, movement, collided, landing, obstacles, max_step)
+        }
     }
 }
 
@@ -142,6 +148,112 @@ fn lifted_step_up(
     }
     let lowering = Vec3::new(0.0, -stepped.y + movement.y, 0.0);
     stepped + collide_bounding_box(bounds.translated(stepped), lowering, obstacles)
+}
+
+fn candidate_step_up(
+    bounds: Aabb,
+    movement: Vec3,
+    collided: Vec3,
+    landing: bool,
+    obstacles: &[Aabb],
+    max_step: f32,
+) -> Vec3 {
+    let grounded = if landing {
+        bounds.translated(Vec3::new(0.0, collided.y, 0.0))
+    } else {
+        bounds
+    };
+    let mut query =
+        grounded.expand_towards(Vec3::new(movement.x, f64::from(max_step), movement.z));
+    if !landing {
+        query = query.expand_towards(Vec3::new(0.0, -9.999999747378752e-6, 0.0));
+    }
+    let colliders = block_shapes_in(obstacles, query);
+    for height in candidate_step_heights(grounded, &colliders, max_step, collided.y as f32) {
+        let lifted = Vec3::new(movement.x, f64::from(height), movement.z);
+        let stepped = collide_with_shapes(lifted, grounded, &colliders);
+        if stepped.horizontal_length_squared() > collided.horizontal_length_squared() {
+            let distance_to_ground = bounds.min.y - grounded.min.y;
+            return stepped + Vec3::new(0.0, -distance_to_ground, 0.0);
+        }
+    }
+    collided
+}
+
+fn candidate_step_heights(
+    grounded: Aabb,
+    colliders: &[Aabb],
+    max_step: f32,
+    skipped: f32,
+) -> Vec<f32> {
+    let mut heights: Vec<f32> = Vec::new();
+    for collider in colliders {
+        for coordinate in y_coordinates(*collider) {
+            let height = (coordinate - grounded.min.y) as f32;
+            if height < 0.0 || height == skipped {
+                continue;
+            }
+            if height > max_step {
+                break;
+            }
+            if !heights.contains(&height) {
+                heights.push(height);
+            }
+        }
+    }
+    heights.sort_by(f32::total_cmp);
+    heights
+}
+
+/// VoxelShape.getCoords(Y) of a block's box: the grid lines of a box aligned to eighths of its
+/// block (Shapes.create), else its bottom and top.
+fn y_coordinates(collider: Aabb) -> Vec<f64> {
+    let origin = block_origin(collider);
+    let local = Aabb::new(collider.min - origin, collider.max - origin);
+    let aligned = [
+        grid_bits(local.min.x, local.max.x),
+        grid_bits(local.min.y, local.max.y),
+        grid_bits(local.min.z, local.max.z),
+    ];
+    match aligned {
+        [Some(_), Some(bits), Some(_)] => {
+            let parts = 1_u32 << bits;
+            (0..=parts).map(|line| f64::from(line) / f64::from(parts) + origin.y).collect()
+        }
+        _ => vec![collider.min.y, collider.max.y],
+    }
+}
+
+fn grid_bits(min: f64, max: f64) -> Option<u32> {
+    if min < -1.0e-7 || max > 1.0000001 {
+        return None;
+    }
+    (0..=3).find(|bits| {
+        let parts = f64::from(1_u32 << bits);
+        let aligned = |value: f64| {
+            let scaled = value * parts;
+            (scaled - scaled.round()).abs() < 1.0e-7 * parts
+        };
+        aligned(min) && aligned(max)
+    })
+}
+
+fn block_origin(collider: Aabb) -> Vec3 {
+    Vec3::new(collider.min.x.floor(), collider.min.y.floor(), collider.min.z.floor())
+}
+
+/// BlockCollisions: the whole shape of every block with a box meeting the query.
+fn block_shapes_in(obstacles: &[Aabb], query: Aabb) -> Vec<Aabb> {
+    let blocks: Vec<Vec3> = obstacles
+        .iter()
+        .filter(|obstacle| obstacle.intersects(query))
+        .map(|obstacle| block_origin(*obstacle))
+        .collect();
+    obstacles
+        .iter()
+        .copied()
+        .filter(|obstacle| blocks.contains(&block_origin(*obstacle)))
+        .collect()
 }
 
 fn collide_bounding_box(bounds: Aabb, movement: Vec3, obstacles: &[Aabb]) -> Vec3 {
@@ -220,7 +332,10 @@ fn set_component(value: Vec3, axis: Axis, component: f64) -> Vec3 {
 
 #[cfg(test)]
 mod tests {
-    use super::{clip_axis, collide, resolve_motion, vanilla_equal, Axis, StepUp};
+    use super::{
+        block_shapes_in, clip_axis, collide, resolve_motion, vanilla_equal, y_coordinates, Axis,
+        StepUp,
+    };
     use crate::math::{Aabb, Vec3};
 
     fn box_at(x: f64, y: f64, z: f64) -> Aabb {
@@ -300,6 +415,53 @@ mod tests {
 
         let step = f64::from(0.6_f32);
         assert_eq!(motion, Vec3::new(1.2 - 1.0, step + (0.5 - step), 0.0));
+    }
+
+    #[test]
+    fn candidate_step_up_lifts_to_the_lowest_face_that_clears_the_way() {
+        let entity = box_at(0.0, 0.0, 0.0);
+        let step = Aabb::new(Vec3::new(1.0, 0.0, 0.0), Vec3::new(2.0, 0.125, 1.0));
+        let ceiling = Aabb::new(Vec3::new(1.0, 1.2, 0.0), Vec3::new(2.0, 2.2, 1.0));
+        let obstacles = [box_at(0.0, -1.0, 0.0), box_at(1.0, -1.0, 0.0), step, ceiling];
+        let jump = Vec3::new(0.3, 0.42, 0.0);
+
+        let modern = collide(entity, jump, &obstacles, true, 0.6, StepUp::CandidateHeights);
+        let legacy = collide(entity, jump, &obstacles, true, 0.6, StepUp::Lifted);
+
+        assert_eq!(modern, Vec3::new(0.3, 0.125, 0.0));
+        assert!(legacy.y > 0.19);
+    }
+
+    #[test]
+    fn candidate_step_up_of_a_landing_counts_from_the_ground() {
+        let entity = Aabb::new(Vec3::new(0.0, 0.05, 0.0), Vec3::new(1.0, 1.05, 1.0));
+        let obstacles = [box_at(0.0, -1.0, 0.0), box_at(1.0, -1.0, 0.0), half_block_step()];
+        let movement = Vec3::new(0.3, -0.1, 0.0);
+
+        let motion = collide(entity, movement, &obstacles, false, 0.6, StepUp::CandidateHeights);
+
+        assert_eq!(motion, Vec3::new(0.3, 0.5 + -(0.05 - (0.05 + -0.05)), 0.0));
+    }
+
+    #[test]
+    fn step_heights_come_from_the_voxel_grid_of_a_block_box() {
+        let slab = Aabb::new(Vec3::new(3.0, 64.0, 5.0), Vec3::new(4.0, 64.5, 6.0));
+        let fence = Aabb::new(Vec3::new(3.375, 64.0, 5.375), Vec3::new(3.625, 65.5, 5.625));
+        let carpet = Aabb::new(Vec3::new(3.0, 64.0, 5.0), Vec3::new(4.0, 64.0625, 6.0));
+
+        assert_eq!(y_coordinates(slab), vec![64.0, 64.5, 65.0]);
+        assert_eq!(y_coordinates(fence), vec![64.0, 65.5]);
+        assert_eq!(y_coordinates(carpet), vec![64.0, 64.0625]);
+    }
+
+    #[test]
+    fn a_block_meeting_the_query_brings_its_whole_shape() {
+        let floor = Aabb::new(Vec3::new(3.0, 64.0, 5.0), Vec3::new(4.0, 64.125, 6.0));
+        let wall = Aabb::new(Vec3::new(3.0, 64.0, 5.0), Vec3::new(3.125, 65.0, 6.0));
+        let elsewhere = box_at(7.0, 64.0, 5.0);
+        let query = Aabb::new(Vec3::new(2.5, 64.5, 5.0), Vec3::new(3.1, 65.5, 6.0));
+
+        assert_eq!(block_shapes_in(&[floor, wall, elsewhere], query), vec![floor, wall]);
     }
 
     #[test]
