@@ -1338,7 +1338,18 @@ fn back_off_from_edge(
     context: &EntityCollisionContext,
     delta: Vec3,
     max_down_step: f64,
+    release: MinecraftVersion,
 ) -> Vec3 {
+    if !release.at_least(1, 14, 0) {
+        return back_off_from_edge_before_1_14(
+            state,
+            world,
+            context,
+            delta,
+            max_down_step,
+            release,
+        );
+    }
     if state.no_physics
         || !state.is_player
         || !state.sneaking
@@ -1358,10 +1369,6 @@ fn back_off_from_edge(
     if !above_ground {
         return delta;
     }
-    let mut x = delta.x;
-    let mut z = delta.z;
-    let step_x = x.signum() * 0.05;
-    let step_z = z.signum() * 0.05;
     let can_fall = |x: f64, z: f64| {
         let lowered = Aabb::new(
             Vec3::new(
@@ -1377,6 +1384,48 @@ fn back_off_from_edge(
         );
         world.no_collision_for_entity(lowered, context)
     };
+    back_off_while(delta, can_fall)
+}
+
+/// Entity.move's sneak edge check before 1.14: whole box moved down by 1, from 1.11 by the step
+/// height, must meet no block for a grounded sneaking player's move to back off.
+fn back_off_from_edge_before_1_14(
+    state: &SimulationState,
+    world: &WorldSnapshot,
+    context: &EntityCollisionContext,
+    delta: Vec3,
+    step_height: f64,
+    release: MinecraftVersion,
+) -> Vec3 {
+    if state.no_physics || !state.is_player || !state.sneaking || !state.on_ground {
+        return delta;
+    }
+    let drop = if release.at_least(1, 11, 0) {
+        f64::from(step_height as f32)
+    } else {
+        1.0
+    };
+    let bounds = state.bounds();
+    let can_fall = |x: f64, z: f64| {
+        let mut lowered = bounds.translated(Vec3::new(x, -drop, z));
+        if release.at_least(1, 13, 0) {
+            lowered = lowered.deflate(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7));
+        }
+        !world
+            .collision_shapes_for_entity(lowered, context)
+            .iter()
+            .any(|shape| shape.intersects(lowered))
+    };
+    back_off_while(delta, can_fall)
+}
+
+/// The 0.05 steps by which a sneaking move backs off while it would leave the ground: on x, on z,
+/// then on both while the diagonal move would.
+fn back_off_while(delta: Vec3, can_fall: impl Fn(f64, f64) -> bool) -> Vec3 {
+    let mut x = delta.x;
+    let mut z = delta.z;
+    let step_x = x.signum() * 0.05;
+    let step_z = z.signum() * 0.05;
     while x != 0.0 && can_fall(x, 0.0) {
         if x.abs() <= 0.05 {
             x = 0.0;
@@ -1981,8 +2030,14 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         fall_distance: state.fall_distance,
         walks_on_powder_snow: state.powder_snow_walkable,
     };
-    let desired =
-        back_off_from_edge(state, world, &collision_context, movement, rules.step_height);
+    let desired = back_off_from_edge(
+        state,
+        world,
+        &collision_context,
+        movement,
+        rules.step_height,
+        rules.release,
+    );
     let bounds = state.bounds();
     let mut legacy_bounds = None;
     let displacement = if state.no_physics {

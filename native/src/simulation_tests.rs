@@ -2954,6 +2954,50 @@ mod tests {
     }
 
     #[test]
+    fn sneaking_backs_off_from_a_drop_of_a_block_until_1_11() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, -1, 0),
+            BlockState {
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        world.set_block(
+            (1, -1, 0),
+            BlockState {
+                shape: Some(BlockShape {
+                    bounds: Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.25, 1.0)),
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        let moved_x = |release: MinecraftVersion| {
+            let mut state = SimulationState {
+                position: Vec3::new(1.25, 0.0, 0.5),
+                velocity: Vec3::new(0.3, 0.0, 0.0),
+                on_ground: true,
+                is_player: true,
+                sneaking: true,
+                no_gravity: true,
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            let rules = VersionPhysicsRules {
+                release,
+                ..VersionPhysicsRules::default()
+            };
+            tick_with_rules(&mut state, &world, PhysicsConfig::default(), rules);
+            state.position.x - 1.25
+        };
+
+        assert!(moved_x(MinecraftVersion::new(1, 10, 2)) > 0.29);
+        assert_eq!(moved_x(MinecraftVersion::new(1, 11, 2)), 0.0);
+    }
+
+    #[test]
     fn sneaking_spectators_do_not_back_off_from_edges() {
         let mut state = SimulationState {
             position: Vec3::new(0.0, 2.0, 0.0),
