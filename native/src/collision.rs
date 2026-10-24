@@ -1,6 +1,7 @@
 use crate::math::{Aabb, Vec3};
 
 pub const VANILLA_EQUAL_EPSILON: f64 = 9.999999747378752e-6;
+const COLLISION_EPSILON: f64 = 1.0e-7;
 
 #[must_use]
 pub fn vanilla_equal(left: f64, right: f64) -> bool {
@@ -14,58 +15,46 @@ pub enum Axis {
     Z,
 }
 
+impl Axis {
+    const fn others(self) -> [Self; 2] {
+        match self {
+            Self::X => [Self::Y, Self::Z],
+            Self::Y => [Self::X, Self::Z],
+            Self::Z => [Self::X, Self::Y],
+        }
+    }
+}
+
+/// VoxelShape.collide of one box, with its 1.0E-7 tolerances.
 #[must_use]
 pub fn clip_axis(entity: Aabb, obstacle: Aabb, delta: f64, axis: Axis) -> f64 {
-    if delta.abs() < 1.0e-7 {
+    if delta.abs() < COLLISION_EPSILON {
         return 0.0;
     }
-
-    let overlaps = match axis {
-        Axis::X => {
-            entity.max.y > obstacle.min.y
-                && entity.min.y < obstacle.max.y
-                && entity.max.z > obstacle.min.z
-                && entity.min.z < obstacle.max.z
-        }
-        Axis::Y => {
-            entity.max.x > obstacle.min.x
-                && entity.min.x < obstacle.max.x
-                && entity.max.z > obstacle.min.z
-                && entity.min.z < obstacle.max.z
-        }
-        Axis::Z => {
-            entity.max.x > obstacle.min.x
-                && entity.min.x < obstacle.max.x
-                && entity.max.y > obstacle.min.y
-                && entity.min.y < obstacle.max.y
-        }
+    let overlaps = |other: Axis| {
+        component(entity.min, other) + COLLISION_EPSILON < component(obstacle.max, other)
+            && component(entity.max, other) - COLLISION_EPSILON >= component(obstacle.min, other)
     };
-
-    if !overlaps {
+    let [first, second] = axis.others();
+    if !overlaps(first) || !overlaps(second) {
         return delta;
     }
-
-    match axis {
-        Axis::X if delta > 0.0 && entity.max.x <= obstacle.min.x => {
-            delta.min(obstacle.min.x - entity.max.x)
+    if delta > 0.0 {
+        let gap = component(obstacle.min, axis) - component(entity.max, axis);
+        if component(entity.max, axis) - COLLISION_EPSILON < component(obstacle.min, axis)
+            && gap >= -COLLISION_EPSILON
+        {
+            return delta.min(gap);
         }
-        Axis::X if delta < 0.0 && entity.min.x >= obstacle.max.x => {
-            delta.max(obstacle.max.x - entity.min.x)
+    } else {
+        let gap = component(obstacle.max, axis) - component(entity.min, axis);
+        if component(entity.min, axis) + COLLISION_EPSILON >= component(obstacle.max, axis)
+            && gap <= COLLISION_EPSILON
+        {
+            return delta.max(gap);
         }
-        Axis::Y if delta > 0.0 && entity.max.y <= obstacle.min.y => {
-            delta.min(obstacle.min.y - entity.max.y)
-        }
-        Axis::Y if delta < 0.0 && entity.min.y >= obstacle.max.y => {
-            delta.max(obstacle.max.y - entity.min.y)
-        }
-        Axis::Z if delta > 0.0 && entity.max.z <= obstacle.min.z => {
-            delta.min(obstacle.min.z - entity.max.z)
-        }
-        Axis::Z if delta < 0.0 && entity.min.z >= obstacle.max.z => {
-            delta.max(obstacle.max.z - entity.min.z)
-        }
-        _ => delta,
     }
+    delta
 }
 
 #[must_use]
@@ -79,7 +68,7 @@ pub fn resolve_motion(entity: Aabb, desired: Vec3, obstacles: &[Aabb]) -> (Vec3,
     };
 
     for axis in axes {
-        let mut delta = resolved_component(desired, axis);
+        let mut delta = component(desired, axis);
         for obstacle in obstacles {
             let clipped = clip_axis(entity.translated(resolved), *obstacle, delta, axis);
             if clipped != delta {
@@ -147,7 +136,7 @@ fn axis_index(axis: Axis) -> usize {
     }
 }
 
-fn resolved_component(value: Vec3, axis: Axis) -> f64 {
+fn component(value: Vec3, axis: Axis) -> f64 {
     match axis {
         Axis::X => value.x,
         Axis::Y => value.y,
@@ -231,6 +220,26 @@ mod tests {
         let obstacle = box_at(2.0, 0.0, 0.0);
 
         assert_eq!(clip_axis(entity, obstacle, 2.5, Axis::X), 2.5);
+    }
+
+    #[test]
+    fn pushes_back_an_entity_reaching_less_than_the_epsilon_into_a_box() {
+        let entity = Aabb::new(Vec3::new(1.0, 0.0, 0.0), Vec3::new(2.00000005, 1.0, 1.0));
+        let obstacle = box_at(2.0, 0.0, 0.0);
+
+        assert_eq!(clip_axis(entity, obstacle, 0.5, Axis::X), 2.0 - 2.00000005);
+        let reaching_back = Aabb::new(Vec3::new(-0.00000005, 0.0, 0.0), Vec3::new(1.0, 1.0, 1.0));
+        let behind = box_at(-1.0, 0.0, 0.0);
+        assert_eq!(clip_axis(reaching_back, behind, -0.5, Axis::X), 0.00000005);
+    }
+
+    #[test]
+    fn ignores_a_box_overlapped_by_less_than_the_epsilon_on_another_axis() {
+        let entity = Aabb::new(Vec3::new(0.0, 0.00000005, 0.0), Vec3::new(1.0, 1.00000005, 1.0));
+
+        assert_eq!(clip_axis(entity, box_at(2.0, 1.0, 0.0), 2.5, Axis::X), 2.5);
+        assert_eq!(clip_axis(entity, box_at(2.0, 0.0, 0.0), 2.5, Axis::X), 1.0);
+        assert_eq!(clip_axis(entity, box_at(2.0, -1.0, 0.0), 2.5, Axis::X), 2.5);
     }
 
     #[test]
