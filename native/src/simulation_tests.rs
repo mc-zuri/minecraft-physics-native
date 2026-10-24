@@ -849,6 +849,38 @@ mod tests {
     }
 
     #[test]
+    fn sneaking_does_not_slow_flight_in_1_14() {
+        let flying = SimulationState {
+            is_player: true,
+            flying: true,
+            flying_speed: java_float(0.05),
+            ..SimulationState::default()
+        };
+        let sneaking = SimulationState {
+            sneaking: true,
+            moving_slowly: Some(true),
+            ..flying
+        };
+        let spectating = SimulationState {
+            sneaking: true,
+            moving_slowly: Some(false),
+            no_physics: true,
+            ..flying
+        };
+        let release = MinecraftVersion::new(1, 14, 4);
+
+        assert_eq!(
+            airborne_displacement(sneaking, release),
+            airborne_displacement(flying, release)
+        );
+        assert_eq!(airborne_displacement(spectating, release), java_float(0.05));
+        assert_eq!(
+            airborne_displacement(sneaking, MinecraftVersion::new(1, 15, 2)),
+            f64::from(0.3_f32 * 0.98_f32) * java_float(0.05)
+        );
+    }
+
+    #[test]
     fn input_rotation_uses_the_mth_sine_table_of_the_release() {
         for release in [MinecraftVersion::new(1, 21, 1), MinecraftVersion::new(1, 21, 11)] {
             let mut state = SimulationState {

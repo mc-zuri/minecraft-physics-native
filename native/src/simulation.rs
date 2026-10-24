@@ -1010,6 +1010,9 @@ fn movement_input(state: &SimulationState, release: MinecraftVersion) -> Vec3 {
         if state.using_item && !item_slows_first {
             input = scale_input(input, 0.2);
         }
+        if state.flying && state.sneaking && !release.at_least(1, 15, 0) {
+            input = input.map(|impulse| (f64::from(impulse) / 0.3) as f32);
+        }
         scale_input(input, 0.98)
     };
     Vec3::new(f64::from(strafe), state.input.y, f64::from(forward))
