@@ -3126,6 +3126,42 @@ mod tests {
     }
 
     #[test]
+    fn removed_player_stops_its_move_after_the_collision_then_stops_moving_from_1_19_1() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        let standing = || SimulationState {
+            position: Vec3::new(0.5, 1.0, 0.5),
+            velocity: Vec3::new(0.0, -0.0784000015258789, 0.0),
+            on_ground: true,
+            collided_vertically: true,
+            is_player: true,
+            controlled_by_local_instance: true,
+            removed: true,
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+
+        let mut removed = standing();
+        tick_release(&mut removed, &world, MinecraftVersion::new(1, 17, 1));
+        assert_eq!(removed.position, Vec3::new(0.5, 1.0, 0.5));
+        assert!(removed.on_ground);
+        assert_eq!(removed.velocity.y, (-0.0784000015258789 - 0.08) * java_float(0.98));
+
+        let mut skipped = standing();
+        tick_release(&mut skipped, &world, MinecraftVersion::new(1, 19, 1));
+        assert_eq!(skipped.position, standing().position);
+        assert_eq!(skipped.velocity, standing().velocity);
+    }
+
+    #[test]
     fn item_in_use_slows_the_input_by_its_use_effects_speed() {
         let walked = |using_item: bool, speed: Option<f32>| {
             let mut state = SimulationState {

@@ -88,6 +88,8 @@ export interface NativeSimulationState {
     climbing?: boolean;
     noPhysics?: boolean;
     noGravity?: boolean;
+    /** Removed from the level this tick (LocalPlayer.tickDeath at the 20th tick of death, 1.17+). */
+    removed?: boolean;
     gravity?: number;
     stepHeight?: number;
     /** The movement speed attribute with its additive modifiers; the engine applies sprint, speed and slowness. */

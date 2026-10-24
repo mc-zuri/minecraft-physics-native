@@ -291,6 +291,8 @@ pub struct SimulationState {
     pub climbing: bool,
     pub no_physics: bool,
     pub no_gravity: bool,
+    /// Removed from the level this tick (LocalPlayer.tickDeath at the 20th tick of death, 1.17+).
+    pub removed: bool,
     pub gravity: Option<f64>,
     pub step_height: Option<f64>,
     pub movement_speed: Option<f64>,
@@ -382,6 +384,7 @@ impl From<EntityState> for SimulationState {
             climbing: false,
             no_physics: false,
             no_gravity: false,
+            removed: false,
             gravity: None,
             step_height: None,
             movement_speed: None,
@@ -2076,6 +2079,14 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
 ) -> TickResult {
     let mut rules = rules;
     state.tick_count = state.tick_count.saturating_add(1);
+    if state.removed && rules.release.at_least(1, 19, 1) {
+        return TickResult {
+            displacement: Vec3::ZERO,
+            collided_horizontally: state.collided_horizontally,
+            collided_vertically: state.collided_vertically,
+            block_fall_callback: false,
+        };
+    }
     state.bounding_box = (!rules.release.at_least(1, 17, 0)).then(|| kept_bounding_box(state));
     state.contact_damage = 0.0;
     state.block_fall_callback = false;
@@ -2597,7 +2608,9 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.fall_distance += -displacement.y;
     }
 
-    if restitution_enabled {
+    // Entity.move (1.17 - 1.19) stops after checkFallDamage for a removed entity
+    let removed_in_move = state.removed && rules.release.at_least(1, 17, 0);
+    if restitution_enabled && !removed_in_move {
         restitute_movement_after_collisions(
             state,
             world,
@@ -2606,7 +2619,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             [x_collision, y_collision, z_collision],
             displacement.y,
         );
-    } else {
+    } else if !removed_in_move {
         let (stops_x, stops_z) = if rules.release.at_least(1, 18, 2) {
             (x_collision, z_collision)
         } else if rules.release.at_least(1, 14, 0) {
@@ -2654,14 +2667,14 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         jump_factor,
         rules.release,
     );
-    if !rules.release.at_least(1, 21, 2) {
+    if !rules.release.at_least(1, 21, 2) && !removed_in_move {
         let inside: Vec<_> = blocks_inside(state, rules.release)
             .into_iter()
             .map(|position| (position, true))
             .collect();
         apply_block_effects(state, world, support, rules.release, &inside);
     }
-    if rules.release.at_least(1, 15, 0) && !state.no_physics {
+    if rules.release.at_least(1, 15, 0) && !state.no_physics && !removed_in_move {
         let speed_factor = f64::from(block_speed_factor(world, state, support, rules.release));
         state.velocity.x *= speed_factor;
         state.velocity.z *= speed_factor;
