@@ -1103,6 +1103,15 @@ fn relative_movement_in_float(input: Vec3, speed: f32, yaw: f32) -> Vec3 {
     )
 }
 
+fn negligible_velocity(config: PhysicsConfig, release: MinecraftVersion) -> f64 {
+    let customized = config.negligible_velocity != PhysicsConfig::default().negligible_velocity;
+    if customized || release.at_least(1, 9, 0) {
+        config.negligible_velocity
+    } else {
+        0.005
+    }
+}
+
 fn compute_modified_friction(friction: f64, modifier: f64) -> f64 {
     f64::from((1.0 - (1.0 - friction as f32) * modifier as f32).clamp(0.0, 1.0))
 }
@@ -1272,22 +1281,23 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     } else {
         world.has_fluid_block_inside(FluidState::Lava, bounds)
     };
+    let negligible_velocity = negligible_velocity(config, rules.release);
     if state.is_player && rules.release.at_least(1, 21, 5) {
         let horizontal_squared =
             state.velocity.x * state.velocity.x + state.velocity.z * state.velocity.z;
-        if horizontal_squared < config.negligible_velocity * config.negligible_velocity {
+        if horizontal_squared < negligible_velocity * negligible_velocity {
             state.velocity.x = 0.0;
             state.velocity.z = 0.0;
         }
     } else {
-        if state.velocity.x.abs() < config.negligible_velocity {
+        if state.velocity.x.abs() < negligible_velocity {
             state.velocity.x = 0.0;
         }
-        if state.velocity.z.abs() < config.negligible_velocity {
+        if state.velocity.z.abs() < negligible_velocity {
             state.velocity.z = 0.0;
         }
     }
-    if state.velocity.y.abs() < config.negligible_velocity {
+    if state.velocity.y.abs() < negligible_velocity {
         state.velocity.y = 0.0;
     }
     let fluid = if !affected_by_fluids {

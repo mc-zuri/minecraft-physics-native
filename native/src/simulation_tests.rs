@@ -372,6 +372,22 @@ mod tests {
     }
 
     #[test]
+    fn motion_below_0_005_is_negligible_in_1_8() {
+        let world = WorldSnapshot::new();
+        for (version, moved) in [("1.8.8", 0.0), ("1.9.4", 0.004)] {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 100.0, 0.5),
+                velocity: Vec3::new(0.004, 0.0, 0.0),
+                is_player: true,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            assert_eq!(state.position.x, 0.5 + moved, "{version}");
+        }
+    }
+
+    #[test]
     fn no_physics_bypasses_collision_and_clears_collision_flags() {
         let mut world = WorldSnapshot::new();
         world.set_block(
