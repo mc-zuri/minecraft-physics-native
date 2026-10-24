@@ -1962,23 +1962,6 @@ mod tests {
     }
 
     #[test]
-    fn climbing_uses_bounded_vertical_input() {
-        let mut state = SimulationState {
-            position: Vec3::new(0.0, 2.0, 0.0),
-            input: Vec3::new(0.0, 1.0, 0.0),
-            climbing: true,
-            half_width: 0.3,
-            height: 1.8,
-            ..SimulationState::default()
-        };
-
-        tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
-
-        assert!(state.position.y > 2.0);
-        assert!(state.velocity.y <= 0.15);
-    }
-
-    #[test]
     fn climbing_jumps_up_when_requested_or_blocked() {
         let mut state = SimulationState {
             position: Vec3::new(0.0, 2.0, 0.0),
@@ -2007,9 +1990,35 @@ mod tests {
 
         tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
 
-        assert!(state.velocity.x.abs() <= 0.15);
-        assert!(state.velocity.z.abs() <= 0.15);
-        assert!(state.velocity.y >= -0.15 * 0.98);
+        let limit = java_float(0.15);
+        assert_eq!(state.position, Vec3::new(limit, 2.0 - limit, -limit));
+    }
+
+    #[test]
+    fn standing_on_top_of_a_ladder_is_not_climbing() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 2, 0),
+            BlockState {
+                shape: Some(BlockShape {
+                    effect: BlockEffect::Climbable,
+                    bounds: Aabb::new(Vec3::ZERO, Vec3::ZERO),
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 3.0, 0.5),
+            velocity: Vec3::new(0.0, -0.5, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+
+        tick(&mut state, &world, PhysicsConfig::default());
+
+        assert_eq!(state.position.y, 2.5);
     }
 
     #[test]
@@ -2031,7 +2040,6 @@ mod tests {
             velocity: Vec3::new(0.0, -0.5, 0.0),
             is_player: true,
             sneaking: true,
-            no_physics: true,
             half_width: 0.3,
             height: 1.8,
             ..SimulationState::default()

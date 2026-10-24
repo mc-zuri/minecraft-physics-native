@@ -629,19 +629,20 @@ fn apply_fluid_travel_vertical(
 }
 
 fn climbable(world: &WorldSnapshot, state: &SimulationState) -> bool {
-    let body = (
-        state.position.x.floor() as i32,
-        state.position.y.floor() as i32,
-        state.position.z.floor() as i32,
-    );
-    let feet = (body.0, (state.position.y - 0.01).floor() as i32, body.2);
-    state.climbing
-        || [body, feet].into_iter().any(|position| {
-            matches!(
-                world.effect_at(position),
+    !state.no_physics
+        && (state.climbing
+            || matches!(
+                world.effect_at(block_position(state.position)),
                 BlockEffect::Climbable | BlockEffect::Scaffolding
-            )
-        })
+            ))
+}
+
+fn block_position(position: Vec3) -> (i32, i32, i32) {
+    (
+        position.x.floor() as i32,
+        position.y.floor() as i32,
+        position.z.floor() as i32,
+    )
 }
 
 fn fluid_falling_adjusted_y(gravity: f64, falling: bool, current_y: f64) -> f64 {
@@ -1120,8 +1121,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
                 || (z as f64 + 0.5 - state.position.z).abs() + 1.0e-7 > 0.4375 + state.half_width)
     });
     let climbing = climbable(world, state);
-    let on_scaffolding =
-        body_effect == BlockEffect::Scaffolding || feet_effect == BlockEffect::Scaffolding;
+    let on_scaffolding = body_effect == BlockEffect::Scaffolding;
     let eye_y = state.position.y + state.height - 0.1;
     let eye_fluid_height = world.fluid_height_at(head_position);
     let eye_fluid_top = head_position.1 as f64 + eye_fluid_height;
@@ -1347,14 +1347,13 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         glide(state, travel_gravity, rules.release);
     } else if state.flying {
         state.velocity.y = flying_vertical_velocity;
-    } else if climbing {
-        state.velocity.y = state.input.y.clamp(-0.15, 0.15);
     }
-    if climbing && !gliding {
+    if climbing && matches!(fluid, FluidState::Empty) && !gliding {
+        let limit = java_float(0.15);
         state.fall_distance = 0.0;
-        state.velocity.x = state.velocity.x.clamp(-0.15, 0.15);
-        state.velocity.z = state.velocity.z.clamp(-0.15, 0.15);
-        state.velocity.y = state.velocity.y.max(-0.15);
+        state.velocity.x = state.velocity.x.clamp(-limit, limit);
+        state.velocity.z = state.velocity.z.clamp(-limit, limit);
+        state.velocity.y = state.velocity.y.max(-limit);
         if state.is_player && state.sneaking && !on_scaffolding && state.velocity.y < 0.0 {
             state.velocity.y = 0.0;
         }
@@ -1618,9 +1617,16 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.velocity.x *= block_slowdown;
         state.velocity.z *= block_slowdown;
     }
+    let climbs_powder_snow = state.powder_snow_walkable
+        && if rules.release.at_least(1, 21, 5) {
+            in_powder_snow
+        } else {
+            world.effect_at(block_position(state.position)) == BlockEffect::PowderSnow
+        };
     if matches!(fluid, FluidState::Empty)
-        && climbing
+        && !gliding
         && (state.collided_horizontally || state.jump_requested)
+        && (climbable(world, state) || climbs_powder_snow)
     {
         state.velocity.y = 0.2;
     }
