@@ -2012,6 +2012,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.fall_distance = 0.0;
         reset_fall_distance = true;
     }
+    let y_collision = desired.y != displacement.y;
     if !state.no_physics {
         state.collided_horizontally =
             !vanilla_equal(desired.x, displacement.x) || !vanilla_equal(desired.z, displacement.z);
@@ -2030,7 +2031,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             }
         }
         if desired.y != 0.0 || state.controlled_by_local_instance {
-            state.collided_vertically = !vanilla_equal(desired.y, displacement.y);
+            state.collided_vertically = y_collision;
             state.vertical_collision_below = state.collided_vertically && desired.y < 0.0;
             state.block_fall_callback =
                 state.vertical_collision_below && state.controlled_by_local_instance;
@@ -2070,7 +2071,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     let landed_on = world.effect_at(landing_position(state, support, rules.release));
     let bounce_scale = if state.is_player { 1.0 } else { 0.8 };
     let bounced =
-        !restitution_enabled && collisions[1] && landed_on == BlockEffect::Slime && !state.sneaking;
+        !restitution_enabled && y_collision && landed_on == BlockEffect::Slime && !state.sneaking;
     if bounced {
         if state.velocity.y < 0.0 {
             state.velocity.y = -state.velocity.y * bounce_scale;
@@ -2122,14 +2123,14 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             world,
             support,
             rules,
-            collisions,
+            [collisions[0], y_collision, collisions[2]],
             displacement.y,
         );
     } else {
         if collisions[0] {
             state.velocity.x = 0.0;
         }
-        if collisions[1] && !bounced {
+        if y_collision && !bounced {
             if landed_on == BlockEffect::Bed && !state.sneaking {
                 if state.velocity.y < 0.0 {
                     state.velocity.y = -state.velocity.y * 0.6600000262260437 * bounce_scale;

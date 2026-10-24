@@ -653,6 +653,34 @@ mod tests {
     }
 
     #[test]
+    fn a_fall_cut_by_less_than_the_equality_tolerance_still_lands() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 1.000001, 0.5),
+            velocity: Vec3::new(0.0, -5.0e-6, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+        let config = PhysicsConfig {
+            negligible_velocity: 0.0,
+            ..PhysicsConfig::default()
+        };
+
+        tick(&mut state, &world, config);
+
+        assert!(state.collided_vertically);
+        assert!(state.on_ground);
+    }
+
+    #[test]
     fn player_minor_horizontal_collision_tracks_small_direction_change() {
         let mut world = WorldSnapshot::new();
         world.set_block(
