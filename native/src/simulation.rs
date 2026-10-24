@@ -594,76 +594,54 @@ fn normalize(vector: Vec3, release: MinecraftVersion) -> Vec3 {
     }
 }
 
-fn apply_legacy_fluid_travel_vertical(
+fn apply_fluid_travel_vertical(
     state: &mut SimulationState,
     fluid: FluidState,
     fluid_height: f64,
     fluid_jump_threshold: f64,
     rules: VersionPhysicsRules,
-    falling_in_fluid: bool,
-    sprint_active: bool,
+    gravity: f64,
+    going_down: bool,
 ) {
     match fluid {
         FluidState::Water | FluidState::Waterlogged => {
             state.velocity.y *= java_float(rules.fluid_vertical_drag);
-            if fluid_falling_gravity_enabled(state, rules, sprint_active) {
-                state.velocity.y =
-                    fluid_falling_adjusted_y(rules.gravity, falling_in_fluid, state.velocity.y);
+            if fluid_falling_gravity_enabled(state, rules, state.sprinting) {
+                state.velocity.y = fluid_falling_adjusted_y(gravity, going_down, state.velocity.y);
             }
         }
         FluidState::Lava => {
             if rules.release.at_least(1, 16, 0) && fluid_height <= fluid_jump_threshold {
                 state.velocity.y *= java_float(rules.fluid_vertical_drag);
-                if fluid_falling_gravity_enabled(state, rules, sprint_active) {
+                if fluid_falling_gravity_enabled(state, rules, state.sprinting) {
                     state.velocity.y =
-                        fluid_falling_adjusted_y(rules.gravity, falling_in_fluid, state.velocity.y);
+                        fluid_falling_adjusted_y(gravity, going_down, state.velocity.y);
                 }
             } else {
                 state.velocity.y *= 0.5;
             }
             if !state.no_gravity {
-                state.velocity.y -= rules.gravity / rules.lava_gravity_divisor;
+                state.velocity.y -= gravity / rules.lava_gravity_divisor;
             }
         }
         FluidState::Empty => {}
     }
 }
 
-fn apply_split_fluid_travel_vertical(
-    state: &mut SimulationState,
-    fluid: FluidState,
-    fluid_height: f64,
-    fluid_jump_threshold: f64,
-    rules: VersionPhysicsRules,
-    falling_in_fluid: bool,
-    sprint_active: bool,
-) {
-    // 1.21.4+ moves this logic into LivingEntity.travelInFluid. Keep the
-    // source-equivalent water/lava branches isolated from the legacy path.
-    match fluid {
-        FluidState::Water | FluidState::Waterlogged => {
-            state.velocity.y *= java_float(rules.fluid_vertical_drag);
-            if fluid_falling_gravity_enabled(state, rules, sprint_active) {
-                state.velocity.y =
-                    fluid_falling_adjusted_y(rules.gravity, falling_in_fluid, state.velocity.y);
-            }
-        }
-        FluidState::Lava => {
-            if fluid_height <= fluid_jump_threshold {
-                state.velocity.y *= java_float(rules.fluid_vertical_drag);
-                if fluid_falling_gravity_enabled(state, rules, sprint_active) {
-                    state.velocity.y =
-                        fluid_falling_adjusted_y(rules.gravity, falling_in_fluid, state.velocity.y);
-                }
-            } else {
-                state.velocity.y *= 0.5;
-            }
-            if !state.no_gravity {
-                state.velocity.y -= rules.gravity / rules.lava_gravity_divisor;
-            }
-        }
-        FluidState::Empty => {}
-    }
+fn climbable(world: &WorldSnapshot, state: &SimulationState) -> bool {
+    let body = (
+        state.position.x.floor() as i32,
+        state.position.y.floor() as i32,
+        state.position.z.floor() as i32,
+    );
+    let feet = (body.0, (state.position.y - 0.01).floor() as i32, body.2);
+    state.climbing
+        || [body, feet].into_iter().any(|position| {
+            matches!(
+                world.effect_at(position),
+                BlockEffect::Climbable | BlockEffect::Scaffolding
+            )
+        })
 }
 
 fn fluid_falling_adjusted_y(gravity: f64, falling: bool, current_y: f64) -> f64 {
@@ -1141,11 +1119,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             && ((x as f64 + 0.5 - state.position.x).abs() + 1.0e-7 > 0.4375 + state.half_width
                 || (z as f64 + 0.5 - state.position.z).abs() + 1.0e-7 > 0.4375 + state.half_width)
     });
-    let climbing = state.climbing
-        || body_effect == BlockEffect::Climbable
-        || feet_effect == BlockEffect::Climbable
-        || body_effect == BlockEffect::Scaffolding
-        || feet_effect == BlockEffect::Scaffolding;
+    let climbing = climbable(world, state);
     let on_scaffolding =
         body_effect == BlockEffect::Scaffolding || feet_effect == BlockEffect::Scaffolding;
     let eye_y = state.position.y + state.height - 0.1;
@@ -1166,13 +1140,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         FluidState::Water | FluidState::Waterlogged
     ) && eye_fluid_top > eye_y;
     state.eye_in_lava = head_fluid.fluid == FluidState::Lava && eye_fluid_top > eye_y;
-    let gravity = match fluid {
-        FluidState::Water => rules.gravity / rules.water_gravity_divisor,
-        FluidState::Lava => rules.gravity / rules.lava_gravity_divisor,
-        FluidState::Waterlogged => rules.gravity / rules.water_gravity_divisor,
-        FluidState::Empty => rules.gravity,
-    };
-    let falling_in_fluid = state.velocity.y <= 0.0;
     if state.flying {
         let vertical_input =
             if state.jump_requested { 1.0 } else { 0.0 } - if state.sneaking { 1.0 } else { 0.0 };
@@ -1185,16 +1152,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         FluidState::Waterlogged => rules.water_drag,
         FluidState::Empty => rules.vertical_drag,
     };
-    if state.is_player && !state.passenger && state.swimming && state.in_water {
-        let steering = if state.look.y < -0.2 {
-            rules.swimming_downward_steering
-        } else {
-            rules.swimming_vertical_steering
-        };
-        if state.look.y <= 0.0 || state.jump_requested || swimming_head_in_water {
-            state.velocity.y += (state.look.y - state.velocity.y) * steering;
-        }
-    }
     let jumping = state.jump_requested && !(state.is_player && state.flying);
     if matches!(
         fluid,
@@ -1235,19 +1192,22 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     if !jumping {
         state.jump_ticks = 0;
     }
-    let travel_gravity = if state.slow_falling && state.velocity.y <= 0.0 {
-        gravity.min(0.01)
-    } else {
-        gravity
-    };
-    if matches!(fluid, FluidState::Water | FluidState::Waterlogged)
-        && state.collided_horizontally
-        && climbing
-    {
-        // LivingEntity.travelInWater replaces the post-move Y component before
-        // applying water drag and the falling adjustment.
-        state.velocity.y = 0.2;
+    if state.is_player && !state.passenger && state.swimming && state.in_water {
+        let steering = if state.look.y < -0.2 {
+            rules.swimming_downward_steering
+        } else {
+            rules.swimming_vertical_steering
+        };
+        if state.look.y <= 0.0 || state.jump_requested || swimming_head_in_water {
+            state.velocity.y += (state.look.y - state.velocity.y) * steering;
+        }
     }
+    let going_down = state.velocity.y <= 0.0;
+    let travel_gravity = if state.slow_falling && going_down {
+        rules.gravity.min(0.01)
+    } else {
+        rules.gravity
+    };
     let mut base_speed = if state.movement_speed > 0.0 {
         state.movement_speed
     } else {
@@ -1265,24 +1225,42 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         config.sprint_multiplier,
         rules.release,
     );
-    let mut fluid_input_speed = match fluid {
-        FluidState::Water | FluidState::Waterlogged => java_float(rules.water_input_speed),
+    let water_efficiency = {
+        let efficiency = if rules.water_movement_efficiency_attribute {
+            state.water_movement_efficiency as f32
+        } else {
+            f32::from(state.depth_strider.min(3))
+        };
+        if state.on_ground {
+            efficiency
+        } else {
+            efficiency * 0.5
+        }
+    };
+    let toward_water_efficiency = |value: f32, target: f32| {
+        if water_efficiency > 0.0 {
+            value
+                + (target - value) * water_efficiency
+                    / rules.water_movement_efficiency_divisor as f32
+        } else {
+            value
+        }
+    };
+    let water_slowdown = if state.dolphins_grace > 0 {
+        0.96
+    } else if state.sprinting {
+        toward_water_efficiency(rules.water_sprint_drag as f32, 0.54600006)
+    } else {
+        toward_water_efficiency(rules.water_drag as f32, 0.54600006)
+    };
+    let fluid_input_speed = match fluid {
+        FluidState::Water | FluidState::Waterlogged => f64::from(toward_water_efficiency(
+            rules.water_input_speed as f32,
+            movement_speed as f32,
+        )),
         FluidState::Lava => java_float(rules.lava_input_speed),
         FluidState::Empty => movement_speed,
     };
-    if matches!(fluid, FluidState::Water | FluidState::Waterlogged) {
-        let mut water_efficiency = if rules.water_movement_efficiency_attribute {
-            state.water_movement_efficiency
-        } else {
-            f64::from(state.depth_strider.min(3)) / rules.water_movement_efficiency_divisor
-        };
-        if !state.on_ground {
-            water_efficiency *= 0.5;
-        }
-        if water_efficiency > 0.0 {
-            fluid_input_speed += (movement_speed - fluid_input_speed) * water_efficiency;
-        }
-    }
     let block_friction = {
         let friction = world.slipperiness_at((
             state.position.x.floor() as i32,
@@ -1655,27 +1633,14 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         }
     }
     let horizontal_drag = if gliding { 1.0 } else { ground_inertia };
+    if matches!(fluid, FluidState::Water | FluidState::Waterlogged)
+        && state.collided_horizontally
+        && climbable(world, state)
+    {
+        state.velocity.y = 0.2;
+    }
     let liquid_horizontal_drag = if matches!(fluid, FluidState::Water | FluidState::Waterlogged) {
-        let mut water_drag = if state.sprinting {
-            java_float(rules.water_sprint_drag)
-        } else {
-            java_float(rules.water_drag)
-        };
-        let mut water_efficiency = if rules.water_movement_efficiency_attribute {
-            state.water_movement_efficiency
-        } else {
-            f64::from(state.depth_strider.min(3)) / rules.water_movement_efficiency_divisor
-        };
-        if !state.on_ground {
-            water_efficiency *= 0.5;
-        }
-        if water_efficiency > 0.0 {
-            water_drag += (java_float(0.54600006) - water_drag) * water_efficiency;
-        }
-        if state.dolphins_grace > 0 {
-            water_drag = java_float(0.96);
-        }
-        water_drag
+        f64::from(water_slowdown)
     } else if fluid == FluidState::Lava {
         java_float(rules.lava_drag)
     } else {
@@ -1683,36 +1648,24 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     };
     state.velocity.x *= liquid_horizontal_drag;
     state.velocity.z *= liquid_horizontal_drag;
-    if rules.fluid_travel_split {
-        apply_split_fluid_travel_vertical(
-            state,
-            fluid,
-            fluid_height,
-            fluid_jump_threshold,
-            rules,
-            falling_in_fluid,
-            state.sprinting,
-        );
-    } else {
-        apply_legacy_fluid_travel_vertical(
-            state,
-            fluid,
-            fluid_height,
-            fluid_jump_threshold,
-            rules,
-            falling_in_fluid,
-            state.sprinting,
-        );
-    }
+    apply_fluid_travel_vertical(
+        state,
+        fluid,
+        fluid_height,
+        fluid_jump_threshold,
+        rules,
+        travel_gravity,
+        going_down,
+    );
     if !matches!(fluid, FluidState::Empty)
         && state.collided_horizontally
         && world.is_free(state.bounds().translated(Vec3::new(
             state.velocity.x,
-            state.velocity.y + 0.6 - displacement.y,
+            state.velocity.y + 0.6000000238418579 - state.position.y + old_position.y,
             state.velocity.z,
         )))
     {
-        state.velocity.y = 0.3;
+        state.velocity.y = 0.30000001192092896;
     }
     if matches!(fluid, FluidState::Empty) {
         let air_drag = if rules.fluid_travel_split {

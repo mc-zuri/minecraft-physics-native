@@ -760,9 +760,17 @@ impl WorldSnapshot {
 
     #[must_use]
     pub fn is_free(&self, bounds: Aabb) -> bool {
-        self.collision_shapes(bounds).is_empty()
-            && self.fluid_height_in_bounds(FluidState::Water, bounds) <= 0.0
-            && self.fluid_height_in_bounds(FluidState::Lava, bounds) <= 0.0
+        self.collision_shapes(bounds).is_empty() && !self.contains_any_liquid(bounds)
+    }
+
+    #[must_use]
+    pub fn contains_any_liquid(&self, bounds: Aabb) -> bool {
+        (bounds.min.x.floor() as i32..bounds.max.x.ceil() as i32).any(|x| {
+            (bounds.min.y.floor() as i32..bounds.max.y.ceil() as i32).any(|y| {
+                (bounds.min.z.floor() as i32..bounds.max.z.ceil() as i32)
+                    .any(|z| self.block((x, y, z)).fluid != FluidState::Empty)
+            })
+        })
     }
 
     #[must_use]

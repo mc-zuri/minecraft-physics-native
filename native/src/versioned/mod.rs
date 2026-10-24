@@ -1312,7 +1312,7 @@ mod tests {
         );
         let initial = SimulationState {
             position: crate::math::Vec3::new(0.5, 0.5, 0.5),
-            velocity: crate::math::Vec3::new(0.0, 0.00510204081632653, 0.0),
+            velocity: crate::math::Vec3::new(0.0, 0.005 / crate::math::java_float(0.8), 0.0),
             gravity: Some(0.08),
             no_gravity: true,
             ..SimulationState::default()
@@ -1471,7 +1471,7 @@ mod tests {
         assert_eq!(rules.water_input_speed, 0.02);
         assert_eq!(rules.water_drag, 0.8);
         assert_eq!(rules.water_sprint_drag, 0.9);
-        assert_eq!(rules.fluid_vertical_drag, 0.98);
+        assert_eq!(rules.fluid_vertical_drag, 0.8);
         assert_eq!(rules.water_movement_efficiency_divisor, 3.0);
         assert!(!rules.water_movement_efficiency_attribute);
         assert!(!rules.fluid_travel_split);

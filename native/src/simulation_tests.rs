@@ -80,6 +80,33 @@ mod tests {
     }
 
     #[test]
+    fn water_keeps_eight_tenths_of_the_vertical_motion() {
+        let mut world = WorldSnapshot::new();
+        for y in 0..3 {
+            world.set_block(
+                (0, y, 0),
+                BlockState {
+                    fluid: FluidState::Water,
+                    ..BlockState::default()
+                },
+            );
+        }
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 0.5, 0.5),
+            velocity: Vec3::new(0.0, 0.1, 0.0),
+            no_gravity: true,
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+
+        tick(&mut state, &world, PhysicsConfig::default());
+
+        assert!(state.in_water);
+        assert_eq!(state.velocity.y, 0.1 * java_float(0.8));
+    }
+
+    #[test]
     fn landing_leaves_a_negative_zero_vertical_velocity() {
         let mut world = WorldSnapshot::new();
         world.set_block(
