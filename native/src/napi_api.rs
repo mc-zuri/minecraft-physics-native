@@ -11,7 +11,7 @@ use crate::projectile::{
 use crate::simulation::{PhysicsConfig, SimulationState};
 use crate::vehicle::{
     tick_boat, tick_boat_in_world, tick_horse, tick_horse_in_world, BoatSimulationState,
-    BoatStatus, HorseSimulationState,
+    BoatStatus, HorseSimulationState, LegacyBoatState,
 };
 use crate::version::MinecraftVersion;
 use crate::versioned;
@@ -402,6 +402,10 @@ pub struct NativeBoatState {
     pub land_friction: Option<f64>,
     pub last_vertical_velocity: Option<f64>,
     pub bounding_box: Option<NativeAabb>,
+    pub speed_multiplier: Option<f64>,
+    pub rider_yaw: Option<f64>,
+    pub rider_forward: Option<f64>,
+    pub rider_strafe: Option<f64>,
 }
 
 #[napi(object)]
@@ -2138,6 +2142,10 @@ pub fn simulate_boat_tick(state: NativeBoatState) -> Result<NativeBoatState> {
         land_friction: None,
         last_vertical_velocity: None,
         bounding_box: None,
+        speed_multiplier: None,
+        rider_yaw: None,
+        rider_forward: None,
+        rider_strafe: None,
     })
 }
 
@@ -3273,6 +3281,14 @@ fn boat_state(value: NativeBoatState) -> Result<BoatSimulationState> {
         collided_vertically: value.collided_vertically.unwrap_or(false),
         on_ground: value.on_ground.unwrap_or(false),
         bounding_box: value.bounding_box.map(Into::into),
+        legacy: LegacyBoatState {
+            speed_multiplier: value
+                .speed_multiplier
+                .unwrap_or(LegacyBoatState::default().speed_multiplier),
+            rider_yaw: value.rider_yaw.unwrap_or(0.0) as f32,
+            rider_forward: value.rider_forward.unwrap_or(0.0) as f32,
+            rider_strafe: value.rider_strafe.unwrap_or(0.0) as f32,
+        },
     };
     if !valid_boat_state(state) {
         return Err(Error::from_reason(
@@ -3318,6 +3334,10 @@ fn native_boat_state(state: BoatSimulationState) -> NativeBoatState {
         land_friction: Some(f64::from(state.land_friction)),
         last_vertical_velocity: Some(state.last_yd),
         bounding_box: state.bounding_box.map(Into::into),
+        speed_multiplier: Some(state.legacy.speed_multiplier),
+        rider_yaw: Some(f64::from(state.legacy.rider_yaw)),
+        rider_forward: Some(f64::from(state.legacy.rider_forward)),
+        rider_strafe: Some(f64::from(state.legacy.rider_strafe)),
     }
 }
 

@@ -465,6 +465,12 @@ export interface NativeBoatState {
     lastVerticalVelocity?: number;
     /** The box the boat keeps before 1.17. */
     boundingBox?: NativeAabb;
+    /** 1.8's EntityBoat.speedMultiplier: how hard its rider's input pushes it (0.07 to 0.35). */
+    speedMultiplier?: number;
+    /** 1.8: the rider's yaw (degrees), moveForward and moveStrafing, which push the boat. */
+    riderYaw?: number;
+    riderForward?: number;
+    riderStrafe?: number;
 }
 
 export interface NativeHorseState {

@@ -1,7 +1,7 @@
 use crate::collision::resolve_motion;
 use crate::collision::{clip_axis, collide, vanilla_equal, Axis, CollisionRules, StepUp};
 use crate::entity::EntityState;
-use crate::math::{Aabb, Vec3};
+use crate::math::{atan2_vanilla, Aabb, Vec3};
 use crate::simulation::{
     block_speed_factor, landing_position, main_supporting_block, moves_position, mth_cos, mth_sin,
     position_of_bounding_box, push_by_fluid, SimulationState,
@@ -64,6 +64,28 @@ pub struct BoatSimulationState {
     pub collided_vertically: bool,
     pub on_ground: bool,
     pub bounding_box: Option<Aabb>,
+    pub legacy: LegacyBoatState,
+}
+
+/// What 1.8's EntityBoat.onUpdate keeps and reads besides the boat: how hard its rider's input
+/// pushes it (speedMultiplier, 0.07 to 0.35) and its rider's yaw, moveForward and moveStrafing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LegacyBoatState {
+    pub speed_multiplier: f64,
+    pub rider_yaw: f32,
+    pub rider_forward: f32,
+    pub rider_strafe: f32,
+}
+
+impl Default for LegacyBoatState {
+    fn default() -> Self {
+        Self {
+            speed_multiplier: 0.07,
+            rider_yaw: 0.0,
+            rider_forward: 0.0,
+            rider_strafe: 0.0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -151,6 +173,10 @@ pub fn tick_boat_in_world(
     world: &WorldSnapshot,
     release: MinecraftVersion,
 ) {
+    if !release.at_least(1, 9, 0) {
+        tick_legacy_boat(state, world, release);
+        return;
+    }
     if !release.at_least(1, 17, 0) && state.bounding_box.is_none() {
         state.bounding_box = Some(boat_box_at(state.position));
     }
@@ -510,6 +536,158 @@ fn control_boat(state: &mut BoatSimulationState, release: MinecraftVersion) {
     let cos = mth_cos(f64::from(radians), release) as f32;
     state.velocity.x += f64::from(sin * acceleration);
     state.velocity.z += f64::from(cos * acceleration);
+}
+
+/// 1.8's boat box: EntityBoat.setSize(1.5F, 0.6F).
+const LEGACY_BOAT_HALF_WIDTH: f64 = 0.75;
+const LEGACY_BOAT_HEIGHT: f32 = 0.6;
+
+/// 1.8's EntityBoat.onUpdate, which the client runs itself for the boat its player rides: the
+/// share of five slices of its box in water floats it, its rider's input pushes it along the
+/// rider's yaw by its speed multiplier, its speed is held to 0.35 while the multiplier grows
+/// toward 0.35 or shrinks toward 0.07, on the ground its motion halves, it moves, keeps 0.99F of
+/// its horizontal motion and 0.95F of its vertical (unless it ran into a wall fast) and turns
+/// toward where it went, by at most 20 degrees.
+fn tick_legacy_boat(
+    state: &mut BoatSimulationState,
+    world: &WorldSnapshot,
+    release: MinecraftVersion,
+) {
+    let bounds = state.bounding_box.unwrap_or_else(|| {
+        Aabb::new(
+            Vec3::new(
+                state.position.x - LEGACY_BOAT_HALF_WIDTH,
+                state.position.y,
+                state.position.z - LEGACY_BOAT_HALF_WIDTH,
+            ),
+            Vec3::new(
+                state.position.x + LEGACY_BOAT_HALF_WIDTH,
+                state.position.y + f64::from(LEGACY_BOAT_HEIGHT),
+                state.position.z + LEGACY_BOAT_HALF_WIDTH,
+            ),
+        )
+    });
+    state.bounding_box = Some(bounds);
+    push_boat_by_fluids(state, world, release);
+    let start = state.position;
+    let mut in_water = 0.0;
+    for slice in 0..5 {
+        let at = |share: f64| bounds.min.y + (bounds.max.y - bounds.min.y) * share / 5.0 - 0.125;
+        let part = Aabb::new(
+            Vec3::new(bounds.min.x, at(f64::from(slice)), bounds.min.z),
+            Vec3::new(bounds.max.x, at(f64::from(slice + 1)), bounds.max.z),
+        );
+        if legacy_water_reaches(world, part) {
+            in_water += 1.0 / 5.0;
+        }
+    }
+    let velocity = &mut state.velocity;
+    let speed_before = velocity.horizontal_length();
+    if in_water < 1.0 {
+        velocity.y += f64::from(0.04_f32) * (in_water * 2.0 - 1.0);
+    } else {
+        if velocity.y < 0.0 {
+            velocity.y /= 2.0;
+        }
+        velocity.y += f64::from(0.007_f32);
+    }
+    let rider = state.legacy;
+    let rider_yaw = rider.rider_yaw + -rider.rider_strafe * 90.0;
+    let radians = f64::from(rider_yaw * std::f32::consts::PI / 180.0);
+    let (multiplier, forward) = (rider.speed_multiplier, f64::from(rider.rider_forward));
+    velocity.x += -radians.sin() * multiplier * forward * f64::from(0.05_f32);
+    velocity.z += radians.cos() * multiplier * forward * f64::from(0.05_f32);
+    let mut speed = velocity.horizontal_length();
+    if speed > 0.35 {
+        let scale = 0.35 / speed;
+        velocity.x *= scale;
+        velocity.z *= scale;
+        speed = 0.35;
+    }
+    let multiplier = &mut state.legacy.speed_multiplier;
+    if speed > speed_before && *multiplier < 0.35 {
+        *multiplier = (*multiplier + (0.35 - *multiplier) / 35.0).min(0.35);
+    } else {
+        *multiplier = (*multiplier - (*multiplier - 0.07) / 35.0).max(0.07);
+    }
+    if state.on_ground {
+        state.velocity = state.velocity.scale(0.5);
+    }
+    let mut body = SimulationState {
+        position: state.position,
+        velocity: state.velocity,
+        half_width: LEGACY_BOAT_HALF_WIDTH,
+        height: f64::from(LEGACY_BOAT_HEIGHT),
+        on_ground: state.on_ground,
+        bounding_box: state.bounding_box,
+        controlled_by_local_instance: true,
+        ..SimulationState::default()
+    };
+    let velocity = state.velocity;
+    move_vehicle(
+        &mut body,
+        world,
+        release,
+        velocity,
+        MoveRules::BOAT,
+        |_, _| {},
+    );
+    state.position = body.position;
+    state.velocity = body.velocity;
+    state.bounding_box = body.bounding_box;
+    state.on_ground = body.on_ground;
+    state.collided_horizontally = body.collided_horizontally;
+    state.collided_vertically = body.collided_vertically;
+    if !state.collided_horizontally || speed_before <= 0.2975 {
+        state.velocity.x *= f64::from(0.99_f32);
+        state.velocity.y *= f64::from(0.95_f32);
+        state.velocity.z *= f64::from(0.99_f32);
+    }
+    let held = f64::from(state.yaw_degrees);
+    let (dx, dz) = (start.x - state.position.x, start.z - state.position.z);
+    let heading = if dx * dx + dz * dz > 0.001 {
+        f64::from((atan2_vanilla(dz, dx) * 180.0 / std::f64::consts::PI) as f32)
+    } else {
+        held
+    };
+    let turn = wrap_degrees(heading - held).clamp(-20.0, 20.0);
+    state.yaw_degrees = (held + turn) as f32 % 360.0;
+    state.yaw = f64::from(state.yaw_degrees).to_radians();
+}
+
+/// 1.8's World.isAABBInMaterial for water: a water block in the cells from the box's corner to
+/// one past it whose surface (its top, less level / 8 under level 8) reaches the box's bottom.
+fn legacy_water_reaches(world: &WorldSnapshot, bounds: Aabb) -> bool {
+    let cells = |min: f64, max: f64| min.floor() as i32..(max + 1.0).floor() as i32;
+    cells(bounds.min.x, bounds.max.x).any(|x| {
+        cells(bounds.min.y, bounds.max.y).any(|y| {
+            cells(bounds.min.z, bounds.max.z).any(|z| {
+                let block = world.block((x, y, z));
+                if block.fluid != FluidState::Water {
+                    return false;
+                }
+                let level = block.fluid_level;
+                let surface = if level < 8 {
+                    f64::from(y + 1) - f64::from(level) / 8.0
+                } else {
+                    f64::from(y + 1)
+                };
+                surface >= bounds.min.y
+            })
+        })
+    })
+}
+
+/// MathHelper.wrapDegrees of a double: within [-180, 180).
+fn wrap_degrees(degrees: f64) -> f64 {
+    let mut wrapped = degrees % 360.0;
+    if wrapped >= 180.0 {
+        wrapped -= 360.0;
+    }
+    if wrapped < -180.0 {
+        wrapped += 360.0;
+    }
+    wrapped
 }
 
 /// What a vehicle's Entity.move depends on besides its body: a living entity bounces off slime
@@ -1277,6 +1455,52 @@ mod tests {
         let kept = boat.bounding_box.expect("a boat keeps its box before 1.17");
         assert_eq!(kept.min.y, boat.position.y);
         assert_eq!(kept.max.y - kept.min.y, 0.5625);
+    }
+
+    #[test]
+    fn legacy_boat_floats_by_its_slices_in_water_and_goes_by_its_riders_input() {
+        let mut world = WorldSnapshot::new();
+        for x in -3..=3 {
+            for z in 2122..=2128 {
+                world.set_block((x, 99, z), water_source());
+                world.set_block((x, 100, z), water_source());
+            }
+        }
+        let mut boat = BoatSimulationState {
+            position: Vec3::new(0.5, 100.89859999937713, 2125.5),
+            velocity: Vec3::new(0.0, 0.014819999392181656, 0.0),
+            yaw_degrees: -90.0,
+            bounding_box: Some(Aabb::new(
+                Vec3::new(-0.25, 100.89859999937713, 2124.75),
+                Vec3::new(1.25, 101.49860002321898, 2126.25),
+            )),
+            ..BoatSimulationState::default()
+        };
+        let v1_8_8 = MinecraftVersion::new(1, 8, 8);
+
+        tick_boat_in_world(&mut boat, &world, v1_8_8);
+
+        assert_eq!(boat.position, Vec3::new(0.5, 100.90541999894812, 2125.5));
+        assert_eq!(boat.velocity, Vec3::new(0.0, 0.006478999511145081, 0.0));
+
+        boat.legacy.rider_yaw = 270.0;
+        boat.legacy.rider_forward = 0.98;
+        tick_boat_in_world(&mut boat, &world, v1_8_8);
+
+        assert_eq!(
+            boat.position,
+            Vec3::new(0.5034300001178682, 100.90389899863808, 2125.500000000041)
+        );
+        assert_eq!(
+            boat.velocity,
+            Vec3::new(
+                0.003395700149400534,
+                -0.0014449502764071972,
+                4.0493318341968365e-11
+            )
+        );
+        assert_eq!(boat.yaw_degrees, -90.0);
+        assert!(boat.legacy.speed_multiplier > 0.07);
     }
 
     #[test]
