@@ -783,6 +783,37 @@ mod tests {
     }
 
     #[test]
+    fn minor_horizontal_collision_compares_the_movement_with_the_input_direction() {
+        let mut world = WorldSnapshot::new();
+        for position in [(0, 0, 1), (1, 0, 1)] {
+            world.set_block(
+                position,
+                BlockState {
+                    shape: Some(BlockShape::full_block()),
+                    ..BlockState::default()
+                },
+            );
+        }
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 0.0, 0.5),
+            velocity: Vec3::new(0.3, 0.0, 0.25),
+            input: Vec3::new(0.0, 0.0, 1.0),
+            half_width: 0.3,
+            height: 1.8,
+            is_player: true,
+            minor_horizontal_collision_supported: true,
+            no_gravity: true,
+            ..SimulationState::default()
+        };
+
+        let result = tick(&mut state, &world, PhysicsConfig::default());
+
+        assert!(result.displacement.z < 0.25);
+        assert!(state.collided_horizontally);
+        assert!(!state.minor_horizontal_collision);
+    }
+
+    #[test]
     fn falling_state_lands_on_full_block() {
         let mut world = WorldSnapshot::new();
         world.set_block(

@@ -1276,6 +1276,26 @@ fn moves_position(requested: Vec3, movement: Vec3, release: MinecraftVersion) ->
         || (release.at_least(1, 21, 2) && requested.length_squared() - length_squared < 1.0e-7)
 }
 
+fn horizontal_collision_is_minor(
+    state: &SimulationState,
+    movement: Vec3,
+    release: MinecraftVersion,
+) -> bool {
+    let input = movement_input(state, release);
+    let sin = mth_sin(state.yaw, release);
+    let cos = mth_cos(state.yaw, release);
+    let input_x = input.x * cos - input.z * sin;
+    let input_z = input.z * cos + input.x * sin;
+    let input_length_squared = input_x * input_x + input_z * input_z;
+    let movement_length_squared = movement.x * movement.x + movement.z * movement.z;
+    if input_length_squared < 9.999999747378752e-6 || movement_length_squared < 9.999999747378752e-6
+    {
+        return false;
+    }
+    let dot = input_x * movement.x + input_z * movement.z;
+    (dot / (input_length_squared * movement_length_squared).sqrt()).acos() < 0.13962633907794952
+}
+
 fn position_after_move(
     position: Vec3,
     bounds: Aabb,
@@ -2018,20 +2038,10 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     let z_collision = !vanilla_equal(desired.z, displacement.z);
     if !state.no_physics {
         state.collided_horizontally = x_collision || z_collision;
-        state.minor_horizontal_collision = false;
-        if state.minor_horizontal_collision_supported
+        state.minor_horizontal_collision = state.minor_horizontal_collision_supported
             && state.is_player
             && state.collided_horizontally
-        {
-            let input_length_squared = desired.x * desired.x + desired.z * desired.z;
-            let displacement_length_squared =
-                displacement.x * displacement.x + displacement.z * displacement.z;
-            if input_length_squared >= 1.0e-5 && displacement_length_squared >= 1.0e-5 {
-                let cosine = (desired.x * displacement.x + desired.z * displacement.z)
-                    / (input_length_squared * displacement_length_squared).sqrt();
-                state.minor_horizontal_collision = cosine.clamp(-1.0, 1.0).acos() < 0.13962634;
-            }
-        }
+            && horizontal_collision_is_minor(state, displacement, rules.release);
         if desired.y != 0.0 || state.controlled_by_local_instance {
             state.collided_vertically = y_collision;
             state.vertical_collision_below = state.collided_vertically && desired.y < 0.0;
