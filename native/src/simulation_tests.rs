@@ -1866,21 +1866,34 @@ mod tests {
     }
 
     #[test]
-    fn sneaking_disables_sprint_multiplier() {
+    fn sprinting_keeps_its_speed_modifier_while_sneaking() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
         let mut state = SimulationState {
-            position: Vec3::new(0.0, 2.0, 0.0),
+            position: Vec3::new(0.5, 1.0, 0.5),
+            velocity: Vec3::new(0.0, -0.08 * java_float(0.98), 0.0),
             input: Vec3::new(1.0, 0.0, 0.0),
+            on_ground: true,
+            is_player: true,
             sprinting: true,
             sneaking: true,
-            no_physics: true,
+            moving_slowly: Some(false),
             half_width: 0.3,
             height: 1.8,
             ..SimulationState::default()
         };
 
-        tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
+        tick(&mut state, &world, PhysicsConfig::default());
 
-        assert!(state.position.x < 0.04);
+        let sprint_speed = java_float(0.1 * (1.0 + 0.30000001192092896));
+        assert_eq!(state.position.x, 0.5 + java_float(0.98) * sprint_speed);
     }
 
     #[test]

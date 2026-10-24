@@ -1242,12 +1242,11 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         let level = f64::from(state.soul_speed);
         base_speed += 0.0405 + (level - 1.0) * 0.0105;
     }
-    let sprint_active = state.sprinting && !state.sneaking && !state.using_item;
     let movement_speed = movement_speed_attribute(
         base_speed,
         state.speed_effect_amplifier,
         state.slowness_effect_amplifier,
-        sprint_active,
+        state.sprinting,
         config.sprint_multiplier,
         rules.release,
     );
@@ -1631,7 +1630,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     }
     let horizontal_drag = if gliding { 1.0 } else { ground_inertia };
     let liquid_horizontal_drag = if state.in_water {
-        let mut water_drag = if sprint_active {
+        let mut water_drag = if state.sprinting {
             java_float(rules.water_sprint_drag)
         } else {
             java_float(rules.water_drag)
@@ -1666,7 +1665,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             fluid_jump_threshold,
             rules,
             falling_in_fluid,
-            sprint_active,
+            state.sprinting,
         );
     } else {
         apply_legacy_fluid_travel_vertical(
@@ -1676,7 +1675,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             fluid_jump_threshold,
             rules,
             falling_in_fluid,
-            sprint_active,
+            state.sprinting,
         );
     }
     if !matches!(fluid, FluidState::Empty)
