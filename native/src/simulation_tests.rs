@@ -779,6 +779,41 @@ mod tests {
     }
 
     #[test]
+    fn any_cut_of_a_horizontal_movement_is_a_collision_before_1_14() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (-1, 0, 0),
+            BlockState {
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        let collides = |release: MinecraftVersion| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.3, 0.0, 0.5),
+                velocity: Vec3::new(-5.0e-6, 0.0, 0.0136),
+                half_width: 0.3,
+                height: 1.8,
+                no_gravity: true,
+                ..SimulationState::default()
+            };
+            let config = PhysicsConfig {
+                negligible_velocity: 0.0,
+                ..PhysicsConfig::default()
+            };
+            let rules = VersionPhysicsRules {
+                release,
+                ..VersionPhysicsRules::default()
+            };
+            tick_with_rules(&mut state, &world, config, rules);
+            state.collided_horizontally
+        };
+
+        assert!(collides(MinecraftVersion::new(1, 13, 2)));
+        assert!(!collides(MinecraftVersion::new(1, 14, 4)));
+    }
+
+    #[test]
     fn a_corner_collision_stops_both_axes_before_1_14() {
         let mut world = WorldSnapshot::new();
         for position in [(1, 0, 0), (0, 0, 1)] {

@@ -2040,9 +2040,16 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.fall_distance = 0.0;
         reset_fall_distance = true;
     }
-    let x_collision = !vanilla_equal(desired.x, displacement.x);
+    let horizontal_collision = |requested: f64, moved: f64| {
+        if rules.release.at_least(1, 14, 0) {
+            !vanilla_equal(requested, moved)
+        } else {
+            requested != moved
+        }
+    };
+    let x_collision = horizontal_collision(desired.x, displacement.x);
     let y_collision = desired.y != displacement.y;
-    let z_collision = !vanilla_equal(desired.z, displacement.z);
+    let z_collision = horizontal_collision(desired.z, displacement.z);
     if !state.no_physics {
         state.collided_horizontally = x_collision || z_collision;
         state.minor_horizontal_collision = state.minor_horizontal_collision_supported
