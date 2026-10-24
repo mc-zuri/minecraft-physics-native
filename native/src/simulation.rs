@@ -930,6 +930,45 @@ fn flying_speed(state: &SimulationState, release: MinecraftVersion) -> f64 {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FluidJump {
+    Swim,
+    Ground,
+    None,
+}
+
+/// LivingEntity.aiStep's jump: swim up (jumpInLiquid) in fluid deeper than
+/// the jump threshold or off the ground, else jump from the ground. Before
+/// 1.16 the water height is held against 0.4 and any lava swims up.
+fn fluid_jump(
+    state: &SimulationState,
+    water_height: f64,
+    lava_height: f64,
+    threshold: f64,
+    release: MinecraftVersion,
+) -> FluidJump {
+    if !release.at_least(1, 16, 0) {
+        let in_water = water_height > 0.0;
+        return if in_water && (!state.on_ground || water_height > 0.4) || state.in_lava {
+            FluidJump::Swim
+        } else if state.on_ground || in_water && water_height <= 0.4 {
+            FluidJump::Ground
+        } else {
+            FluidJump::None
+        };
+    }
+    let height = if state.in_lava { lava_height } else { water_height };
+    let in_water = state.in_water && height > 0.0;
+    let swims = !state.on_ground || height > threshold;
+    if (in_water || state.in_lava) && swims {
+        FluidJump::Swim
+    } else if state.on_ground || in_water && height <= threshold {
+        FluidJump::Ground
+    } else {
+        FluidJump::None
+    }
+}
+
 fn jump_power(
     state: &SimulationState,
     config: PhysicsConfig,
@@ -1495,7 +1534,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     } else {
         lava.height
     };
-    let fluid_jump_threshold = if state.height - 0.1 < 0.4 { 0.0 } else { 0.4 };
+    let fluid_jump_threshold = if java_float(eye_height) < 0.4 { 0.0 } else { 0.4 };
     let head_position = (
         state.position.x.floor() as i32,
         (state.position.y + state.height - 0.1).floor() as i32,
@@ -1569,13 +1608,14 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     };
     let jumping = state.jump_requested
         && !(state.is_player && state.flying && rules.release.at_least(1, 16, 0));
-    if matches!(
-        fluid,
-        FluidState::Water | FluidState::Waterlogged | FluidState::Lava
-    ) && jumping
-    {
+    let jump = if jumping {
+        fluid_jump(state, water.height, lava.height, fluid_jump_threshold, rules.release)
+    } else {
+        FluidJump::None
+    };
+    if jump == FluidJump::Swim {
         state.velocity.y += 0.03999999910593033;
-    } else if state.on_ground && jumping && state.jump_ticks == 0 {
+    } else if jump == FluidJump::Ground && state.jump_ticks == 0 {
         let block_jump_factor = if world.effect_at(body_position) == BlockEffect::Honey
             || world.effect_at(below_position) == BlockEffect::Honey
         {

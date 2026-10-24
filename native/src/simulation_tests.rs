@@ -2637,6 +2637,66 @@ mod tests {
         assert!(state.velocity.y > 0.02);
     }
 
+    fn jump_on_ground_in_fluid(
+        fluid: FluidState,
+        fluid_level: u8,
+        eye_height: f64,
+        release: MinecraftVersion,
+    ) -> f64 {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        world.set_block(
+            (0, 1, 0),
+            BlockState {
+                fluid,
+                fluid_level,
+                fluid_source: fluid_level == 0,
+                ..BlockState::default()
+            },
+        );
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 1.0, 0.5),
+            on_ground: true,
+            jump_requested: true,
+            half_width: 0.3,
+            height: 1.8,
+            eye_height: Some(eye_height),
+            ..SimulationState::default()
+        };
+        let rules = VersionPhysicsRules {
+            release,
+            ..VersionPhysicsRules::default()
+        };
+        tick_with_rules(&mut state, &world, PhysicsConfig::default(), rules);
+        state.velocity.y
+    }
+
+    #[test]
+    fn grounded_entities_jump_out_of_fluid_up_to_the_jump_threshold() {
+        let release = MinecraftVersion::new(1, 21, 1);
+        let jumped = java_float(0.42) * java_float(0.8) - 0.08 / 16.0;
+        let swam = 0.03999999910593033 * java_float(0.8) - 0.08 / 16.0;
+
+        assert_eq!(jump_on_ground_in_fluid(FluidState::Water, 6, 1.62, release), jumped);
+        assert_eq!(jump_on_ground_in_fluid(FluidState::Water, 0, 1.62, release), swam);
+        assert_eq!(jump_on_ground_in_fluid(FluidState::Water, 6, 0.3, release), swam);
+    }
+
+    #[test]
+    fn grounded_entities_swim_up_in_any_lava_before_1_16() {
+        let shallow_lava = |release| jump_on_ground_in_fluid(FluidState::Lava, 6, 1.62, release);
+
+        assert!(shallow_lava(MinecraftVersion::new(1, 15, 2)) < 0.05);
+        assert!(shallow_lava(MinecraftVersion::new(1, 16, 0)) > 0.3);
+    }
+
     #[test]
     fn attributes_and_effects_modify_movement() {
         let mut state = SimulationState {
