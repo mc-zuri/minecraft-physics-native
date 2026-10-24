@@ -846,9 +846,9 @@ impl NativeWorld {
             Vec3::new(shape.min_x, shape.min_y, shape.min_z),
             Vec3::new(shape.max_x, shape.max_y, shape.max_z),
         );
-        if !valid_shape(bounds, shape.slipperiness) {
+        if !valid_collision_shape(bounds, shape.slipperiness) {
             return Err(Error::from_reason(
-                "block shape bounds must be finite, ordered, and within one block",
+                "block shape bounds must be finite, ordered, and reach at most one block out of their own",
             ));
         }
         self.inner.set_block(
@@ -944,9 +944,9 @@ impl NativeWorld {
                 Vec3::new(shape.min_x, shape.min_y, shape.min_z),
                 Vec3::new(shape.max_x, shape.max_y, shape.max_z),
             );
-            if !valid_shape(bounds, shape.slipperiness) {
+            if !valid_collision_shape(bounds, shape.slipperiness) {
                 return Err(Error::from_reason(
-                    "block shape bounds must be finite, ordered, and within one block",
+                    "block shape bounds must be finite, ordered, and reach at most one block out of their own",
                 ));
             }
             converted.push(BlockShape {
@@ -2633,6 +2633,30 @@ mod tests {
     }
 
     #[test]
+    fn collision_boxes_may_reach_one_block_out_of_their_own() {
+        let mut world = NativeWorld::new();
+        world
+            .apply_block_updates(vec![
+                shape_update((0, 0, 0), block_shape((0.375, 0.0, 0.375), (0.625, 1.5, 0.625), 0)),
+                shape_update((0, 0, 0), block_shape((0.375, 0.375, 0.0), (0.625, 1.5, 0.375), 0)),
+            ])
+            .expect("a fence is 1.5 blocks tall");
+        assert_eq!(
+            world
+                .collision_shapes(vec3(0.0, 1.2, 0.0), vec3(1.0, 2.0, 1.0))
+                .expect("valid query")
+                .len(),
+            2
+        );
+        assert!(world
+            .apply_block_updates(vec![shape_update(
+                (0, 0, 0),
+                block_shape((0.0, 0.0, 0.0), (1.0, 2.5, 1.0), 0),
+            )])
+            .is_err());
+    }
+
+    #[test]
     fn versioned_entity_push_updates_both_velocities() {
         let result = simulate_versioned_entity_push(
             "1.21.1".to_string(),
@@ -3169,13 +3193,21 @@ fn native_boat_state(state: BoatSimulationState) -> NativeBoatState {
 }
 
 fn valid_shape(bounds: crate::math::Aabb, slipperiness: f64) -> bool {
+    valid_shape_within(bounds, slipperiness, 0.0, 1.0)
+}
+
+fn valid_collision_shape(bounds: crate::math::Aabb, slipperiness: f64) -> bool {
+    valid_shape_within(bounds, slipperiness, -1.0, 2.0)
+}
+
+fn valid_shape_within(bounds: crate::math::Aabb, slipperiness: f64, min: f64, max: f64) -> bool {
     valid_bounds(bounds)
-        && bounds.min.x >= 0.0
-        && bounds.min.y >= 0.0
-        && bounds.min.z >= 0.0
-        && bounds.max.x <= 1.0
-        && bounds.max.y <= 1.0
-        && bounds.max.z <= 1.0
+        && bounds.min.x >= min
+        && bounds.min.y >= min
+        && bounds.min.z >= min
+        && bounds.max.x <= max
+        && bounds.max.y <= max
+        && bounds.max.z <= max
         && slipperiness.is_finite()
         && slipperiness >= 0.0
 }
@@ -3354,9 +3386,9 @@ fn block_update_state(update: &NativeBlockUpdate) -> Result<BlockState> {
         (bounds, value.slipperiness, value.effect.unwrap_or(0))
     });
     if let Some((bounds, slipperiness, effect)) = shape {
-        if !valid_shape(bounds, slipperiness) {
+        if !valid_collision_shape(bounds, slipperiness) {
             return Err(Error::from_reason(
-                "block shape bounds must be finite, ordered, and within one block",
+                "block shape bounds must be finite, ordered, and reach at most one block out of their own",
             ));
         }
         let outline_shape = if let Some(value) = update.outline_shape.as_ref() {

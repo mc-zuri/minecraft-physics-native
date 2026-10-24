@@ -798,16 +798,13 @@ impl WorldSnapshot {
 
     pub fn collision_shapes_into(&self, query: Aabb, shapes: &mut Vec<Aabb>) {
         shapes.clear();
-        let min_x = query.min.x.floor() as i32;
-        let max_x = query.max.x.ceil() as i32;
-        let min_y = query.min.y.floor() as i32;
-        let max_y = query.max.y.ceil() as i32;
-        let min_z = query.min.z.floor() as i32;
-        let max_z = query.max.z.ceil() as i32;
-        let min_chunk_x = min_x.div_euclid(16);
-        let max_chunk_x = (max_x - 1).div_euclid(16);
-        let min_chunk_z = min_z.div_euclid(16);
-        let max_chunk_z = (max_z - 1).div_euclid(16);
+        let cells_x = query.min.x.floor() as i32..query.max.x.ceil() as i32;
+        let cells_y = query.min.y.floor() as i32..query.max.y.ceil() as i32;
+        let cells_z = query.min.z.floor() as i32..query.max.z.ceil() as i32;
+        let min_chunk_x = (cells_x.start - 1).div_euclid(16);
+        let max_chunk_x = cells_x.end.div_euclid(16);
+        let min_chunk_z = (cells_z.start - 1).div_euclid(16);
+        let max_chunk_z = cells_z.end.div_euclid(16);
         for chunk_x in min_chunk_x..=max_chunk_x {
             for chunk_z in min_chunk_z..=max_chunk_z {
                 if !self.is_chunk_loaded(chunk_x, chunk_z) {
@@ -815,32 +812,24 @@ impl WorldSnapshot {
                 }
                 if let Some(positions) = self.chunks.get(&(chunk_x, chunk_z)) {
                     for &(x, y, z) in positions {
-                        if x >= min_x
-                            && x < max_x
-                            && y >= min_y
-                            && y < max_y
-                            && z >= min_z
-                            && z < max_z
-                        {
-                            if let Some(shape) = self.block((x, y, z)).shape {
-                                if is_non_empty_shape(shape.bounds) {
-                                    shapes.push(
-                                        shape
-                                            .bounds
-                                            .translated(Vec3::new(x as f64, y as f64, z as f64)),
-                                    );
-                                }
-                            }
-                            if let Some(extra_shapes) = self.extra_shapes.get(&(x, y, z)) {
-                                shapes.extend(extra_shapes.iter().filter_map(|shape| {
-                                    is_non_empty_shape(shape.bounds).then(|| {
-                                        shape
-                                            .bounds
-                                            .translated(Vec3::new(x as f64, y as f64, z as f64))
-                                    })
-                                }));
-                            }
+                        let distance = cells_outside(x, &cells_x)
+                            + cells_outside(y, &cells_y)
+                            + cells_outside(z, &cells_z);
+                        let inside = distance == 0;
+                        // As in vanilla's BlockCollisions, a block next to the queried cells only
+                        // collides through a shape larger than a block (fences, walls).
+                        let bordering =
+                            distance == 1 && self.has_large_collision_shape((x, y, z));
+                        if !inside && !bordering {
+                            continue;
                         }
+                        let offset = Vec3::new(x as f64, y as f64, z as f64);
+                        shapes.extend(
+                            self.block_collision_shapes((x, y, z))
+                                .filter(|shape| is_non_empty_shape(shape.bounds))
+                                .map(|shape| shape.bounds.translated(offset))
+                                .filter(|bounds| inside || bounds.intersects(query)),
+                        );
                     }
                 }
             }
@@ -855,6 +844,40 @@ impl WorldSnapshot {
                 .then_with(|| left.max.y.total_cmp(&right.max.y))
                 .then_with(|| left.max.z.total_cmp(&right.max.z))
         });
+    }
+
+    fn block_collision_shapes(
+        &self,
+        position: BlockPosition,
+    ) -> impl Iterator<Item = BlockShape> + '_ {
+        self.block(position).shape.into_iter().chain(
+            self.extra_shapes
+                .get(&position)
+                .into_iter()
+                .flatten()
+                .copied(),
+        )
+    }
+
+    fn has_large_collision_shape(&self, position: BlockPosition) -> bool {
+        self.block_collision_shapes(position).any(|shape| {
+            shape.bounds.min.x < 0.0
+                || shape.bounds.min.y < 0.0
+                || shape.bounds.min.z < 0.0
+                || shape.bounds.max.x > 1.0
+                || shape.bounds.max.y > 1.0
+                || shape.bounds.max.z > 1.0
+        })
+    }
+}
+
+fn cells_outside(cell: i32, cells: &std::ops::Range<i32>) -> i32 {
+    if cell < cells.start {
+        cells.start - cell
+    } else if cell >= cells.end {
+        cell - cells.end + 1
+    } else {
+        0
     }
 }
 
@@ -898,6 +921,37 @@ mod tests {
 
         assert_eq!(shapes.len(), 1);
         assert_eq!(shapes[0].min, Vec3::new(2.0, 3.0, 4.0));
+    }
+
+    fn block_with_box(min: Vec3, max: Vec3) -> BlockState {
+        BlockState {
+            id: 1,
+            shape: Some(BlockShape {
+                bounds: Aabb::new(min, max),
+                ..BlockShape::full_block()
+            }),
+            ..BlockState::default()
+        }
+    }
+
+    #[test]
+    fn collides_with_shapes_reaching_out_of_the_block_below() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            block_with_box(Vec3::new(0.375, 0.0, 0.375), Vec3::new(0.625, 1.5, 0.625)),
+        );
+        world.set_block((2, 0, 0), block_with_box(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0)));
+
+        let above_fence = Aabb::new(Vec3::new(0.2, 1.2, 0.2), Vec3::new(0.8, 3.0, 0.8));
+        assert_eq!(
+            world.collision_shapes(above_fence),
+            vec![Aabb::new(Vec3::new(0.375, 0.0, 0.375), Vec3::new(0.625, 1.5, 0.625))]
+        );
+        let above_full_block = Aabb::new(Vec3::new(2.2, 1.2, 0.2), Vec3::new(2.8, 3.0, 0.8));
+        assert!(world.collision_shapes(above_full_block).is_empty());
+        let beside_fence_top = Aabb::new(Vec3::new(0.7, 1.2, 0.2), Vec3::new(1.3, 3.0, 0.8));
+        assert!(world.collision_shapes(beside_fence_top).is_empty());
     }
 
     #[test]
