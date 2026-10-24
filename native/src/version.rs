@@ -71,7 +71,7 @@ impl MinecraftVersion {
         self.at_least(1, 18, 0)
     }
 
-    const fn at_least(self, major: u16, minor: u16, patch: u16) -> bool {
+    pub const fn at_least(self, major: u16, minor: u16, patch: u16) -> bool {
         self.major > major
             || (self.major == major
                 && (self.minor > minor || (self.minor == minor && self.patch >= patch)))

@@ -32,6 +32,8 @@ export interface NativeSimulationState {
     jumpRequested?: boolean;
     jumpTicks?: number;
     sprinting?: boolean;
+    /** Sprinting at the end of the previous tick: the airborne speed before 1.19.4 follows it. */
+    wasSprinting?: boolean;
     inWater?: boolean;
     firstTick?: boolean;
     inLava?: boolean;

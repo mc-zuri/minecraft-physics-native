@@ -7,6 +7,7 @@ mod tests {
     };
     use crate::world::{BlockEffect, BlockShape, BlockState, FluidState, WorldSnapshot};
     use crate::math::java_float;
+    use crate::version::MinecraftVersion;
     use crate::{Aabb, Vec3};
 
     #[test]
@@ -322,7 +323,7 @@ mod tests {
 
         let horizontal_speed =
             (state.velocity.x * state.velocity.x + state.velocity.z * state.velocity.z).sqrt();
-        assert!((horizontal_speed - 0.1 * java_float(0.98)).abs() < 1e-12);
+        assert!((horizontal_speed - java_float(0.02) * java_float(0.98)).abs() < 1e-12);
     }
 
     #[test]
@@ -338,6 +339,7 @@ mod tests {
     fn slowness_attribute_modifier_is_applied_before_movement_drag() {
         let mut state = SimulationState {
             input: Vec3::new(0.0, 0.0, 1.0),
+            on_ground: true,
             no_gravity: true,
             slowness_effect_amplifier: Some(1),
             ..SimulationState::default()
@@ -345,8 +347,9 @@ mod tests {
 
         tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
 
-        // Base 0.1 * (1 - 0.30), then the vanilla 0.98 air drag.
-        assert!((state.velocity.z - 0.1 * 0.7 * java_float(0.98)).abs() < 1e-12);
+        // Base 0.1 * (1 - 0.30), then the drag of the default 0.6 friction.
+        let ground_drag = java_float(java_float(0.6) * java_float(0.98));
+        assert!((state.velocity.z - java_float(0.1 * 0.7) * ground_drag).abs() < 1e-12);
     }
 
     #[test]
@@ -369,7 +372,7 @@ mod tests {
 
         // clamp(1 - (1 - 0.98) * 0.5, 0, 1) == 0.99, in float.
         let drag = f64::from(1.0_f32 - (1.0_f32 - 0.98_f32) * 0.5_f32);
-        assert!((state.velocity.z - 0.1 * drag).abs() < 1e-12);
+        assert!((state.velocity.z - java_float(0.02) * drag).abs() < 1e-12);
     }
 
     #[test]
@@ -391,7 +394,7 @@ mod tests {
             rules,
         );
 
-        assert!((state.velocity.z - 0.1).abs() < 1e-12);
+        assert!((state.velocity.z - java_float(0.02)).abs() < 1e-12);
     }
 
     #[test]
@@ -423,12 +426,93 @@ mod tests {
         assert!(state.velocity.z < 0.1);
     }
 
+    fn airborne_displacement(state: SimulationState, release: MinecraftVersion) -> f64 {
+        let mut state = SimulationState {
+            input: Vec3::new(1.0, 0.0, 0.0),
+            no_gravity: true,
+            ..state
+        };
+        let rules = VersionPhysicsRules {
+            release,
+            ..VersionPhysicsRules::default()
+        };
+        tick_with_rules(&mut state, &WorldSnapshot::new(), PhysicsConfig::default(), rules);
+        state.position.x
+    }
+
+    #[test]
+    fn airborne_players_accelerate_with_the_flying_speed() {
+        let player = SimulationState {
+            is_player: true,
+            ..SimulationState::default()
+        };
+        let sprinting = SimulationState {
+            sprinting: true,
+            ..player
+        };
+        let modern = MinecraftVersion::new(1, 21, 1);
+
+        assert_eq!(airborne_displacement(player, modern), java_float(0.02));
+        assert_eq!(
+            airborne_displacement(sprinting, modern),
+            f64::from(0.025999999_f32)
+        );
+        assert_eq!(
+            airborne_displacement(SimulationState::default(), modern),
+            java_float(0.02)
+        );
+    }
+
+    #[test]
+    fn airborne_sprint_speed_lags_a_tick_before_1_19_4() {
+        let sprinted_before = SimulationState {
+            is_player: true,
+            was_sprinting: true,
+            ..SimulationState::default()
+        };
+        let started_sprinting = SimulationState {
+            is_player: true,
+            sprinting: true,
+            ..SimulationState::default()
+        };
+
+        assert_eq!(
+            airborne_displacement(started_sprinting, MinecraftVersion::new(1, 19, 2)),
+            java_float(0.02)
+        );
+        assert_eq!(
+            airborne_displacement(sprinted_before, MinecraftVersion::new(1, 19, 2)),
+            f64::from(0.02_f32 + 0.006_f32)
+        );
+        assert_eq!(
+            airborne_displacement(sprinted_before, MinecraftVersion::new(1, 14, 4)),
+            f64::from((f64::from(0.02_f32) + 0.005999999865889549) as f32)
+        );
+    }
+
+    #[test]
+    fn creative_flight_doubles_the_flying_speed_while_sprinting() {
+        let flying = SimulationState {
+            is_player: true,
+            flying: true,
+            flying_speed: 0.05,
+            sprinting: true,
+            ..SimulationState::default()
+        };
+
+        assert_eq!(
+            airborne_displacement(flying, MinecraftVersion::new(1, 21, 1)),
+            f64::from(0.05_f32 * 2.0)
+        );
+    }
+
     #[test]
     fn rotates_input_by_yaw() {
         let mut state = SimulationState {
             position: Vec3::new(0.0, 2.0, 0.0),
             yaw: std::f64::consts::FRAC_PI_2,
             input: Vec3::new(1.0, 0.0, 0.0),
+            on_ground: true,
             half_width: 0.3,
             height: 1.8,
             ..SimulationState::default()
@@ -1549,6 +1633,7 @@ mod tests {
             input: Vec3::new(1.0, 0.0, 0.0),
             sneaking: true,
             sneaking_speed: 0.45,
+            on_ground: true,
             no_physics: true,
             no_gravity: true,
             half_width: 0.3,
@@ -1558,7 +1643,7 @@ mod tests {
 
         tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
 
-        assert!((state.position.x - 0.045).abs() < 1.0e-12);
+        assert!((state.position.x - java_float(0.1) * 0.45).abs() < 1.0e-12);
     }
 
     #[test]
@@ -1713,6 +1798,7 @@ mod tests {
             movement_speed: 0.2,
             speed_effect_amplifier: Some(0),
             slowness_effect_amplifier: Some(0),
+            on_ground: true,
             half_width: 0.3,
             height: 1.8,
             ..SimulationState::default()

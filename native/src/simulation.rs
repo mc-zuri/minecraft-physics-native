@@ -232,6 +232,7 @@ pub struct SimulationState {
     pub jump_requested: bool,
     pub jump_ticks: u32,
     pub sprinting: bool,
+    pub was_sprinting: bool,
     pub in_water: bool,
     pub in_lava: bool,
     pub ultra_warm: bool,
@@ -313,6 +314,7 @@ impl From<EntityState> for SimulationState {
             jump_requested: false,
             jump_ticks: 0,
             sprinting: false,
+            was_sprinting: false,
             in_water: value.flags.in_water,
             in_lava: value.flags.in_lava,
             ultra_warm: false,
@@ -621,6 +623,30 @@ fn fluid_falling_gravity_enabled(
         rules.gravity != 0.0
     } else {
         !state.no_gravity
+    }
+}
+
+fn flying_speed(state: &SimulationState, release: MinecraftVersion) -> f64 {
+    if state.flying && !state.passenger {
+        let speed = state.flying_speed as f32;
+        return f64::from(if state.sprinting { speed * 2.0 } else { speed });
+    }
+    if !state.is_player {
+        return java_float(0.02);
+    }
+    let sprinting = if release.at_least(1, 19, 4) {
+        state.sprinting
+    } else {
+        state.was_sprinting
+    };
+    if !sprinting {
+        java_float(0.02)
+    } else if release.at_least(1, 19, 4) {
+        f64::from(0.025999999_f32)
+    } else if release.at_least(1, 18, 2) {
+        f64::from(0.02_f32 + 0.006_f32)
+    } else {
+        f64::from((f64::from(0.02_f32) + 0.005999999865889549) as f32)
     }
 }
 
@@ -1031,9 +1057,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         // applying water drag and the falling adjustment.
         state.velocity.y = 0.2;
     }
-    let mut base_speed = if state.flying && state.flying_speed > 0.0 {
-        state.flying_speed
-    } else if state.movement_speed > 0.0 {
+    let mut base_speed = if state.movement_speed > 0.0 {
         state.movement_speed
     } else {
         config.movement_speed
@@ -1042,10 +1066,18 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         let level = f64::from(state.soul_speed);
         base_speed += 0.0405 + (level - 1.0) * 0.0105;
     }
+    let sprint_active = state.sprinting && !state.sneaking && !state.using_item;
+    let movement_speed = base_speed
+        * movement_speed_multiplier(
+            state.speed_effect_amplifier,
+            state.slowness_effect_amplifier,
+            sprint_active,
+            config.sprint_multiplier,
+        );
     let mut fluid_input_speed = match fluid {
         FluidState::Water | FluidState::Waterlogged => java_float(rules.water_input_speed),
         FluidState::Lava => java_float(rules.lava_input_speed),
-        FluidState::Empty => base_speed,
+        FluidState::Empty => movement_speed,
     };
     if matches!(fluid, FluidState::Water | FluidState::Waterlogged) {
         let mut water_efficiency = if rules.water_movement_efficiency_attribute {
@@ -1057,7 +1089,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             water_efficiency *= 0.5;
         }
         if water_efficiency > 0.0 {
-            fluid_input_speed += (base_speed - fluid_input_speed) * water_efficiency;
+            fluid_input_speed += (movement_speed - fluid_input_speed) * water_efficiency;
         }
     }
     let block_friction = {
@@ -1090,14 +1122,13 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     };
     let input_speed = if matches!(fluid, FluidState::Empty) {
         if state.on_ground {
-            friction_influenced_speed(base_speed, block_friction)
+            friction_influenced_speed(movement_speed, block_friction)
         } else {
-            base_speed
+            flying_speed(state, rules.release)
         }
     } else {
         fluid_input_speed
     };
-    let sprint_active = state.sprinting && !state.sneaking && !state.using_item;
     let sneaking_speed = if state.sneaking && state.sneaking_speed > 0.0 {
         state.sneaking_speed
     } else if state.sneaking {
@@ -1105,14 +1136,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     } else {
         1.0
     };
-    let input_speed = input_speed
-        * movement_speed_multiplier(
-            state.speed_effect_amplifier,
-            state.slowness_effect_amplifier,
-            sprint_active,
-            config.sprint_multiplier,
-        )
-        * sneaking_speed;
+    let input_speed = input_speed * sneaking_speed;
     let input_speed = input_speed * if state.using_item { 0.2 } else { 1.0 };
     state.velocity = state.velocity + relative_movement(state.input, input_speed, state.yaw);
     if in_web && !ignores_stuck_block {
@@ -1543,6 +1567,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     if state.flying {
         state.fall_distance = 0.0;
     }
+    state.was_sprinting = state.sprinting;
 
     TickResult {
         displacement,
