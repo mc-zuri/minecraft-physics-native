@@ -1137,6 +1137,81 @@ mod tests {
     }
 
     #[test]
+    fn diagonal_input_is_normalized_by_a_float_length_before_1_17() {
+        let diagonal = |release| {
+            let mut state = SimulationState {
+                input: Vec3::new(1.0, 0.0, 1.0),
+                no_gravity: true,
+                ..SimulationState::default()
+            };
+            let rules = VersionPhysicsRules {
+                release,
+                ..VersionPhysicsRules::default()
+            };
+            tick_with_rules(
+                &mut state,
+                &WorldSnapshot::new(),
+                PhysicsConfig::default(),
+                rules,
+            );
+            state.position.x
+        };
+
+        let keys = java_float(0.98);
+        let length = (keys * keys + keys * keys).sqrt();
+        assert_eq!(
+            diagonal(MinecraftVersion::new(1, 16, 5)),
+            keys / java_float(length) * java_float(0.02)
+        );
+        assert_eq!(
+            diagonal(MinecraftVersion::new(1, 17, 0)),
+            keys / length * java_float(0.02)
+        );
+    }
+
+    #[test]
+    fn gliding_lift_uses_a_float_look_length_before_1_17() {
+        let glide = |release| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 10.0, 0.5),
+                look: Vec3::new(0.1, 0.0, 0.1),
+                fall_flying: true,
+                is_player: true,
+                half_width: 0.3,
+                height: 0.6,
+                ..SimulationState::default()
+            };
+            let rules = VersionPhysicsRules {
+                release,
+                ..VersionPhysicsRules::default()
+            };
+            tick_with_rules(
+                &mut state,
+                &WorldSnapshot::new(),
+                PhysicsConfig::default(),
+                rules,
+            );
+            state.velocity.y
+        };
+        let vertical = |look_length: f64| {
+            let lift = java_float(look_length / 0.4);
+            let falling = 0.08 * (-1.0 + lift * 0.75);
+            (falling + falling * -0.1 * lift) * java_float(0.98)
+        };
+
+        let look_length = (0.1_f64 * 0.1 + 0.1 * 0.1).sqrt();
+        assert_eq!(
+            glide(MinecraftVersion::new(1, 16, 5)),
+            vertical(java_float(look_length))
+        );
+        assert_eq!(
+            glide(MinecraftVersion::new(1, 17, 0)),
+            vertical(look_length)
+        );
+        assert_ne!(vertical(java_float(look_length)), vertical(look_length));
+    }
+
+    #[test]
     fn gliding_moves_with_the_dragged_velocity_and_ignores_the_keys() {
         let glide = |input: Vec3| {
             let mut state = SimulationState {

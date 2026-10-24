@@ -1084,7 +1084,7 @@ fn glide(state: &mut SimulationState, gravity: f64, release: MinecraftVersion) {
     let look_factor = if release.at_least(1, 21, 2) {
         1.0
     } else {
-        (look.length() / 0.4).min(1.0)
+        (vector_length(look, release) / 0.4).min(1.0)
     };
     let lift = if release.at_least(1, 18, 2) {
         let cos = state.pitch.cos();
@@ -1217,8 +1217,7 @@ fn relative_movement(input: Vec3, speed: f64, yaw: f64, release: MinecraftVersio
         return Vec3::ZERO;
     }
     let direction = if length_squared > 1.0 {
-        let length = length_squared.sqrt();
-        Vec3::new(input.x / length, input.y / length, input.z / length)
+        normalize(input, release)
     } else {
         input
     };
