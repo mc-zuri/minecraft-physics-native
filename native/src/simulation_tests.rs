@@ -1866,6 +1866,25 @@ mod tests {
     }
 
     #[test]
+    fn sneaking_spectators_do_not_back_off_from_edges() {
+        let mut state = SimulationState {
+            position: Vec3::new(0.0, 2.0, 0.0),
+            input: Vec3::new(1.0, 0.0, 0.0),
+            on_ground: true,
+            is_player: true,
+            sneaking: true,
+            no_physics: true,
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+
+        tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
+
+        assert!(state.position.x > 0.0);
+    }
+
+    #[test]
     fn sprinting_keeps_its_speed_modifier_while_sneaking() {
         let mut world = WorldSnapshot::new();
         world.set_block(

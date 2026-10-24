@@ -853,7 +853,12 @@ fn back_off_from_edge(
     delta: Vec3,
     max_down_step: f64,
 ) -> Vec3 {
-    if !state.is_player || !state.sneaking || state.flying || delta.y > 0.0 || max_down_step <= 0.0
+    if state.no_physics
+        || !state.is_player
+        || !state.sneaking
+        || state.flying
+        || delta.y > 0.0
+        || max_down_step <= 0.0
     {
         return delta;
     }
