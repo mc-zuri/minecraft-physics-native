@@ -140,6 +140,76 @@ mod tests {
         assert!(restituted.velocity.y.is_sign_positive());
     }
 
+    fn ice() -> BlockState {
+        BlockState {
+            id: 1,
+            shape: Some(BlockShape {
+                slipperiness: 0.98,
+                ..BlockShape::full_block()
+            }),
+            ..BlockState::default()
+        }
+    }
+
+    fn drag_on(world: &WorldSnapshot, position: Vec3, release: MinecraftVersion) -> f64 {
+        let mut state = SimulationState {
+            position,
+            velocity: Vec3::new(0.0, -0.08 * java_float(0.98), 0.1),
+            on_ground: true,
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+        let rules = VersionPhysicsRules {
+            release,
+            ..VersionPhysicsRules::default()
+        };
+        tick_with_rules(&mut state, world, PhysicsConfig::default(), rules);
+        state.velocity.z / 0.1
+    }
+
+    #[test]
+    fn friction_on_a_slab_comes_from_the_block_beneath_it() {
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), ice());
+        world.set_block(
+            (0, 1, 0),
+            BlockState {
+                id: 2,
+                shape: Some(BlockShape {
+                    bounds: Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.5, 1.0)),
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        let icy = java_float(java_float(0.98) * java_float(0.98));
+
+        for release in [
+            MinecraftVersion::new(1, 14, 4),
+            MinecraftVersion::new(1, 19, 4),
+            MinecraftVersion::new(1, 21, 1),
+        ] {
+            assert_eq!(drag_on(&world, Vec3::new(0.5, 1.5, 0.5), release), icy);
+        }
+    }
+
+    #[test]
+    fn friction_follows_the_supporting_block_from_1_20() {
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), ice());
+        let over_the_edge = Vec3::new(1.1, 1.0, 0.5);
+
+        assert_eq!(
+            drag_on(&world, over_the_edge, MinecraftVersion::new(1, 20, 0)),
+            java_float(java_float(0.98) * java_float(0.98))
+        );
+        assert_eq!(
+            drag_on(&world, over_the_edge, MinecraftVersion::new(1, 19, 4)),
+            java_float(java_float(0.6) * java_float(0.98))
+        );
+    }
+
     #[test]
     fn slow_falling_keeps_full_gravity_while_rising() {
         let mut state = SimulationState {

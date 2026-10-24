@@ -678,6 +678,40 @@ fn stuck_speed_multiplier_inside(
     multiplier
 }
 
+fn block_below_affecting_movement(
+    world: &WorldSnapshot,
+    state: &SimulationState,
+    release: MinecraftVersion,
+) -> (i32, i32, i32) {
+    let below = |offset: f64| {
+        (
+            state.position.x.floor() as i32,
+            (state.position.y - offset).floor() as i32,
+            state.position.z.floor() as i32,
+        )
+    };
+    if !release.at_least(1, 15, 0) {
+        return below(1.0);
+    }
+    if !release.at_least(1, 20, 0) {
+        return below(0.5000001);
+    }
+    let offset = f64::from(0.500001_f32);
+    let bounds = state.bounds();
+    let support_area = Aabb::new(
+        Vec3::new(bounds.min.x, bounds.min.y - 1.0e-6, bounds.min.z),
+        Vec3::new(bounds.max.x, bounds.min.y, bounds.max.z),
+    );
+    match state
+        .on_ground
+        .then(|| world.supporting_block_position(support_area, state.position))
+        .flatten()
+    {
+        Some((x, _, z)) => (x, below(offset).1, z),
+        None => below(offset),
+    }
+}
+
 fn climbable(world: &WorldSnapshot, state: &SimulationState) -> bool {
     !state.no_physics
         && (state.climbing
@@ -1046,6 +1080,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.position.y.floor() as i32,
         state.position.z.floor() as i32,
     );
+    let below_position = block_below_affecting_movement(world, state, rules.release);
     let bounds = state.bounds();
     let eye_height = state.eye_height.unwrap_or(state.height * 0.85);
     let eye_half_width = state.half_width * 0.8;
@@ -1210,7 +1245,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.velocity.y += 0.03999999910593033;
     } else if state.on_ground && jumping && state.jump_ticks == 0 {
         let block_jump_factor = if world.effect_at(body_position) == BlockEffect::Honey
-            || feet_effect == BlockEffect::Honey
+            || world.effect_at(below_position) == BlockEffect::Honey
         {
             0.5
         } else {
@@ -1311,11 +1346,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         FluidState::Empty => movement_speed,
     };
     let block_friction = {
-        let friction = world.slipperiness_at((
-            state.position.x.floor() as i32,
-            (state.position.y - 0.01).floor() as i32,
-            state.position.z.floor() as i32,
-        ));
+        let friction = world.slipperiness_at(below_position);
         if rules.fluid_travel_split {
             compute_modified_friction(
                 friction,

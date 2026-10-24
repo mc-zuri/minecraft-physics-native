@@ -870,6 +870,61 @@ impl WorldSnapshot {
         });
     }
 
+    #[must_use]
+    pub fn supporting_block_position(
+        &self,
+        area: Aabb,
+        position: Vec3,
+    ) -> Option<BlockPosition> {
+        let min = (
+            (area.min.x - 1.0e-7).floor() as i32 - 1,
+            (area.min.y - 1.0e-7).floor() as i32 - 1,
+            (area.min.z - 1.0e-7).floor() as i32 - 1,
+        );
+        let max = (
+            (area.max.x + 1.0e-7).floor() as i32 + 1,
+            (area.max.y + 1.0e-7).floor() as i32 + 1,
+            (area.max.z + 1.0e-7).floor() as i32 + 1,
+        );
+        let mut closest: Option<(f64, BlockPosition)> = None;
+        for z in min.2..=max.2 {
+            for y in min.1..=max.1 {
+                for x in min.0..=max.0 {
+                    let edges = [
+                        x == min.0 || x == max.0,
+                        y == min.1 || y == max.1,
+                        z == min.2 || z == max.2,
+                    ]
+                    .into_iter()
+                    .filter(|edge| *edge)
+                    .count();
+                    if edges > 1 || (edges == 1 && !self.has_large_collision_shape((x, y, z))) {
+                        continue;
+                    }
+                    let offset = Vec3::new(f64::from(x), f64::from(y), f64::from(z));
+                    let supports = self.block_collision_shapes((x, y, z)).any(|shape| {
+                        is_non_empty_shape(shape.bounds)
+                            && shape.bounds.translated(offset).intersects(area)
+                    });
+                    if !supports {
+                        continue;
+                    }
+                    let dx = f64::from(x) + 0.5 - position.x;
+                    let dy = f64::from(y) + 0.5 - position.y;
+                    let dz = f64::from(z) + 0.5 - position.z;
+                    let distance = dx * dx + dy * dy + dz * dz;
+                    let closer = closest.map_or(true, |(best, (bx, by, bz))| {
+                        distance < best || (distance == best && (by, bz, bx) < (y, z, x))
+                    });
+                    if closer {
+                        closest = Some((distance, (x, y, z)));
+                    }
+                }
+            }
+        }
+        closest.map(|(_, block)| block)
+    }
+
     fn block_collision_shapes(
         &self,
         position: BlockPosition,
