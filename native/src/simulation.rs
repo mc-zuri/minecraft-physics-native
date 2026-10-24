@@ -1815,7 +1815,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         };
     if matches!(fluid, FluidState::Empty)
         && !gliding
-        && (state.collided_horizontally || state.jump_requested)
+        && (state.collided_horizontally
+            || (state.jump_requested && rules.release.at_least(1, 14, 0)))
         && (climbable(world, state) || climbs_powder_snow)
     {
         state.velocity.y = 0.2;
