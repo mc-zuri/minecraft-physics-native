@@ -419,6 +419,30 @@ mod tests {
     }
 
     #[test]
+    fn push_out_of_blocks_before_1_14_tests_the_cell_half_a_block_above_the_feet() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 100, 0),
+            BlockState {
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        for (version, pushed) in [("1.11.2", false), ("1.14.4", true)] {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 100.9375, 0.5),
+                half_width: 0.3,
+                height: 1.8,
+                is_player: true,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            assert_eq!(state.position.x != 0.5, pushed, "{version}");
+        }
+    }
+
+    #[test]
     fn no_physics_bypasses_collision_and_clears_collision_flags() {
         let mut world = WorldSnapshot::new();
         world.set_block(

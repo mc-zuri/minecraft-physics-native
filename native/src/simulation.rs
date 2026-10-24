@@ -1352,6 +1352,10 @@ fn move_towards_closest_space(
     world: &WorldSnapshot,
     release: MinecraftVersion,
 ) {
+    if !release.at_least(1, 14, 0) {
+        push_out_of_blocks_before_1_14(state, world, release);
+        return;
+    }
     let bounds = state.bounds();
     let suffocates_at = |x: i32, z: i32| {
         if release.at_least(1, 16, 0) {
@@ -1401,6 +1405,57 @@ fn move_towards_closest_space(
         match direction {
             Some((0, step_z)) => state.velocity.z = 0.1 * f64::from(step_z),
             Some((step_x, _)) => state.velocity.x = 0.1 * f64::from(step_x),
+            None => {}
+        }
+    }
+}
+
+fn push_out_of_blocks_before_1_14(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    release: MinecraftVersion,
+) {
+    let open = |(x, y, z): BlockPosition| {
+        !world.is_suffocating((x, y, z)) && !world.is_suffocating((x, y + 1, z))
+    };
+    let feet_y = state.bounds().min.y + 0.5;
+    let offset = state.half_width * 2.0 * 0.35;
+    let corners = [
+        (-offset, offset),
+        (-offset, -offset),
+        (offset, -offset),
+        (offset, offset),
+    ];
+    for (offset_x, offset_z) in corners {
+        let (x, z) = (state.position.x + offset_x, state.position.z + offset_z);
+        let cell = (x.floor() as i32, feet_y.floor() as i32, z.floor() as i32);
+        let blocked = if release.at_least(1, 13, 0) && state.swimming {
+            world.is_suffocating(cell)
+        } else {
+            !open(cell)
+        };
+        if !blocked {
+            continue;
+        }
+        let (inside_x, inside_z) = (x - f64::from(cell.0), z - f64::from(cell.2));
+        let sides = [
+            (-1, 0, inside_x),
+            (1, 0, 1.0 - inside_x),
+            (0, -1, inside_z),
+            (0, 1, 1.0 - inside_z),
+        ];
+        let mut closest = 9999.0;
+        let mut direction = None;
+        for (step_x, step_z, distance) in sides {
+            if open((cell.0 + step_x, cell.1, cell.2 + step_z)) && distance < closest {
+                closest = distance;
+                direction = Some((step_x, step_z));
+            }
+        }
+        let push = f64::from(0.1_f32);
+        match direction {
+            Some((0, step_z)) => state.velocity.z = push * f64::from(step_z),
+            Some((step_x, _)) => state.velocity.x = push * f64::from(step_x),
             None => {}
         }
     }
