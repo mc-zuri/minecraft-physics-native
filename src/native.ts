@@ -118,6 +118,29 @@ export interface NativeSimulationState {
      * from it. Pass back the one the previous tick returned; leave it out after setting the position.
      */
     boundingBox?: NativeAabb;
+    /**
+     * The entities near the player this tick, in the order the client ticks them (simulateVersionedTick only): those
+     * it ticks before the player push it before its move, the colliders among them stop its move, the others push it
+     * after its move.
+     */
+    nearbyEntities?: NativeNearbyEntity[];
+}
+
+export interface NativeNearbyEntity {
+    /**
+     * "living" (LivingEntity.pushEntities), "boat" (Boat.tick, a collider), "shulker" (a living collider) or
+     * "happy_ghast" (a living collider to a player whose feet are at or above its top); other kinds neither push nor
+     * collide.
+     */
+    kind: string;
+    /** Where the player's move meets it. */
+    position: NativeVec3;
+    boundingBox: NativeAabb;
+    /** The client ticks it before the player (1.14 - 1.16 tick a hash map of entities). */
+    ticksBeforePlayer?: boolean;
+    /** Where its own tick leaves it, from where it pushes the player; defaults to `position` and `boundingBox`. */
+    tickPosition?: NativeVec3;
+    tickBoundingBox?: NativeAabb;
 }
 
 export interface NativeEntityPushState {

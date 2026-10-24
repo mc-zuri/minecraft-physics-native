@@ -83,6 +83,14 @@ enum EntityCollisionShape {
     Box(Aabb),
 }
 
+/// An entity a move collides with (Entity.canBeCollidedWith): its box, and whether it is solid
+/// only to an entity whose feet are at or above its top.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EntityCollider {
+    pub bounds: Aabb,
+    pub only_from_above: bool,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FluidContact {
     pub touching: bool,
@@ -136,6 +144,7 @@ pub struct WorldSnapshot {
     max_build_height: i32,
     border_center: (f64, f64),
     border_size: f64,
+    entity_colliders: Vec<EntityCollider>,
 }
 
 const WORLD_BORDER_DEFAULT_SIZE: f64 = 5.9999968e7;
@@ -159,6 +168,7 @@ impl Default for WorldSnapshot {
             max_build_height: 0,
             border_center: (0.0, 0.0),
             border_size: WORLD_BORDER_DEFAULT_SIZE,
+            entity_colliders: Vec::new(),
         }
     }
 }
@@ -167,6 +177,22 @@ impl WorldSnapshot {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn set_entity_colliders(&mut self, colliders: Vec<EntityCollider>) {
+        self.entity_colliders = colliders;
+    }
+
+    /// The boxes of the entity colliders that meet the query (Level.getEntityCollisions), for an
+    /// entity whose feet are at the context's bottom.
+    #[must_use]
+    pub fn entity_collisions(&self, query: Aabb, context: &EntityCollisionContext) -> Vec<Aabb> {
+        self.entity_colliders
+            .iter()
+            .filter(|collider| !collider.only_from_above || context.bottom >= collider.bounds.max.y)
+            .map(|collider| collider.bounds)
+            .filter(|bounds| bounds.intersects(query))
+            .collect()
     }
 
     pub fn set_block(&mut self, position: (i32, i32, i32), state: BlockState) {

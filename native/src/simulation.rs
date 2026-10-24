@@ -967,6 +967,16 @@ fn sliding_down_honey(
             || (f64::from(z) + 0.5 - state.position.z).abs() + 1.0e-7 > reach)
 }
 
+/// Where a move meets the entity colliders: since 1.14 the swept box grown by 1.0E-7
+/// (Level.getEntityCollisions); before, the blocks' query (World.getCollisionBoxes).
+fn entity_collision_query(swept: Aabb, query: Aabb, release: MinecraftVersion) -> Aabb {
+    if release.at_least(1, 14, 0) {
+        swept.inflate(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7))
+    } else {
+        query
+    }
+}
+
 pub(crate) fn climbable(world: &WorldSnapshot, state: &SimulationState) -> bool {
     !state.no_physics
         && (state.climbing
@@ -1728,6 +1738,10 @@ fn collide_with_world(
         ),
     );
     let mut obstacles = world.collision_shapes_for_entity(query, context);
+    obstacles.extend(world.entity_collisions(
+        entity_collision_query(swept, query, rules.release),
+        context,
+    ));
     let border = world.world_border_collision_boxes();
     let collides_with_border = if rules.release.at_least(1, 18, 0) {
         world.is_inside_close_to_world_border(state.position, bounds.expand_towards(desired))

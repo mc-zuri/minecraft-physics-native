@@ -2,7 +2,10 @@ use napi::bindgen_prelude::Result;
 use napi::Error;
 use napi_derive::napi;
 
-use crate::entity::{entity_push_impulses_with_pushthrough, Dimensions, EntityFlags, EntityState};
+use crate::entity::{
+    entity_push_impulses_with_pushthrough, nearby_entity_colliders, push_by_nearby_entities,
+    Dimensions, EntityFlags, EntityState, NearbyEntity, NearbyEntityKind,
+};
 use crate::math::{Aabb, Vec3};
 use crate::projectile::{
     tick_arrow, tick_projectile, tick_projectile_with_bubble_column, tick_trident, ArrowState,
@@ -266,6 +269,33 @@ pub struct NativeSimulationState {
     pub stuck_speed_multiplier: Option<NativeVec3>,
     pub previous_position: Option<NativeVec3>,
     pub bounding_box: Option<NativeAabb>,
+    pub nearby_entities: Option<Vec<NativeNearbyEntity>>,
+}
+
+#[napi(object)]
+pub struct NativeNearbyEntity {
+    /// "living", "boat", "shulker" or "happy_ghast"; other entities neither push nor collide.
+    pub kind: String,
+    pub position: NativeVec3,
+    pub bounding_box: NativeAabb,
+    pub ticks_before_player: Option<bool>,
+    pub tick_position: Option<NativeVec3>,
+    pub tick_bounding_box: Option<NativeAabb>,
+}
+
+impl From<NativeNearbyEntity> for NearbyEntity {
+    fn from(value: NativeNearbyEntity) -> Self {
+        let position: Vec3 = value.position.into();
+        let bounding_box: Aabb = value.bounding_box.into();
+        Self {
+            kind: NearbyEntityKind::parse(&value.kind),
+            position,
+            bounding_box,
+            tick_position: value.tick_position.map_or(position, Into::into),
+            tick_bounding_box: value.tick_bounding_box.map_or(bounding_box, Into::into),
+            ticks_before_player: value.ticks_before_player.unwrap_or(false),
+        }
+    }
 }
 
 #[napi(object)]
@@ -715,6 +745,7 @@ impl From<SimulationState> for NativeSimulationState {
             stuck_speed_multiplier: Some(value.stuck_speed_multiplier.into()),
             previous_position: value.previous_position.map(Into::into),
             bounding_box: value.bounding_box.map(Into::into),
+            nearby_entities: None,
         }
     }
 }
@@ -1431,26 +1462,53 @@ pub fn simulate_tick(
     ))
 }
 
+/// One client tick of the local player: the nearby entities the client ticks before it push it,
+/// it ticks (colliding with the entities that are colliders), then the others push it.
 #[napi]
 pub fn simulate_versioned_tick(
     version: String,
-    world: &NativeWorld,
-    state: NativeSimulationState,
+    world: &mut NativeWorld,
+    mut state: NativeSimulationState,
     config: NativeSimulationConfig,
 ) -> Result<NativeSimulationState> {
+    let nearby_entities: Vec<NearbyEntity> = state
+        .nearby_entities
+        .take()
+        .unwrap_or_default()
+        .into_iter()
+        .map(Into::into)
+        .collect();
     let mut simulation_state: SimulationState = state.into();
     let minecraft_version = MinecraftVersion::parse(&version)
         .ok_or_else(|| Error::from_reason(format!("invalid Minecraft version: {version}")))?;
     simulation_state.minor_horizontal_collision_supported =
         minecraft_version.supports_minor_horizontal_collision();
     let config = validated_simulation_config(config)?;
+    push_by_nearby_entities(
+        &mut simulation_state,
+        world.snapshot(),
+        &nearby_entities,
+        true,
+        minecraft_version,
+    );
+    world
+        .inner
+        .set_entity_colliders(nearby_entity_colliders(&nearby_entities));
     let result = versioned::dispatch(
         &version,
         &mut simulation_state,
         world.snapshot(),
         config,
-    )
-    .map_err(Error::from_reason)?;
+    );
+    world.inner.set_entity_colliders(Vec::new());
+    let result = result.map_err(Error::from_reason)?;
+    push_by_nearby_entities(
+        &mut simulation_state,
+        world.snapshot(),
+        &nearby_entities,
+        false,
+        minecraft_version,
+    );
     let mut output: NativeSimulationState = simulation_state.into();
     output.collided_horizontally = result.collided_horizontally;
     output.minor_horizontal_collision = Some(simulation_state.minor_horizontal_collision);
@@ -2550,8 +2608,8 @@ mod tests {
         create_simulation_state, refresh_versioned_pose, simulate_versioned_entity_push,
         simulate_versioned_entity_ticks, simulate_versioned_tick, simulate_versioned_ticks,
         NativeAabb, NativeBlockShape, NativeBlockUpdate, NativeEntityDescriptor,
-        NativeEntityPushState, NativeSimulationConfig, NativeSimulationState, NativeVec3,
-        NativeVersionedEntityState, NativeWorld,
+        NativeEntityPushState, NativeNearbyEntity, NativeSimulationConfig, NativeSimulationState,
+        NativeVec3, NativeVersionedEntityState, NativeWorld,
     };
 
     fn block_shape(min: (f64, f64, f64), max: (f64, f64, f64), effect: u8) -> NativeBlockShape {
@@ -2693,7 +2751,7 @@ mod tests {
         for release in crate::generated_data::RELEASES {
             let result = simulate_versioned_tick(
                 release.version.to_string(),
-                &NativeWorld::new(),
+                &mut NativeWorld::new(),
                 pose_state(),
                 default_config(),
             );
@@ -2703,25 +2761,91 @@ mod tests {
 
     #[test]
     fn ticking_the_output_again_keeps_the_default_drag() {
-        let world = NativeWorld::new();
+        let mut world = NativeWorld::new();
         let mut state = pose_state();
         state.velocity = vec3(1.0, 0.0, 0.0);
         state.on_ground = false;
 
-        let once = simulate_versioned_tick("26.2".to_string(), &world, state, default_config())
+        let once = simulate_versioned_tick("26.2".to_string(), &mut world, state, default_config())
             .expect("26.2 is supported");
         let moved_once = once.velocity.x;
         assert_eq!(once.air_drag_modifier, None);
         assert_eq!(once.friction_modifier, None);
-        let twice = simulate_versioned_tick("26.2".to_string(), &world, once, default_config())
+        let twice = simulate_versioned_tick("26.2".to_string(), &mut world, once, default_config())
             .expect("26.2 is supported");
 
         assert_eq!(twice.velocity.x, moved_once * crate::math::java_float(0.91));
     }
 
+    fn nearby_entity(
+        kind: &str,
+        min: NativeVec3,
+        max: NativeVec3,
+        before: bool,
+    ) -> NativeNearbyEntity {
+        NativeNearbyEntity {
+            kind: kind.to_string(),
+            position: vec3((min.x + max.x) / 2.0, min.y, (min.z + max.z) / 2.0),
+            bounding_box: NativeAabb { min, max },
+            ticks_before_player: Some(before),
+            tick_position: None,
+            tick_bounding_box: None,
+        }
+    }
+
+    #[test]
+    fn nearby_entities_push_the_player_before_or_after_its_tick() {
+        let mut world = NativeWorld::new();
+        let cow = |before| {
+            nearby_entity(
+                "living",
+                vec3(0.25, 0.0, -0.45),
+                vec3(1.15, 1.4, 0.45),
+                before,
+            )
+        };
+        let impulse = 0.7 / 0.7_f64.sqrt() * 1.0 * f64::from(0.05_f32);
+
+        let mut state = pose_state();
+        state.nearby_entities = Some(vec![cow(false)]);
+        let after =
+            simulate_versioned_tick("1.21.1".to_string(), &mut world, state, default_config())
+                .expect("1.21.1 is supported");
+        assert_eq!(after.position.x, 0.0);
+        assert_eq!(after.velocity.x, -impulse);
+
+        let mut state = pose_state();
+        state.nearby_entities = Some(vec![cow(true)]);
+        let before =
+            simulate_versioned_tick("1.21.1".to_string(), &mut world, state, default_config())
+                .expect("1.21.1 is supported");
+        assert_eq!(before.position.x, -impulse);
+    }
+
+    #[test]
+    fn colliding_entities_stop_the_move_of_their_tick_only() {
+        let mut world = NativeWorld::new();
+        let shulker = nearby_entity("shulker", vec3(-0.5, -1.0, -0.5), vec3(0.5, 0.0, 0.5), true);
+        let mut state = pose_state();
+        state.on_ground = false;
+        state.velocity = vec3(0.0, -0.5, 0.0);
+        state.position = vec3(0.0, 0.2, 0.0);
+        state.nearby_entities = Some(vec![shulker]);
+        let landed =
+            simulate_versioned_tick("1.21.1".to_string(), &mut world, state, default_config())
+                .expect("1.21.1 is supported");
+        assert_eq!(landed.position.y, 0.0);
+        assert!(landed.on_ground);
+
+        let falls =
+            simulate_versioned_tick("1.21.1".to_string(), &mut world, landed, default_config())
+                .expect("1.21.1 is supported");
+        assert!(falls.position.y < 0.0);
+    }
+
     #[test]
     fn the_kept_bounding_box_goes_in_and_out_before_1_17() {
-        let world = NativeWorld::new();
+        let mut world = NativeWorld::new();
         let mut state = pose_state();
         state.velocity = vec3(0.2, 0.0, 0.0);
         state.bounding_box = Some(NativeAabb {
@@ -2729,8 +2853,9 @@ mod tests {
             max: vec3(0.35, 1.8, 0.3),
         });
 
-        let old = simulate_versioned_tick("1.16.5".to_string(), &world, state, default_config())
-            .expect("1.16.5 is supported");
+        let old =
+            simulate_versioned_tick("1.16.5".to_string(), &mut world, state, default_config())
+                .expect("1.16.5 is supported");
         let bounding_box = old.bounding_box.expect("1.16.5 keeps the box");
         let (min_x, max_x) = (-0.25 + 0.2, 0.35 + 0.2);
         assert_eq!((bounding_box.min.x, bounding_box.max.x), (min_x, max_x));
@@ -2738,8 +2863,9 @@ mod tests {
 
         let mut state = pose_state();
         state.bounding_box = Some(bounding_box);
-        let modern = simulate_versioned_tick("1.17".to_string(), &world, state, default_config())
-            .expect("1.17 is supported");
+        let modern =
+            simulate_versioned_tick("1.17".to_string(), &mut world, state, default_config())
+                .expect("1.17 is supported");
         assert!(modern.bounding_box.is_none());
     }
 
@@ -3162,6 +3288,7 @@ mod tests {
                 stuck_speed_multiplier: None,
                 previous_position: None,
                 bounding_box: None,
+                nearby_entities: None,
             },
             no_physics: false,
             vehicle_id: None,
