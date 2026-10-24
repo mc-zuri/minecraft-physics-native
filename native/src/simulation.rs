@@ -1667,7 +1667,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         }
     }
     let lava = world.fluid_contact(FluidState::Lava, bounds, rules.release);
-    state.in_lava = if rules.release.at_least(1, 16, 0) {
+    if rules.release.at_least(1, 16, 0) {
         if affected_by_fluids {
             let lava_flow_scale = if state.ultra_warm {
                 rules.ultra_warm_lava_flow_scale
@@ -1676,10 +1676,10 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             };
             push_by_fluid(state, lava, lava_flow_scale, rules.release);
         }
-        lava.height > 0.0
-    } else {
-        world.has_fluid_block_inside(FluidState::Lava, bounds)
-    };
+        state.in_lava = lava.height > 0.0;
+    } else if !rules.release.at_least(1, 14, 0) {
+        state.in_lava = world.has_fluid_block_inside(FluidState::Lava, bounds);
+    }
     if state.is_player && !state.no_physics {
         move_towards_closest_space(state, world, rules.release);
     }
@@ -2167,6 +2167,9 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         if stops_z {
             state.velocity.z = 0.0;
         }
+    }
+    if rules.release.at_least(1, 14, 0) && !rules.release.at_least(1, 16, 0) && !state.no_physics {
+        state.in_lava = world.has_fluid_block_inside(FluidState::Lava, state.bounds());
     }
     if !rules.release.at_least(1, 21, 2) {
         let inside: Vec<_> = blocks_inside(state, rules.release)

@@ -2180,6 +2180,73 @@ mod tests {
         assert!(!state.on_ground);
     }
 
+    fn fluid_block_world(fluid: FluidState) -> WorldSnapshot {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                fluid,
+                ..BlockState::default()
+            },
+        );
+        world
+    }
+
+    fn tick_release(state: &mut SimulationState, world: &WorldSnapshot, release: MinecraftVersion) {
+        let rules = VersionPhysicsRules {
+            release,
+            ..VersionPhysicsRules::default()
+        };
+        tick_with_rules(state, world, PhysicsConfig::default(), rules);
+    }
+
+    #[test]
+    fn lava_counts_from_the_move_that_reached_it_before_1_16() {
+        let lava = fluid_block_world(FluidState::Lava);
+        let release = MinecraftVersion::new(1, 15, 2);
+        let mut reaching = SimulationState {
+            position: Vec3::new(0.5, 0.5, 0.5),
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+        let mut leaving = SimulationState {
+            position: Vec3::new(0.5, 5.0, 0.5),
+            in_lava: true,
+            ..reaching
+        };
+
+        tick_release(&mut reaching, &lava, release);
+        tick_release(&mut leaving, &lava, release);
+
+        assert_eq!(reaching.velocity.y, -0.08 * java_float(0.98));
+        assert!(reaching.in_lava);
+        assert_eq!(leaving.velocity.y, -0.08 / 4.0);
+        assert!(!leaving.in_lava);
+    }
+
+    #[test]
+    fn a_jump_swims_up_in_the_lava_the_last_move_reached_before_1_16() {
+        let mut in_lava = SimulationState {
+            position: Vec3::new(0.5, 5.0, 0.5),
+            on_ground: true,
+            jump_requested: true,
+            in_lava: true,
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+
+        tick_release(
+            &mut in_lava,
+            &WorldSnapshot::new(),
+            MinecraftVersion::new(1, 14, 4),
+        );
+
+        assert_eq!(in_lava.velocity.y, 0.03999999910593033 * 0.5 - 0.08 / 4.0);
+        assert!(!in_lava.in_lava);
+    }
+
     #[test]
     fn sprinting_lava_still_applies_source_gravity() {
         let mut world = WorldSnapshot::new();
@@ -3050,6 +3117,7 @@ mod tests {
             position: Vec3::new(0.5, 1.0, 0.5),
             on_ground: true,
             jump_requested: true,
+            in_lava: fluid == FluidState::Lava,
             half_width: 0.3,
             height: 1.8,
             eye_height: Some(eye_height),
