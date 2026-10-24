@@ -37,6 +37,11 @@ export interface NativeSimulationState {
     autoJump?: boolean;
     /** LocalPlayer.autoJumpTime: a jump auto-jump queued for the next tick; pass back the one returned. */
     autoJumpTime?: number;
+    /**
+     * The riptide level of a trident the player let go of before this tick after using it 10 ticks or more
+     * (TridentItem.releaseUsing, 1.13+): in water it launches the player along its yaw and pitch.
+     */
+    riptideLaunch?: number;
     sprinting?: boolean;
     /** Sprinting at the end of the previous tick: the airborne speed before 1.19.4 follows it. */
     wasSprinting?: boolean;

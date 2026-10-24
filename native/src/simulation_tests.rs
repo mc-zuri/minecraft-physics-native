@@ -3175,6 +3175,84 @@ mod tests {
         assert_eq!(queued(true, 1.0, MinecraftVersion::new(1, 9, 4)), 0);
     }
 
+    fn pool() -> WorldSnapshot {
+        let mut world = WorldSnapshot::new();
+        for x in -2..=8 {
+            for z in -2..=2 {
+                world.set_block(
+                    (x, 0, z),
+                    BlockState {
+                        id: 1,
+                        shape: Some(BlockShape::full_block()),
+                        ..BlockState::default()
+                    },
+                );
+                for y in 1..=4 {
+                    world.set_block(
+                        (x, y, z),
+                        BlockState {
+                            fluid: FluidState::Water,
+                            fluid_source: true,
+                            ..BlockState::default()
+                        },
+                    );
+                }
+            }
+        }
+        world
+    }
+
+    fn releasing_riptide(level: u8, position: Vec3, on_ground: bool) -> SimulationState {
+        SimulationState {
+            position,
+            on_ground,
+            in_water: true,
+            is_player: true,
+            riptide_launch: Some(level),
+            yaw: f64::from(270.0_f32 * 0.017453292_f32),
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        }
+    }
+
+    #[test]
+    fn a_released_riptide_trident_launches_a_player_in_water_along_its_look() {
+        let mut state = releasing_riptide(3, Vec3::new(0.5, 2.0, 0.5), false);
+
+        tick(&mut state, &pool(), PhysicsConfig::default());
+
+        assert_eq!(state.velocity.x, 3.0 * f64::from(0.8_f32));
+        assert_eq!(state.position.x, 3.5);
+        assert_eq!(state.riptide_launch, None);
+    }
+
+    #[test]
+    fn a_riptide_launch_needs_water_and_release_1_13() {
+        let launched = |in_water: bool, release| {
+            let mut state = SimulationState {
+                in_water,
+                ..releasing_riptide(1, Vec3::new(0.5, 2.0, 0.5), false)
+            };
+            tick_release(&mut state, &pool(), release);
+            state.position.x - 0.5
+        };
+
+        assert_eq!(launched(true, MinecraftVersion::new(1, 13, 0)), 1.5);
+        assert_eq!(launched(false, MinecraftVersion::new(26, 2, 0)), 0.0);
+        assert_eq!(launched(true, MinecraftVersion::new(1, 12, 2)), 0.0);
+    }
+
+    #[test]
+    fn a_riptide_launch_lifts_a_player_on_the_ground() {
+        let mut state = releasing_riptide(1, Vec3::new(0.5, 1.0, 0.5), true);
+
+        tick(&mut state, &pool(), PhysicsConfig::default());
+
+        assert!(state.position.y > 2.1);
+        assert!(!state.on_ground);
+    }
+
     #[test]
     fn auto_jump_waits_while_sneaking() {
         let mut state = SimulationState {

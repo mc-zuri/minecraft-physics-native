@@ -249,6 +249,7 @@ pub struct SimulationState {
     pub jump_ticks: u32,
     pub auto_jump: bool,
     pub auto_jump_time: u32,
+    pub riptide_launch: Option<u8>,
     pub sprinting: bool,
     pub was_sprinting: bool,
     pub in_water: bool,
@@ -338,6 +339,7 @@ impl From<EntityState> for SimulationState {
             jump_ticks: 0,
             auto_jump: false,
             auto_jump_time: 0,
+            riptide_launch: None,
             sprinting: false,
             was_sprinting: false,
             in_water: value.flags.in_water,
@@ -1671,6 +1673,171 @@ fn restitute_movement_after_collisions(
     state.velocity.y = (gravity_compensation - current.y) * effective_drag * restitution;
 }
 
+fn entity_collision_context(state: &SimulationState) -> EntityCollisionContext {
+    EntityCollisionContext {
+        bottom: state.position.y,
+        descending: state.sneaking,
+        fall_distance: state.fall_distance,
+        walks_on_powder_snow: state.powder_snow_walkable,
+    }
+}
+
+/// Entity.move inside cobwebs, berry bushes and powder snow: the movement scaled by the stuck
+/// speed multiplier, which the move uses up along with the motion.
+fn slowed_by_stuck_speed(state: &mut SimulationState, movement: Vec3) -> Vec3 {
+    if state.no_physics || state.stuck_speed_multiplier.length_squared() <= 1.0e-7 {
+        return movement;
+    }
+    let slowed = movement.multiply(state.stuck_speed_multiplier);
+    state.stuck_speed_multiplier = Vec3::ZERO;
+    state.velocity = Vec3::ZERO;
+    slowed
+}
+
+/// Entity.collide: how much of `desired` the blocks and the world border let the entity move.
+struct WorldCollision {
+    movement: Vec3,
+    moved_bounds: Option<Aabb>,
+}
+
+fn collide_with_world(
+    state: &SimulationState,
+    world: &WorldSnapshot,
+    context: &EntityCollisionContext,
+    desired: Vec3,
+    rules: VersionPhysicsRules,
+) -> WorldCollision {
+    let bounds = state.bounds();
+    let max_step = rules.step_height as f32;
+    let swept = bounds.expand_towards(desired);
+    let query = Aabb::new(
+        Vec3::new(swept.min.x, swept.min.y - 1.0e-5, swept.min.z),
+        Vec3::new(
+            swept.max.x,
+            swept.max.y.max(bounds.max.y + f64::from(max_step)),
+            swept.max.z,
+        ),
+    );
+    let mut obstacles = world.collision_shapes_for_entity(query, context);
+    let border = world.world_border_collision_boxes();
+    let collides_with_border = if rules.release.at_least(1, 18, 0) {
+        world.is_inside_close_to_world_border(state.position, bounds.expand_towards(desired))
+    } else {
+        let inside = bounds.deflate(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7));
+        !border.iter().any(|outside| outside.intersects(inside))
+    };
+    if collides_with_border {
+        obstacles.extend(border);
+    }
+    let collision = CollisionRules {
+        step_up: if rules.release.at_least(1, 21, 0) {
+            StepUp::CandidateHeights
+        } else {
+            StepUp::Lifted
+        },
+        border_always_collides: collides_with_border && !rules.release.at_least(1, 18, 0),
+    };
+    if rules.release.at_least(1, 14, 0) {
+        let movement = collide(bounds, desired, &obstacles, state.on_ground, max_step, collision);
+        return WorldCollision {
+            movement,
+            moved_bounds: None,
+        };
+    }
+    let voxel_shapes = rules.release.at_least(1, 13, 0);
+    let legacy = collide_legacy(
+        bounds,
+        desired,
+        &obstacles,
+        state.on_ground,
+        max_step,
+        voxel_shapes,
+    );
+    WorldCollision {
+        movement: legacy.movement,
+        moved_bounds: Some(legacy.bounds),
+    }
+}
+
+/// Moves the entity by the collided movement, and before 1.17 the bounding box it keeps, which the
+/// position follows: before 1.14 to where the collision moved the box.
+fn displace(
+    state: &mut SimulationState,
+    desired: Vec3,
+    collision: WorldCollision,
+    release: MinecraftVersion,
+) {
+    let moved = match (collision.moved_bounds, state.bounding_box) {
+        (Some(moved), _) => moved,
+        _ if !state.no_physics && !moves_position(desired, collision.movement, release) => return,
+        (None, Some(bounds)) => bounds.translated(collision.movement),
+        (None, None) => {
+            state.position = state.position + collision.movement;
+            return;
+        }
+    };
+    state.bounding_box = Some(moved);
+    state.position = position_of_bounding_box(moved);
+}
+
+/// TridentItem.releaseUsing (1.13+), before the tick: a riptide trident let go of in water pushes
+/// the player along its look by the spin attack strength, and a player on the ground moves up by
+/// 1.2 at once.
+fn launch_riptide(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    level: u8,
+    rules: VersionPhysicsRules,
+) {
+    let release = rules.release;
+    let riding = state.passenger && release.at_least(26, 1, 0);
+    if level == 0 || !release.at_least(1, 13, 0) || !state.in_water || riding {
+        return;
+    }
+    let (yaw, pitch) = (f64::from(state.yaw as f32), f64::from(state.pitch as f32));
+    let cos_pitch = mth_cos(pitch, release) as f32;
+    let x = -(mth_sin(yaw, release) as f32) * cos_pitch;
+    let y = -(mth_sin(pitch, release) as f32);
+    let z = mth_cos(yaw, release) as f32 * cos_pitch;
+    let length = (x * x + y * y + z * z).sqrt();
+    let strength = if release.at_least(1, 21, 0) {
+        1.5 + 0.75 * f32::from(level - 1)
+    } else {
+        3.0 * ((1.0 + f32::from(level)) / 4.0)
+    };
+    let push = Vec3::new(
+        f64::from(x * (strength / length)),
+        f64::from(y * (strength / length)),
+        f64::from(z * (strength / length)),
+    );
+    state.velocity = state.velocity + push;
+    if !state.on_ground {
+        return;
+    }
+    let lift = slowed_by_stuck_speed(state, Vec3::new(0.0, 1.1999999284744263, 0.0));
+    let context = entity_collision_context(state);
+    let collision = collide_with_world(state, world, &context, lift, rules);
+    let displacement = collision.movement;
+    displace(state, lift, collision, release);
+    state.collided_horizontally = false;
+    state.minor_horizontal_collision = false;
+    state.collided_vertically = lift.y != displacement.y;
+    state.vertical_collision_below = false;
+    state.on_ground = false;
+    if state.collided_vertically {
+        state.velocity.y = if release.at_least(1, 14, 0) {
+            state.velocity.y * 0.0
+        } else {
+            0.0
+        };
+    }
+    if release.at_least(1, 15, 0) {
+        let speed_factor = f64::from(block_speed_factor(world, state, None, release));
+        state.velocity.x *= speed_factor;
+        state.velocity.z *= speed_factor;
+    }
+}
+
 /// Block.getJumpFactor of the block at the feet, else of the block below that affects movement.
 fn block_jump_factor(world: &WorldSnapshot, body: BlockPosition, below: BlockPosition) -> f32 {
     if world.effect_at(body) == BlockEffect::Honey || world.effect_at(below) == BlockEffect::Honey {
@@ -1761,12 +1928,7 @@ fn update_auto_jump(
     if ((f64::from(forward_x) * direction.x + f64::from(forward_z) * direction.z) as f32) < -0.15 {
         return;
     }
-    let context = EntityCollisionContext {
-        bottom: state.position.y,
-        descending: state.sneaking,
-        fall_distance: state.fall_distance,
-        walks_on_powder_snow: state.powder_snow_walkable,
-    };
+    let context = entity_collision_context(state);
     let empty = |position| {
         world
             .block_collision_boxes_for_entity(position, &context)
@@ -1863,7 +2025,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     let mut rules = rules;
     state.tick_count = state.tick_count.saturating_add(1);
     state.bounding_box = (!rules.release.at_least(1, 17, 0)).then(|| kept_bounding_box(state));
-    let old_position = state.position;
     state.contact_damage = 0.0;
     state.block_fall_callback = false;
     if state.is_player && state.no_physics {
@@ -1885,6 +2046,10 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     if let Some(step_height) = state.step_height {
         rules.step_height = step_height;
     }
+    if let Some(level) = state.riptide_launch.take() {
+        launch_riptide(state, world, level, rules);
+    }
+    let old_position = state.position;
     let flight_resets_fall_before_travel = rules.release.at_least(1, 21, 2);
     if state.slow_falling || state.levitation || (state.flying && flight_resets_fall_before_travel)
     {
@@ -2234,18 +2399,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             state.velocity.y = 0.0;
         }
     }
-    let mut movement = state.velocity;
-    if !state.no_physics && state.stuck_speed_multiplier.length_squared() > 1.0e-7 {
-        movement = movement.multiply(state.stuck_speed_multiplier);
-        state.stuck_speed_multiplier = Vec3::ZERO;
-        state.velocity = Vec3::ZERO;
-    }
-    let collision_context = EntityCollisionContext {
-        bottom: state.position.y,
-        descending: state.sneaking,
-        fall_distance: state.fall_distance,
-        walks_on_powder_snow: state.powder_snow_walkable,
-    };
+    let movement = slowed_by_stuck_speed(state, state.velocity);
+    let collision_context = entity_collision_context(state);
     let desired = back_off_from_edge(
         state,
         world,
@@ -2254,79 +2409,16 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         rules.step_height,
         rules.release,
     );
-    let bounds = state.bounds();
-    let mut legacy_bounds = None;
-    let displacement = if state.no_physics {
-        desired
+    let collision = if state.no_physics {
+        WorldCollision {
+            movement: desired,
+            moved_bounds: None,
+        }
     } else {
-        let max_step = rules.step_height as f32;
-        let swept = bounds.expand_towards(desired);
-        let query = Aabb::new(
-            Vec3::new(swept.min.x, swept.min.y - 1.0e-5, swept.min.z),
-            Vec3::new(
-                swept.max.x,
-                swept.max.y.max(bounds.max.y + f64::from(max_step)),
-                swept.max.z,
-            ),
-        );
-        let mut obstacles = world.collision_shapes_for_entity(query, &collision_context);
-        let border = world.world_border_collision_boxes();
-        let collides_with_border = if rules.release.at_least(1, 18, 0) {
-            world.is_inside_close_to_world_border(state.position, bounds.expand_towards(desired))
-        } else {
-            let inside = bounds.deflate(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7));
-            !border.iter().any(|outside| outside.intersects(inside))
-        };
-        if collides_with_border {
-            obstacles.extend(border);
-        }
-        let collision = CollisionRules {
-            step_up: if rules.release.at_least(1, 21, 0) {
-                StepUp::CandidateHeights
-            } else {
-                StepUp::Lifted
-            },
-            border_always_collides: collides_with_border
-                && rules.release.at_least(1, 13, 0)
-                && !rules.release.at_least(1, 18, 0),
-        };
-        if rules.release.at_least(1, 14, 0) {
-            collide(
-                bounds,
-                desired,
-                &obstacles,
-                state.on_ground,
-                max_step,
-                collision,
-            )
-        } else {
-            let voxel_shapes = rules.release.at_least(1, 13, 0);
-            let legacy = collide_legacy(
-                bounds,
-                desired,
-                &obstacles,
-                state.on_ground,
-                max_step,
-                voxel_shapes,
-            );
-            legacy_bounds = Some(legacy.bounds);
-            legacy.movement
-        }
+        collide_with_world(state, world, &collision_context, desired, rules)
     };
-
-    if let Some(moved) = legacy_bounds {
-        state.bounding_box = Some(moved);
-        state.position = position_of_bounding_box(moved);
-    } else if state.no_physics || moves_position(desired, displacement, rules.release) {
-        match state.bounding_box {
-            Some(bounds) => {
-                let moved = bounds.translated(displacement);
-                state.bounding_box = Some(moved);
-                state.position = position_of_bounding_box(moved);
-            }
-            None => state.position = state.position + displacement,
-        }
-    }
+    let displacement = collision.movement;
+    displace(state, desired, collision, rules.release);
     let mut reset_fall_distance = false;
     if !state.no_physics
         && state.fall_distance != 0.0
