@@ -1735,7 +1735,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         }
         state.in_lava = lava.height > 0.0;
     } else if !rules.release.at_least(1, 14, 0) {
-        state.in_lava = world.has_fluid_block_inside(FluidState::Lava, bounds);
+        state.in_lava = legacy_fluid::touching_lava(world, bounds, rules.release);
     }
     if state.is_player && !state.no_physics {
         move_towards_closest_space(state, world, rules.release);
@@ -2380,6 +2380,9 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     }
     if state.is_player && state.flying && state.on_ground && !state.no_physics {
         state.flying = false;
+    }
+    if !rules.release.at_least(1, 14, 0) {
+        state.in_lava = legacy_fluid::touching_lava(world, state.bounds(), rules.release);
     }
     state.was_sprinting = state.sprinting;
     state.previous_position = Some(old_position);

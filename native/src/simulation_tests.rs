@@ -2569,6 +2569,52 @@ mod tests {
         assert_eq!(state.fall_distance, 1.2);
     }
 
+    fn lava_world(position: (i32, i32, i32)) -> WorldSnapshot {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            position,
+            BlockState {
+                fluid: FluidState::Lava,
+                fluid_source: true,
+                ..BlockState::default()
+            },
+        );
+        world
+    }
+
+    #[test]
+    fn lava_is_touched_only_by_the_box_shrunk_by_0_1_and_0_4_before_1_14() {
+        let in_lava = |version, world: &WorldSnapshot, position| {
+            let mut state = legacy_water_player(position, Vec3::ZERO);
+            crate::versioned::dispatch(version, &mut state, world, PhysicsConfig::default())
+                .unwrap();
+            state.in_lava
+        };
+        let below = lava_world((0, 0, 0));
+        let beside = lava_world((1, 1, 0));
+
+        for version in ["1.8.8", "1.12.2", "1.13.2"] {
+            assert!(!in_lava(version, &below, Vec3::new(0.5, 0.6, 0.5)), "{version}");
+            assert!(in_lava(version, &below, Vec3::new(0.5, 0.5, 0.5)), "{version}");
+            assert!(!in_lava(version, &beside, Vec3::new(0.75, 1.0, 0.5)), "{version}");
+        }
+    }
+
+    #[test]
+    fn lava_reached_by_the_move_is_reported_after_it_before_1_14() {
+        let world = lava_world((0, 0, 0));
+        for version in ["1.8.8", "1.13.2"] {
+            let mut state =
+                legacy_water_player(Vec3::new(0.5, 1.5, 0.5), Vec3::new(0.0, -1.2, 0.0));
+
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+
+            assert!(state.in_lava, "{version}");
+            assert_eq!(state.velocity.y, -1.2 * f64::from(0.98_f32), "{version}");
+        }
+    }
+
     #[test]
     fn supporting_effect_uses_entity_footprint_not_center_cell() {
         let mut world = WorldSnapshot::new();

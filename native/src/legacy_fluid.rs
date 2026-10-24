@@ -59,6 +59,23 @@ pub(crate) fn handle_water_movement(
     }
 }
 
+/// Entity.isInLava before 1.14: any lava in the box shrunk by 0.1F sideways and 0.4F vertically.
+#[must_use]
+pub(crate) fn touching_lava(world: &WorldSnapshot, bounds: Aabb, release: MinecraftVersion) -> bool {
+    let side = f64::from(0.1_f32);
+    let vertical = f64::from(0.4_f32);
+    let area = Aabb::new(
+        Vec3::new(bounds.min.x + side, bounds.min.y + vertical, bounds.min.z + side),
+        Vec3::new(bounds.max.x - side, bounds.max.y - vertical, bounds.max.z - side),
+    );
+    cells(area.min.x, area.max.x, release).any(|x| {
+        cells(area.min.y, area.max.y, release).any(|y| {
+            cells(area.min.z, area.max.z, release)
+                .any(|z| world.block((x, y, z)).fluid == FluidState::Lava)
+        })
+    })
+}
+
 fn cells(min: f64, max: f64, release: MinecraftVersion) -> Range<i32> {
     let end = if release.at_least(1, 9, 0) {
         max.ceil()
