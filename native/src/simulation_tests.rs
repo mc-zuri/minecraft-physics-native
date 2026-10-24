@@ -2641,6 +2641,25 @@ mod tests {
     }
 
     #[test]
+    fn creative_flight_adds_the_impulse_before_negligible_motion_is_cut() {
+        let world = WorldSnapshot::new();
+        let mut state = SimulationState {
+            is_player: true,
+            flying: true,
+            flying_speed: java_float(0.05),
+            jump_requested: true,
+            velocity: Vec3::new(0.0, 0.002, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+
+        tick(&mut state, &world, PhysicsConfig::default());
+
+        assert_eq!(state.velocity.y, (0.002 + f64::from(0.05_f32 * 3.0)) * 0.6);
+    }
+
+    #[test]
     fn firework_boost_adds_velocity() {
         let mut state = SimulationState {
             position: Vec3::new(0.0, 20.0, 0.0),

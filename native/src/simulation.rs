@@ -1281,6 +1281,12 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     } else {
         world.has_fluid_block_inside(FluidState::Lava, bounds)
     };
+    if state.flying {
+        let direction = i8::from(state.jump_requested) - i8::from(state.sneaking);
+        if direction != 0 {
+            state.velocity.y += f64::from(f32::from(direction) * state.flying_speed as f32 * 3.0);
+        }
+    }
     let negligible_velocity = negligible_velocity(config, rules.release);
     if state.is_player && rules.release.at_least(1, 21, 5) {
         let horizontal_squared =
@@ -1376,12 +1382,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         FluidState::Water | FluidState::Waterlogged
     ) && eye_fluid_top > eye_y;
     state.eye_in_lava = head_fluid.fluid == FluidState::Lava && eye_fluid_top > eye_y;
-    if state.flying {
-        let direction = i8::from(state.jump_requested) - i8::from(state.sneaking);
-        if direction != 0 {
-            state.velocity.y += f64::from(f32::from(direction) * state.flying_speed as f32 * 3.0);
-        }
-    }
     let flying_vertical_velocity = state.velocity.y;
     let vertical_drag = match fluid {
         FluidState::Water => rules.water_drag,
