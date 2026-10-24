@@ -1270,6 +1270,12 @@ fn effective_modifier(modifier: f64, present: bool) -> f64 {
     }
 }
 
+fn moves_position(requested: Vec3, movement: Vec3, release: MinecraftVersion) -> bool {
+    let length_squared = movement.length_squared();
+    length_squared > 1.0e-7
+        || (release.at_least(1, 21, 2) && requested.length_squared() - length_squared < 1.0e-7)
+}
+
 fn back_off_from_edge(
     state: &SimulationState,
     world: &WorldSnapshot,
@@ -1977,7 +1983,9 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         (normal_displacement, normal_collisions)
     };
 
-    state.position = state.position + displacement;
+    if state.no_physics || moves_position(desired, displacement, rules.release) {
+        state.position = state.position + displacement;
+    }
     let mut reset_fall_distance = false;
     if !state.no_physics
         && state.fall_distance != 0.0

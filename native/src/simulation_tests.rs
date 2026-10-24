@@ -470,6 +470,38 @@ mod tests {
         assert!(!state.collided_vertically);
     }
 
+    fn position_after_free_move(velocity: Vec3, release: MinecraftVersion) -> Vec3 {
+        let mut state = SimulationState {
+            position: Vec3::new(-2.0567102507011388, 10.0, 0.5),
+            velocity,
+            half_width: f64::from(0.3_f32),
+            height: 1.8,
+            no_gravity: true,
+            ..SimulationState::default()
+        };
+        let config = PhysicsConfig {
+            negligible_velocity: 0.0,
+            ..PhysicsConfig::default()
+        };
+        let rules = VersionPhysicsRules {
+            release,
+            ..VersionPhysicsRules::default()
+        };
+        tick_with_rules(&mut state, &WorldSnapshot::new(), config, rules);
+        state.position
+    }
+
+    #[test]
+    fn negligible_movement_leaves_the_position_until_1_21_2() {
+        let velocity = Vec3::new(2.0e-4, 0.0, 0.0);
+
+        let legacy = position_after_free_move(velocity, MinecraftVersion::new(1, 21, 1));
+        let modern = position_after_free_move(velocity, MinecraftVersion::new(1, 21, 2));
+
+        assert_eq!(legacy.x, -2.0567102507011388);
+        assert_eq!(modern.x, -2.0567102507011388 + 2.0e-4);
+    }
+
     #[test]
     fn no_physics_keeps_the_collision_flags_before_1_21_9() {
         let collisions_after = |release: MinecraftVersion| {
