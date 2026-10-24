@@ -989,6 +989,11 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.fall_distance = 0.0;
         state.jump_ticks = 10;
     }
+    let travel_gravity = if state.slow_falling && state.velocity.y <= 0.0 {
+        gravity.min(0.01)
+    } else {
+        gravity
+    };
     if matches!(fluid, FluidState::Water | FluidState::Waterlogged)
         && state.collided_horizontally
         && climbing
@@ -1026,24 +1031,35 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             fluid_input_speed += (base_speed - fluid_input_speed) * water_efficiency;
         }
     }
-    let input_speed = if matches!(fluid, FluidState::Empty) {
-        let block_friction = if state.on_ground {
-            let friction = world.slipperiness_at((
-                state.position.x.floor() as i32,
-                (state.position.y - 0.01).floor() as i32,
-                state.position.z.floor() as i32,
-            ));
-            if rules.fluid_travel_split {
-                compute_modified_friction(
-                    friction,
-                    effective_modifier(state.friction_modifier, state.friction_modifier_present),
-                )
-            } else {
-                friction
-            }
+    let block_friction = {
+        let friction = world.slipperiness_at((
+            state.position.x.floor() as i32,
+            (state.position.y - 0.01).floor() as i32,
+            state.position.z.floor() as i32,
+        ));
+        if rules.fluid_travel_split {
+            compute_modified_friction(
+                friction,
+                effective_modifier(state.friction_modifier, state.friction_modifier_present),
+            )
         } else {
-            1.0
-        };
+            friction
+        }
+    };
+    let air_inertia = if rules.fluid_travel_split {
+        compute_modified_friction(
+            rules.air_drag,
+            effective_modifier(state.air_drag_modifier, state.air_drag_modifier_present),
+        )
+    } else {
+        rules.air_drag
+    };
+    let ground_inertia = if state.on_ground {
+        block_friction * air_inertia
+    } else {
+        air_inertia
+    };
+    let input_speed = if matches!(fluid, FluidState::Empty) {
         if state.on_ground && block_friction > 0.6 {
             let friction = java_float(block_friction);
             java_float(
@@ -1157,22 +1173,8 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         }
     } else if state.flying {
         state.velocity.y = flying_vertical_velocity;
-    } else if state.levitation {
-        let target = 0.05 * (f64::from(state.levitation_amplifier.unwrap_or(0)) + 1.0);
-        state.velocity.y += (target - state.velocity.y) * 0.2;
     } else if climbing {
         state.velocity.y = state.input.y.clamp(-0.15, 0.15);
-    } else if matches!(
-        fluid,
-        FluidState::Water | FluidState::Waterlogged | FluidState::Lava
-    ) {
-    } else if state.no_gravity {
-    } else {
-        state.velocity.y -= if state.slow_falling {
-            gravity.min(0.01)
-        } else {
-            gravity
-        };
     }
     if climbing {
         state.fall_distance = 0.0;
@@ -1401,14 +1403,13 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.velocity = Vec3::ZERO;
     }
     if honey_sliding {
-        let old_delta_y = state.velocity.y / 0.98 + 0.08;
-        let scale = if old_delta_y < -0.13 {
-            -0.05 / old_delta_y
+        let scale = if state.velocity.y < -0.13 {
+            -0.05 / state.velocity.y
         } else {
             1.0
         };
         state.velocity.x *= scale;
-        state.velocity.y = (-0.05 - 0.08) * 0.98;
+        state.velocity.y = -0.05;
         state.velocity.z *= scale;
         state.fall_distance = 0.0;
     }
@@ -1436,40 +1437,18 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     {
         state.velocity.y = 0.2;
     }
+    if matches!(fluid, FluidState::Empty) && !state.fall_flying && !state.flying {
+        if state.levitation {
+            let target = 0.05 * (f64::from(state.levitation_amplifier.unwrap_or(0)) + 1.0);
+            state.velocity.y += (target - state.velocity.y) * 0.2;
+        } else if !state.no_gravity {
+            state.velocity.y -= travel_gravity;
+        }
+    }
     let horizontal_drag = if state.fall_flying {
         0.99
-    } else if state.on_ground {
-        let block_friction = world.slipperiness_at((
-            state.position.x.floor() as i32,
-            (state.position.y - 0.01).floor() as i32,
-            state.position.z.floor() as i32,
-        ));
-        let block_friction = if rules.fluid_travel_split {
-            compute_modified_friction(
-                block_friction,
-                effective_modifier(state.friction_modifier, state.friction_modifier_present),
-            )
-        } else {
-            block_friction
-        };
-        block_friction
-            * if rules.fluid_travel_split {
-                compute_modified_friction(
-                    rules.air_drag,
-                    effective_modifier(state.air_drag_modifier, state.air_drag_modifier_present),
-                )
-            } else {
-                rules.air_drag
-            }
     } else {
-        if rules.fluid_travel_split {
-            compute_modified_friction(
-                rules.air_drag,
-                effective_modifier(state.air_drag_modifier, state.air_drag_modifier_present),
-            )
-        } else {
-            rules.air_drag
-        }
+        ground_inertia
     };
     let liquid_horizontal_drag = if state.in_water {
         let mut water_drag = if sprint_active {

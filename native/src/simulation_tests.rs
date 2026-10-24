@@ -41,8 +41,56 @@ mod tests {
         let result = tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
 
         assert!(!result.collided_vertically);
-        assert!(state.position.y < 2.0);
-        assert!(state.velocity.y < 0.0);
+        assert_eq!(state.position.y, 2.0);
+        assert_eq!(state.velocity.y, -0.08 * 0.98);
+
+        tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
+
+        assert_eq!(state.position.y, 2.0 - 0.08 * 0.98);
+    }
+
+    #[test]
+    fn horizontal_drag_uses_the_ground_state_from_before_the_move() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape {
+                    slipperiness: 0.98,
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        let mut state = SimulationState {
+            position: Vec3::new(0.2, 1.05, 0.5),
+            velocity: Vec3::new(0.5, -0.1, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+
+        tick(&mut state, &world, PhysicsConfig::default());
+
+        assert!(state.on_ground);
+        assert_eq!(state.velocity.x, 0.5 * 0.98);
+    }
+
+    #[test]
+    fn slow_falling_keeps_full_gravity_while_rising() {
+        let mut state = SimulationState {
+            position: Vec3::new(0.0, 2.0, 0.0),
+            velocity: Vec3::new(0.0, 0.3, 0.0),
+            slow_falling: true,
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+
+        tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
+
+        assert_eq!(state.velocity.y, (0.3 - 0.08) * 0.98);
     }
 
     #[test]
@@ -71,7 +119,7 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(input.state, state);
         assert_eq!(input.state.tick_count, 0);
-        assert!(first.state.position.y < state.position.y);
+        assert!(first.state.velocity.y < state.velocity.y);
     }
 
     #[test]
@@ -243,7 +291,7 @@ mod tests {
 
         assert!(result.collided_vertically);
         assert!(state.on_ground);
-        assert_eq!(state.velocity.y, 0.0);
+        assert_eq!(state.velocity.y, -0.08 * 0.98);
         assert_eq!(state.position.y, 1.0);
     }
 
@@ -1396,6 +1444,10 @@ mod tests {
 
         tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
 
+        assert_eq!(state.velocity.y, 0.05 * 0.2 * 0.98);
+
+        tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
+
         assert!(state.position.y > 2.0);
     }
 
@@ -1413,12 +1465,14 @@ mod tests {
             ..base
         };
 
-        tick(&mut base, &WorldSnapshot::new(), PhysicsConfig::default());
-        tick(
-            &mut amplified,
-            &WorldSnapshot::new(),
-            PhysicsConfig::default(),
-        );
+        for _ in 0..2 {
+            tick(&mut base, &WorldSnapshot::new(), PhysicsConfig::default());
+            tick(
+                &mut amplified,
+                &WorldSnapshot::new(),
+                PhysicsConfig::default(),
+            );
+        }
 
         assert!(amplified.velocity.y > base.velocity.y);
         assert!(amplified.position.y > base.position.y);
@@ -1553,7 +1607,7 @@ mod tests {
 
         tick(&mut state, &WorldSnapshot::new(), PhysicsConfig::default());
 
-        assert!((state.velocity.y - 0.196).abs() < 1e-12);
+        assert_eq!(state.velocity.y, (0.2 - 0.08) * 0.98);
     }
 
     #[test]
@@ -1599,7 +1653,7 @@ mod tests {
             ..SimulationState::default()
         };
         tick(&mut ladder_state, &ladder_world, PhysicsConfig::default());
-        assert!(ladder_state.velocity.y >= 0.0);
+        assert_eq!(ladder_state.position.y, 2.0);
     }
 
     #[test]
