@@ -2145,12 +2145,14 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             displacement.y,
         );
     } else {
-        // Before 1.18.2 the z reset puts back the x motion it read before the x reset.
         let (stops_x, stops_z) = if rules.release.at_least(1, 18, 2) {
             (x_collision, z_collision)
-        } else {
+        } else if rules.release.at_least(1, 14, 0) {
+            // Until 1.18.2 the z reset puts back the x motion it read before the x reset.
             let stops_z = desired.z != displacement.z;
             (desired.x != displacement.x && !stops_z, stops_z)
+        } else {
+            (desired.x != displacement.x, desired.z != displacement.z)
         };
         if stops_x {
             state.velocity.x = 0.0;

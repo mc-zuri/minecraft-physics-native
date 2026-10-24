@@ -762,6 +762,31 @@ mod tests {
     }
 
     #[test]
+    fn a_corner_collision_stops_both_axes_before_1_14() {
+        let mut world = WorldSnapshot::new();
+        for position in [(1, 0, 0), (0, 0, 1)] {
+            world.set_block(
+                position,
+                BlockState {
+                    shape: Some(BlockShape::full_block()),
+                    ..BlockState::default()
+                },
+            );
+        }
+        let into_corner = SimulationState {
+            position: Vec3::new(0.5, 0.0, 0.5),
+            velocity: Vec3::new(0.5, 0.0, 0.5),
+            no_gravity: true,
+            ..SimulationState::default()
+        };
+
+        let velocity = velocity_after_move(&world, into_corner, MinecraftVersion::new(1, 13, 2));
+
+        assert_eq!(velocity.x, 0.0);
+        assert_eq!(velocity.z, 0.0);
+    }
+
+    #[test]
     fn a_motion_cut_within_the_equality_tolerance_keeps_going_from_1_18_2() {
         let mut world = WorldSnapshot::new();
         world.set_block(
