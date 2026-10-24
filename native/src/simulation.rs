@@ -1572,7 +1572,9 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.velocity.x = state.velocity.x.clamp(-limit, limit);
         state.velocity.z = state.velocity.z.clamp(-limit, limit);
         state.velocity.y = state.velocity.y.max(-limit);
-        if state.is_player && state.sneaking && !on_scaffolding && state.velocity.y < 0.0 {
+        let suppresses_sliding_down =
+            state.sneaking && !(state.flying && rules.release.at_least(1, 16, 0));
+        if state.is_player && suppresses_sliding_down && !on_scaffolding && state.velocity.y < 0.0 {
             state.velocity.y = 0.0;
         }
     }

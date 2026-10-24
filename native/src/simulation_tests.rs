@@ -2892,6 +2892,40 @@ mod tests {
     }
 
     #[test]
+    fn sneaking_holds_a_flying_player_on_a_ladder_only_before_1_16() {
+        let descent = |release: MinecraftVersion| {
+            let mut state = SimulationState {
+                is_player: true,
+                flying: true,
+                flying_speed: java_float(0.05),
+                sneaking: true,
+                climbing: true,
+                position: Vec3::new(0.5, 10.0, 0.5),
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            let rules = VersionPhysicsRules {
+                release,
+                ..VersionPhysicsRules::default()
+            };
+            tick_with_rules(
+                &mut state,
+                &WorldSnapshot::new(),
+                PhysicsConfig::default(),
+                rules,
+            );
+            10.0 - state.position.y
+        };
+
+        assert_eq!(descent(MinecraftVersion::new(1, 15, 2)), 0.0);
+        assert_eq!(
+            descent(MinecraftVersion::new(1, 16, 0)),
+            f64::from(0.05_f32 * 3.0)
+        );
+    }
+
+    #[test]
     fn creative_flight_ends_on_landing_but_spectators_keep_flying() {
         let mut world = WorldSnapshot::new();
         world.set_block(
