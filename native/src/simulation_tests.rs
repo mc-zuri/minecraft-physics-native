@@ -2729,6 +2729,38 @@ mod tests {
     }
 
     #[test]
+    fn depth_strider_sets_the_water_efficiency_until_1_21() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                fluid: FluidState::Water,
+                fluid_source: true,
+                ..BlockState::default()
+            },
+        );
+        let walk = |version: &str, depth_strider: u8| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 0.0, 0.5),
+                half_width: 0.3,
+                height: 1.8,
+                on_ground: true,
+                is_player: true,
+                input: Vec3::new(0.0, 0.0, 1.0),
+                movement_speed: 0.1,
+                depth_strider,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .expect("the version is supported");
+            state.velocity
+        };
+
+        assert_eq!(walk("1.20.5", 3), walk("1.20.6", 3));
+        assert!(walk("1.20.5", 3).z > walk("1.20.5", 0).z);
+    }
+
+    #[test]
     fn grounded_entities_swim_up_in_any_lava_before_1_16() {
         let shallow_lava = |release| jump_on_ground_in_fluid(FluidState::Lava, 6, 1.62, release);
 

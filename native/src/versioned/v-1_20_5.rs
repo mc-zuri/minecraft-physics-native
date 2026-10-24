@@ -1,6 +1,6 @@
 use crate::simulation::{
-    tick_with_profile, LandingDamageRounding, PhysicsConfig, SimulationState, TickResult,
-    VersionPhysicsProfile, VersionPhysicsRules,
+    tick_with_profile_and_modern_fall_damage, LandingDamageRounding, PhysicsConfig,
+    SimulationState, TickResult, VersionPhysicsProfile, VersionPhysicsRules,
 };
 use crate::version::MinecraftVersion;
 use crate::versioned::VersionEngine;
@@ -36,8 +36,8 @@ impl VersionPhysicsProfile for Profile {
             step_height: 0.6,
             swimming_vertical_steering: 0.06,
             swimming_downward_steering: 0.085,
-            water_movement_efficiency_divisor: 1.0,
-            water_movement_efficiency_attribute: true,
+            water_movement_efficiency_divisor: 3.0,
+            water_movement_efficiency_attribute: false,
         }
     }
 }
@@ -49,6 +49,6 @@ impl VersionEngine for Engine {
         world: &WorldSnapshot,
         config: PhysicsConfig,
     ) -> TickResult {
-        tick_with_profile::<Profile>(state, world, config)
+        tick_with_profile_and_modern_fall_damage::<Profile>(state, world, config)
     }
 }
