@@ -2524,7 +2524,41 @@ mod tests {
     }
 
     #[test]
-    fn web_and_bubble_effects_are_applied() {
+    fn stuck_blocks_slow_the_next_move_and_stop_the_motion() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 1, 0),
+            BlockState {
+                shape: Some(BlockShape {
+                    effect: crate::world::BlockEffect::Web,
+                    bounds: Aabb::new(Vec3::ZERO, Vec3::ZERO),
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        let web = Vec3::new(0.25, java_float(0.05), 0.25);
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 1.5, 0.5),
+            velocity: Vec3::new(1.0, 1.0, 1.0),
+            stuck_speed_multiplier: web,
+            half_width: 0.3,
+            height: 1.8,
+            no_gravity: true,
+            fall_distance: 4.0,
+            ..SimulationState::default()
+        };
+
+        tick(&mut state, &world, PhysicsConfig::default());
+
+        assert_eq!(state.position, Vec3::new(0.5, 1.5, 0.5) + web);
+        assert_eq!(state.velocity, Vec3::ZERO);
+        assert_eq!(state.stuck_speed_multiplier, web);
+        assert_eq!(state.fall_distance, 0.0);
+    }
+
+    #[test]
+    fn entering_a_cobweb_slows_only_the_next_move() {
         let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 1, 0),
@@ -2539,19 +2573,26 @@ mod tests {
         );
         let mut state = SimulationState {
             position: Vec3::new(0.5, 1.5, 0.5),
-            velocity: Vec3::new(1.0, 0.0, 0.0),
+            velocity: Vec3::new(0.1, 0.0, 0.0),
             half_width: 0.3,
             height: 1.8,
-            on_ground: false,
             no_gravity: true,
             ..SimulationState::default()
         };
-        tick(&mut state, &world, PhysicsConfig::default());
-        assert!(state.velocity.x.abs() < 0.03);
-        assert_eq!(state.velocity, Vec3::ZERO);
-        assert!(state.in_web);
-        assert_eq!(state.fall_distance, 0.0);
 
+        tick(&mut state, &world, PhysicsConfig::default());
+
+        assert_eq!(state.position.x, 0.6);
+        assert!(state.in_web);
+        assert_eq!(
+            state.stuck_speed_multiplier,
+            Vec3::new(0.25, java_float(0.05), 0.25)
+        );
+    }
+
+    #[test]
+    fn bubble_columns_push_the_entity_inside() {
+        let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 1, 0),
             BlockState {
@@ -2562,9 +2603,14 @@ mod tests {
                 ..BlockState::default()
             },
         );
-        state.velocity = Vec3::ZERO;
-        state.position.y = 1.5;
-        state.fall_distance = 12.0;
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 1.5, 0.5),
+            half_width: 0.3,
+            height: 1.8,
+            no_gravity: true,
+            fall_distance: 12.0,
+            ..SimulationState::default()
+        };
         tick(&mut state, &world, PhysicsConfig::default());
         assert!(state.velocity.y > 0.0);
         assert_eq!(state.fall_distance, 0.0);
@@ -2600,29 +2646,29 @@ mod tests {
         );
         let mut state = SimulationState {
             position: Vec3::new(0.5, 1.5, 0.5),
-            velocity: Vec3::new(1.0, 1.0, 1.0),
             half_width: 0.3,
             height: 1.8,
-            weaving: true,
             no_gravity: true,
+            fall_distance: 4.0,
+            weaving: true,
             ..SimulationState::default()
         };
 
         tick(&mut state, &world, PhysicsConfig::default());
 
-        assert!((state.position.x - 1.0).abs() < 1.0e-12);
-        assert!((state.position.y - 1.75).abs() < 1.0e-12);
-        assert!((state.position.z - 1.0).abs() < 1.0e-12);
+        assert_eq!(state.stuck_speed_multiplier, Vec3::new(0.5, 0.25, 0.5));
+        assert_eq!(state.fall_distance, 0.0);
     }
 
     #[test]
-    fn powder_snow_applies_source_stuck_multiplier_and_resets_fall_distance() {
+    fn powder_snow_sticks_the_entity_whose_position_it_holds() {
         let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 1, 0),
             BlockState {
                 shape: Some(BlockShape {
                     effect: crate::world::BlockEffect::PowderSnow,
+                    bounds: Aabb::new(Vec3::ZERO, Vec3::ZERO),
                     ..BlockShape::full_block()
                 }),
                 ..BlockState::default()
@@ -2630,7 +2676,6 @@ mod tests {
         );
         let mut state = SimulationState {
             position: Vec3::new(0.5, 1.5, 0.5),
-            velocity: Vec3::new(1.0, 0.0, 0.0),
             half_width: 0.3,
             height: 1.8,
             no_gravity: true,
@@ -2640,8 +2685,7 @@ mod tests {
 
         tick(&mut state, &world, PhysicsConfig::default());
 
-        assert!((state.position.x - 1.4).abs() < 1.0e-12);
-        assert_eq!(state.velocity, Vec3::ZERO);
+        assert_eq!(state.stuck_speed_multiplier, Vec3::new(java_float(0.9), 1.5, java_float(0.9)));
         assert_eq!(state.fall_distance, 0.0);
     }
 
@@ -3015,17 +3059,17 @@ mod tests {
         );
         let mut state = SimulationState {
             position: Vec3::new(0.5, 1.5, 0.5),
-            velocity: Vec3::new(1.0, 0.0, 0.0),
             half_width: 0.3,
             height: 1.8,
             no_gravity: true,
+            fall_distance: 4.0,
             ..SimulationState::default()
         };
 
         tick(&mut state, &world, PhysicsConfig::default());
 
-        assert!((state.position.x - 1.3).abs() < 1.0e-12);
-        assert_eq!(state.velocity, Vec3::ZERO);
+        assert_eq!(state.stuck_speed_multiplier, Vec3::new(java_float(0.8), 0.75, java_float(0.8)));
+        assert_eq!(state.fall_distance, 0.0);
     }
 
     #[test]

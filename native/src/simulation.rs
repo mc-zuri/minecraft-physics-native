@@ -301,6 +301,7 @@ pub struct SimulationState {
     pub fall_flying: bool,
     pub look: Vec3,
     pub firework_boost: Vec3,
+    pub stuck_speed_multiplier: Vec3,
 }
 
 impl From<EntityState> for SimulationState {
@@ -385,6 +386,7 @@ impl From<EntityState> for SimulationState {
             fall_flying: false,
             look: Vec3::new(0.0, 0.0, 1.0),
             firework_boost: Vec3::ZERO,
+            stuck_speed_multiplier: Vec3::ZERO,
         }
     }
 }
@@ -626,6 +628,54 @@ fn apply_fluid_travel_vertical(
         }
         FluidState::Empty => {}
     }
+}
+
+fn stuck_speed_multiplier_inside(
+    state: &SimulationState,
+    world: &WorldSnapshot,
+    release: MinecraftVersion,
+) -> Option<Vec3> {
+    let inset = if !release.at_least(1, 19, 3) {
+        0.001
+    } else if !release.at_least(1, 21, 2) {
+        1.0e-7
+    } else {
+        f64::from(1.0e-5_f32)
+    };
+    let inside = state.bounds().deflate(Vec3::new(inset, inset, inset));
+    let min = block_position(inside.min);
+    let max = block_position(inside.max);
+    let in_powder_snow = world.effect_at(block_position(state.position)) == BlockEffect::PowderSnow;
+    let multiplier_at = |position| match world.effect_at(position) {
+        BlockEffect::Web if state.weaving => Some(Vec3::new(0.5, 0.25, 0.5)),
+        BlockEffect::Web => Some(Vec3::new(0.25, java_float(0.05), 0.25)),
+        BlockEffect::SweetBerryBush if !state.sweet_berry_bush_immune => {
+            Some(Vec3::new(java_float(0.8), 0.75, java_float(0.8)))
+        }
+        BlockEffect::PowderSnow if in_powder_snow => {
+            Some(Vec3::new(java_float(0.9), 1.5, java_float(0.9)))
+        }
+        _ => None,
+    };
+    let mut multiplier = None;
+    if release.at_least(1, 21, 2) {
+        for z in min.2..=max.2 {
+            for y in min.1..=max.1 {
+                for x in min.0..=max.0 {
+                    multiplier = multiplier_at((x, y, z)).or(multiplier);
+                }
+            }
+        }
+    } else {
+        for x in min.0..=max.0 {
+            for y in min.1..=max.1 {
+                for z in min.2..=max.2 {
+                    multiplier = multiplier_at((x, y, z)).or(multiplier);
+                }
+            }
+        }
+    }
+    multiplier
 }
 
 fn climbable(world: &WorldSnapshot, state: &SimulationState) -> bool {
@@ -1090,7 +1140,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     {
         state.freeze_damage += 1.0;
     }
-    let in_sweet_berry_bush = inside_effects.contains(&BlockEffect::SweetBerryBush);
     if inside_effects.contains(&BlockEffect::Cactus)
         || inside_effects.contains(&BlockEffect::Campfire)
     {
@@ -1304,29 +1353,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.velocity =
             state.velocity + relative_movement(input, input_speed, state.yaw, rules.release);
     }
-    if in_web && !ignores_stuck_block {
-        let (horizontal, vertical) = if state.weaving {
-            (0.5, 0.25)
-        } else {
-            (0.25, 0.05)
-        };
-        state.velocity.x *= horizontal;
-        state.velocity.y *= vertical;
-        state.velocity.z *= horizontal;
-        state.fall_distance = 0.0;
-    }
-    if in_powder_snow && !ignores_stuck_block && !state.powder_snow_immune {
-        state.velocity.x *= 0.9;
-        state.velocity.y *= 1.5;
-        state.velocity.z *= 0.9;
-        state.fall_distance = 0.0;
-    }
-    if in_sweet_berry_bush && !ignores_stuck_block && !state.sweet_berry_bush_immune {
-        state.velocity.x *= 0.8;
-        state.velocity.y *= 0.75;
-        state.velocity.z *= 0.8;
-        state.fall_distance = 0.0;
-    }
     let bubble_surface = world.is_air_at((body_position.0, body_position.1 + 1, body_position.2));
     if body_effect == BlockEffect::BubbleUp {
         let (acceleration, maximum) = if bubble_surface {
@@ -1358,7 +1384,13 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             state.velocity.y = 0.0;
         }
     }
-    let desired = back_off_from_edge(state, world, state.velocity, rules.step_height);
+    let mut movement = state.velocity;
+    if !state.no_physics && state.stuck_speed_multiplier.length_squared() > 1.0e-7 {
+        movement = movement.multiply(state.stuck_speed_multiplier);
+        state.stuck_speed_multiplier = Vec3::ZERO;
+        state.velocity = Vec3::ZERO;
+    }
+    let desired = back_off_from_edge(state, world, movement, rules.step_height);
     let bounds = state.bounds();
     let (normal_displacement, normal_collisions, obstacles) = if state.no_physics {
         (desired, [false; 3], Vec::new())
@@ -1517,6 +1549,12 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     } else if checks_fall_damage && !bounced && !reset_fall_distance && displacement.y < 0.0 {
         state.fall_distance += -displacement.y;
     }
+    if !ignores_stuck_block {
+        if let Some(multiplier) = stuck_speed_multiplier_inside(state, world, rules.release) {
+            state.stuck_speed_multiplier = multiplier;
+            state.fall_distance = 0.0;
+        }
+    }
 
     if restitution_enabled {
         let current_movement = state.velocity;
@@ -1578,15 +1616,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         let step_factor = 0.4 + state.velocity.y.abs() * 0.2;
         state.velocity.x *= step_factor;
         state.velocity.z *= step_factor;
-    }
-    if in_powder_snow && !ignores_stuck_block && !state.powder_snow_immune {
-        state.velocity = Vec3::ZERO;
-    }
-    if in_web && !ignores_stuck_block {
-        state.velocity = Vec3::ZERO;
-    }
-    if in_sweet_berry_bush && !ignores_stuck_block && !state.sweet_berry_bush_immune {
-        state.velocity = Vec3::ZERO;
     }
     if honey_sliding {
         let scale = if state.velocity.y < -0.13 {
@@ -1691,9 +1720,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         };
     }
 
-    if in_web && !ignores_stuck_block {
-        state.velocity = Vec3::ZERO;
-    }
     if state.flying {
         state.fall_distance = 0.0;
     }

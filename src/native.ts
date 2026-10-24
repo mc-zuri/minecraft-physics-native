@@ -95,6 +95,8 @@ export interface NativeSimulationState {
     fallFlying?: boolean;
     look?: NativeVec3;
     fireworkBoost?: NativeVec3;
+    /** Entity.stuckSpeedMultiplier: what the next move is scaled by, set inside cobwebs, berry bushes and powder snow. */
+    stuckSpeedMultiplier?: NativeVec3;
 }
 
 export interface NativeEntityPushState {
