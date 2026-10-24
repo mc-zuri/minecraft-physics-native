@@ -1382,7 +1382,6 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         FluidState::Water | FluidState::Waterlogged
     ) && eye_fluid_top > eye_y;
     state.eye_in_lava = head_fluid.fluid == FluidState::Lava && eye_fluid_top > eye_y;
-    let flying_vertical_velocity = state.velocity.y;
     let vertical_drag = match fluid {
         FluidState::Water => rules.water_drag,
         FluidState::Lava => rules.lava_drag,
@@ -1439,6 +1438,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             state.velocity.y += (state.look.y - state.velocity.y) * steering;
         }
     }
+    let flying_vertical_velocity = state.velocity.y;
     let going_down = state.velocity.y <= 0.0;
     let travel_gravity = if state.slow_falling && going_down {
         rules.gravity.min(0.01)
@@ -1849,13 +1849,10 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         } else {
             vertical_drag
         };
-        state.velocity.y *= if state.flying {
-            0.6
-        } else if gliding {
-            1.0
-        } else {
-            java_float(air_drag)
-        };
+        state.velocity.y *= if gliding { 1.0 } else { java_float(air_drag) };
+    }
+    if state.flying {
+        state.velocity.y = flying_vertical_velocity * 0.6;
     }
 
     if rules.release.at_least(1, 21, 2) {

@@ -2641,6 +2641,51 @@ mod tests {
     }
 
     #[test]
+    fn creative_flight_keeps_its_vertical_motion_through_collisions() {
+        let mut world = WorldSnapshot::new();
+        for y in [0, 3] {
+            world.set_block(
+                (0, y, 0),
+                BlockState {
+                    id: 1,
+                    shape: Some(BlockShape::full_block()),
+                    ..BlockState::default()
+                },
+            );
+        }
+        let flying = SimulationState {
+            is_player: true,
+            flying: true,
+            flying_speed: java_float(0.05),
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+        let mut ascending = SimulationState {
+            position: Vec3::new(0.5, 1.0, 0.5),
+            velocity: Vec3::new(0.0, 0.1, 0.0),
+            jump_requested: true,
+            ..flying
+        };
+        tick(&mut ascending, &world, PhysicsConfig::default());
+        let mut landing = SimulationState {
+            position: Vec3::new(0.5, 1.05, 0.5),
+            velocity: Vec3::new(0.0, -0.1, 0.0),
+            sneaking: true,
+            ..flying
+        };
+        tick(&mut landing, &world, PhysicsConfig::default());
+
+        let impulse = f64::from(0.05_f32 * 3.0);
+        assert!(ascending.collided_vertically);
+        assert!(ascending.position.y < 1.25);
+        assert_eq!(ascending.velocity.y, (0.1 + impulse) * 0.6);
+        assert!(landing.on_ground);
+        assert!(landing.position.y > 0.9);
+        assert_eq!(landing.velocity.y, (-0.1 - impulse) * 0.6);
+    }
+
+    #[test]
     fn creative_flight_adds_the_impulse_before_negligible_motion_is_cut() {
         let world = WorldSnapshot::new();
         let mut state = SimulationState {
