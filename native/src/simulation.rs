@@ -1206,6 +1206,68 @@ fn back_off_from_edge(
     Vec3::new(x, delta.y, z)
 }
 
+/// LocalPlayer.moveTowardsClosestSpace (checkInBlock before 1.16): from each corner of the box
+/// shrunk to 0.35 of its width, a player inside a suffocating block moves at 0.1 toward the
+/// nearest side of that block that is open.
+fn move_towards_closest_space(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    release: MinecraftVersion,
+) {
+    let bounds = state.bounds();
+    let suffocates_at = |x: i32, z: i32| {
+        if release.at_least(1, 16, 0) {
+            let column = Aabb::new(
+                Vec3::new(f64::from(x), bounds.min.y, f64::from(z)),
+                Vec3::new(f64::from(x) + 1.0, bounds.max.y, f64::from(z) + 1.0),
+            );
+            world.collides_with_suffocating_block(column.deflate(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7)))
+        } else {
+            (bounds.min.y.floor() as i32..bounds.max.y.ceil() as i32)
+                .any(|y| world.is_suffocating((x, y, z)))
+        }
+    };
+    let offset = state.half_width * 2.0 * 0.35;
+    let corners = [
+        (-offset, offset),
+        (-offset, -offset),
+        (offset, -offset),
+        (offset, offset),
+    ];
+    for (offset_x, offset_z) in corners {
+        let x = state.position.x + offset_x;
+        let z = state.position.z + offset_z;
+        let (cell_x, cell_z) = (x.floor() as i32, z.floor() as i32);
+        if !suffocates_at(cell_x, cell_z) {
+            continue;
+        }
+        let (inside_x, inside_z) = (x - f64::from(cell_x), z - f64::from(cell_z));
+        let sides = [
+            (-1, 0, inside_x),
+            (1, 0, 1.0 - inside_x),
+            (0, -1, inside_z),
+            (0, 1, 1.0 - inside_z),
+        ];
+        let mut closest = if release.at_least(1, 16, 0) {
+            f64::MAX
+        } else {
+            9999.0
+        };
+        let mut direction = None;
+        for (step_x, step_z, distance) in sides {
+            if distance < closest && !suffocates_at(cell_x + step_x, cell_z + step_z) {
+                closest = distance;
+                direction = Some((step_x, step_z));
+            }
+        }
+        match direction {
+            Some((0, step_z)) => state.velocity.z = 0.1 * f64::from(step_z),
+            Some((step_x, _)) => state.velocity.x = 0.1 * f64::from(step_x),
+            None => {}
+        }
+    }
+}
+
 fn restitute_movement_after_collisions(
     state: &mut SimulationState,
     world: &WorldSnapshot,
@@ -1357,6 +1419,9 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     } else {
         world.has_fluid_block_inside(FluidState::Lava, bounds)
     };
+    if state.is_player && !state.no_physics {
+        move_towards_closest_space(state, world, rules.release);
+    }
     if state.flying {
         let direction = i8::from(state.jump_requested) - i8::from(state.sneaking);
         if direction != 0 {

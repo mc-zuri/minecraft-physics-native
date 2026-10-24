@@ -305,6 +305,8 @@ export interface NativeBlockUpdate {
     bounceRestitution?: number;
     suppressesBounce?: boolean;
     fallDamageResetting?: boolean;
+    /** BlockState.isSuffocating when it is not "a full collision cube" (glass, leaves: false). */
+    suffocating?: boolean;
     remove?: boolean;
 }
 

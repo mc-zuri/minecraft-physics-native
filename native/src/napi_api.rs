@@ -344,6 +344,7 @@ pub struct NativeBlockUpdate {
     pub fall_damage_resetting: Option<bool>,
     pub bounce_restitution: Option<f64>,
     pub suppresses_bounce: Option<bool>,
+    pub suffocating: Option<bool>,
     pub remove: Option<bool>,
 }
 
@@ -902,6 +903,7 @@ impl NativeWorld {
                 fall_damage_resetting: shape.fall_damage_resetting.unwrap_or(false),
                 bounce_restitution: shape.bounce_restitution.unwrap_or(0.0),
                 suppresses_bounce: shape.suppresses_bounce.unwrap_or(false),
+                suffocating: None,
             },
         );
         Ok(())
@@ -1030,6 +1032,7 @@ impl NativeWorld {
                 && update.fall_damage_resetting.is_none()
                 && update.bounce_restitution.is_none()
                 && update.suppresses_bounce.is_none()
+                && update.suffocating.is_none()
             {
                 self.inner.block(position)
             } else {
@@ -1122,6 +1125,7 @@ impl NativeWorld {
                 fall_damage_resetting: false,
                 bounce_restitution: 0.0,
                 suppresses_bounce: false,
+                suffocating: None,
             },
         );
         Ok(())
@@ -2517,6 +2521,7 @@ mod tests {
             fall_damage_resetting: None,
             bounce_restitution: None,
             suppresses_bounce: None,
+            suffocating: None,
             remove: None,
         }
     }
@@ -3492,6 +3497,7 @@ fn block_update_state(update: &NativeBlockUpdate) -> Result<BlockState> {
                 .map_or(Vec3::ZERO, |flow| Vec3::new(flow.x, flow.y, flow.z)),
             fluid_falling,
             fall_damage_resetting,
+            suffocating: update.suffocating,
         });
     }
     Ok(BlockState {
@@ -3548,6 +3554,7 @@ fn block_update_state(update: &NativeBlockUpdate) -> Result<BlockState> {
             .map_or(Vec3::ZERO, |flow| Vec3::new(flow.x, flow.y, flow.z)),
         fluid_falling,
         fall_damage_resetting,
+        suffocating: update.suffocating,
     })
 }
 

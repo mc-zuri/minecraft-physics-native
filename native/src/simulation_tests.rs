@@ -2205,6 +2205,56 @@ mod tests {
         assert!((state.position.x - f64::from(0.98_f32 * 0.45_f32) * java_float(0.1)).abs() < 1.0e-12);
     }
 
+    fn wall_along_z(suffocating: Option<bool>) -> WorldSnapshot {
+        let mut world = WorldSnapshot::new();
+        for y in 0..2 {
+            for z in -1..=1 {
+                world.set_block(
+                    (0, y, z),
+                    BlockState {
+                        id: 1,
+                        shape: Some(BlockShape::full_block()),
+                        suffocating,
+                        ..BlockState::default()
+                    },
+                );
+            }
+        }
+        world
+    }
+
+    fn pushed_out(world: &WorldSnapshot, version: &str, is_player: bool) -> SimulationState {
+        let mut state = SimulationState {
+            position: Vec3::new(0.2, 0.0, 0.5),
+            half_width: 0.3,
+            height: 1.8,
+            is_player,
+            no_gravity: true,
+            ..SimulationState::default()
+        };
+        crate::versioned::dispatch(version, &mut state, world, PhysicsConfig::default()).unwrap();
+        state
+    }
+
+    #[test]
+    fn players_inside_a_suffocating_block_move_toward_its_nearest_open_side() {
+        let world = wall_along_z(None);
+
+        for version in ["1.15.2", "1.21.1"] {
+            let player = pushed_out(&world, version, true);
+            assert_eq!(player.position.x, 0.2 + -0.1, "{version}");
+            assert_eq!(player.position.z, 0.5, "{version}");
+        }
+        assert_eq!(pushed_out(&world, "1.21.1", false).position.x, 0.2);
+    }
+
+    #[test]
+    fn blocks_that_do_not_suffocate_leave_the_player_inside() {
+        let world = wall_along_z(Some(false));
+
+        assert_eq!(pushed_out(&world, "1.21.1", true).position.x, 0.2);
+    }
+
     #[test]
     fn sneaking_spectators_do_not_back_off_from_edges() {
         let mut state = SimulationState {

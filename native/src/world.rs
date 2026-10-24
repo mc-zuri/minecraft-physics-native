@@ -116,6 +116,7 @@ pub struct BlockState {
     pub fluid_flow: Vec3,
     pub fluid_falling: bool,
     pub fall_damage_resetting: bool,
+    pub suffocating: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -811,6 +812,37 @@ impl WorldSnapshot {
                 .map(|(_, value)| value.as_str())
         };
         value("bottom") == Some("true") && value("distance").is_some_and(|distance| distance != "0")
+    }
+
+    /// BlockState.isSuffocating: as the block says, else a full collision cube.
+    #[must_use]
+    pub fn is_suffocating(&self, position: BlockPosition) -> bool {
+        let block = self.block(position);
+        block.suffocating.unwrap_or_else(|| {
+            !self.extra_shapes.contains_key(&position)
+                && block.shape.is_some_and(|shape| {
+                    shape.bounds == Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0))
+                })
+        })
+    }
+
+    /// CollisionGetter.collidesWithSuffocatingBlock: a suffocating block's collision shape meets
+    /// the area.
+    #[must_use]
+    pub fn collides_with_suffocating_block(&self, area: Aabb) -> bool {
+        let cells = |min: f64, max: f64| min.floor() as i32..=max.floor() as i32;
+        cells(area.min.x, area.max.x).any(|x| {
+            cells(area.min.y, area.max.y).any(|y| {
+                cells(area.min.z, area.max.z).any(|z| {
+                    let offset = Vec3::new(f64::from(x), f64::from(y), f64::from(z));
+                    self.is_suffocating((x, y, z))
+                        && self.block_collision_shapes((x, y, z)).any(|shape| {
+                            is_non_empty_shape(shape.bounds)
+                                && shape.bounds.translated(offset).intersects(area)
+                        })
+                })
+            })
+        })
     }
 
     #[must_use]
