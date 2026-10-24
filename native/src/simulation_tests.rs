@@ -2598,6 +2598,22 @@ mod tests {
         assert_eq!(modern.y, 0.1 * f64::from(0.8_f32));
     }
 
+    #[test]
+    fn flying_player_swims_up_in_water_before_1_13() {
+        let world = legacy_water_world(&[((0, 0, 0), Vec3::ZERO), ((0, 1, 0), Vec3::ZERO)]);
+        let mut state = SimulationState {
+            flying: true,
+            jump_requested: true,
+            ..legacy_water_player(Vec3::new(0.5, 0.5, 0.5), Vec3::ZERO)
+        };
+
+        crate::versioned::dispatch("1.12.2", &mut state, &world, PhysicsConfig::default())
+            .unwrap();
+
+        assert!(state.in_water);
+        assert_eq!(state.velocity.y, 0.03999999910593033 * 0.6);
+    }
+
     fn lava_world(position: (i32, i32, i32)) -> WorldSnapshot {
         let mut world = WorldSnapshot::new();
         world.set_block(

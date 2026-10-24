@@ -1047,7 +1047,8 @@ enum FluidJump {
 
 /// LivingEntity.aiStep's jump: swim up (jumpInLiquid) in fluid deeper than
 /// the jump threshold or off the ground, else jump from the ground. Before
-/// 1.16 the water height is held against 0.4 and any lava swims up.
+/// 1.16 the water height is held against 0.4 and any lava swims up; before
+/// 1.13 any water or lava the entity is in does.
 fn fluid_jump(
     state: &SimulationState,
     water_height: f64,
@@ -1055,6 +1056,15 @@ fn fluid_jump(
     threshold: f64,
     release: MinecraftVersion,
 ) -> FluidJump {
+    if legacy_fluid::applies(release) {
+        return if state.in_water || state.in_lava {
+            FluidJump::Swim
+        } else if state.on_ground {
+            FluidJump::Ground
+        } else {
+            FluidJump::None
+        };
+    }
     if !release.at_least(1, 16, 0) {
         let in_water = water_height > 0.0;
         return if in_water && (!state.on_ground || water_height > 0.4) || state.in_lava {
