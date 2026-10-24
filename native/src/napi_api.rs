@@ -626,8 +626,12 @@ impl From<SimulationState> for NativeSimulationState {
             soul_speed: Some(value.soul_speed),
             water_movement_efficiency: Some(value.water_movement_efficiency),
             movement_efficiency: Some(value.movement_efficiency),
-            air_drag_modifier: Some(value.air_drag_modifier),
-            friction_modifier: Some(value.friction_modifier),
+            air_drag_modifier: value
+                .air_drag_modifier_present
+                .then_some(value.air_drag_modifier),
+            friction_modifier: value
+                .friction_modifier_present
+                .then_some(value.friction_modifier),
             sneaking_speed: Some(value.sneaking_speed),
             fall_damage: Some(value.fall_damage),
             fall_flying: Some(value.fall_flying),
@@ -2511,6 +2515,18 @@ mod tests {
         NativeVec3 { x, y, z }
     }
 
+    fn default_config() -> NativeSimulationConfig {
+        NativeSimulationConfig {
+            gravity: None,
+            drag: None,
+            movement_speed: None,
+            sprint_multiplier: None,
+            jump_velocity: None,
+            step_height: None,
+            negligible_velocity: None,
+        }
+    }
+
     fn pose_state() -> NativeSimulationState {
         create_simulation_state(NativeEntityDescriptor {
             position: NativeVec3 {
@@ -2592,18 +2608,28 @@ mod tests {
                 release.version.to_string(),
                 &NativeWorld::new(),
                 pose_state(),
-                NativeSimulationConfig {
-                    gravity: None,
-                    drag: None,
-                    movement_speed: None,
-                    sprint_multiplier: None,
-                    jump_velocity: None,
-                    step_height: None,
-                    negligible_velocity: None,
-                },
+                default_config(),
             );
             assert!(result.is_ok(), "{} should be accepted", release.version);
         }
+    }
+
+    #[test]
+    fn ticking_the_output_again_keeps_the_default_drag() {
+        let world = NativeWorld::new();
+        let mut state = pose_state();
+        state.velocity = vec3(1.0, 0.0, 0.0);
+        state.on_ground = false;
+
+        let once = simulate_versioned_tick("26.2".to_string(), &world, state, default_config())
+            .expect("26.2 is supported");
+        let moved_once = once.velocity.x;
+        assert_eq!(once.air_drag_modifier, None);
+        assert_eq!(once.friction_modifier, None);
+        let twice = simulate_versioned_tick("26.2".to_string(), &world, once, default_config())
+            .expect("26.2 is supported");
+
+        assert_eq!(twice.velocity.x, moved_once * crate::math::java_float(0.91));
     }
 
     #[test]
