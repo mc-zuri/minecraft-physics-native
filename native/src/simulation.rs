@@ -1,6 +1,7 @@
 use crate::block_traversal::{blocks_visited, Movement};
 use crate::collision::{collide, collide_legacy, vanilla_equal, CollisionRules, StepUp};
 use crate::entity::{Dimensions, EntityFlags, EntityState};
+use crate::legacy_fluid;
 use crate::math::{java_cos, java_cos_legacy, java_float, java_sin, java_sin_legacy, Aabb, Vec3};
 use crate::version::MinecraftVersion;
 use crate::world::WorldSnapshot;
@@ -1707,14 +1708,21 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             .iter()
             .any(|shape| shape.intersects(eye_box));
     let affected_by_fluids = !(state.is_player && state.flying);
-    let water = world.fluid_contact(FluidState::Water, bounds, rules.release);
-    state.in_water = water.touching;
-    if state.in_water {
-        state.fall_distance = 0.0;
-        if affected_by_fluids {
-            push_by_fluid(state, water, rules.water_flow_scale, rules.release);
+    let legacy_fluids = legacy_fluid::applies(rules.release);
+    let water = if legacy_fluids {
+        legacy_fluid::handle_water_movement(state, world, affected_by_fluids, rules.release);
+        FluidContact::default()
+    } else {
+        let water = world.fluid_contact(FluidState::Water, bounds, rules.release);
+        state.in_water = water.touching;
+        if state.in_water {
+            state.fall_distance = 0.0;
+            if affected_by_fluids {
+                push_by_fluid(state, water, rules.water_flow_scale, rules.release);
+            }
         }
-    }
+        water
+    };
     let lava = world.fluid_contact(FluidState::Lava, bounds, rules.release);
     if rules.release.at_least(1, 16, 0) {
         if affected_by_fluids {
@@ -2152,7 +2160,9 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     }
     let checks_fall_damage =
         !state.no_physics && !(state.is_player && rules.release == MinecraftVersion::new(1, 21, 4));
-    if checks_fall_damage && !state.in_water {
+    if checks_fall_damage && !state.in_water && legacy_fluids {
+        legacy_fluid::handle_water_movement(state, world, affected_by_fluids, rules.release);
+    } else if checks_fall_damage && !state.in_water {
         let water = world.fluid_contact(FluidState::Water, state.bounds(), rules.release);
         if water.touching {
             state.in_water = true;

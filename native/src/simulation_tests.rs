@@ -2494,6 +2494,81 @@ mod tests {
         assert_eq!(state.fall_distance, 1.5);
     }
 
+    fn legacy_water_world(blocks: &[((i32, i32, i32), Vec3)]) -> WorldSnapshot {
+        let mut world = WorldSnapshot::new();
+        for &(position, flow) in blocks {
+            world.set_block(
+                position,
+                BlockState {
+                    fluid: FluidState::Water,
+                    fluid_source: true,
+                    fluid_flow: flow,
+                    ..BlockState::default()
+                },
+            );
+        }
+        world
+    }
+
+    fn legacy_water_player(position: Vec3, velocity: Vec3) -> SimulationState {
+        SimulationState {
+            position,
+            velocity,
+            half_width: 0.3,
+            height: 1.8,
+            is_player: true,
+            no_gravity: true,
+            ..SimulationState::default()
+        }
+    }
+
+    #[test]
+    fn water_pushes_by_the_normalized_sum_of_its_flows_before_1_13() {
+        let world = legacy_water_world(&[
+            ((0, 0, 0), Vec3::new(1.0, 0.0, 0.0)),
+            ((1, 0, 0), Vec3::new(0.0, 0.0, 1.0)),
+        ]);
+        let pushed = |version| {
+            let mut state = legacy_water_player(Vec3::new(1.0, 0.0, 0.5), Vec3::ZERO);
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            assert!(state.in_water, "{version}");
+            state.velocity
+        };
+
+        let current = 1.0 / f64::from(2.0_f32.sqrt()) * 0.014;
+        let legacy = pushed("1.12.2");
+        assert_eq!(legacy.x, current * f64::from(0.8_f32));
+        assert_eq!(legacy.z, current * f64::from(0.8_f32));
+        assert_eq!(pushed("1.13.2").x, 0.007 * f64::from(0.8_f32));
+    }
+
+    #[test]
+    fn water_is_touched_only_by_the_box_shrunk_by_0_4_before_1_13() {
+        let world = legacy_water_world(&[((0, 0, 0), Vec3::ZERO)]);
+        let in_water = |version| {
+            let mut state = legacy_water_player(Vec3::new(0.5, 0.6, 0.5), Vec3::ZERO);
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            state.in_water
+        };
+
+        assert!(!in_water("1.8.8"));
+        assert!(!in_water("1.12.2"));
+        assert!(in_water("1.13.2"));
+    }
+
+    #[test]
+    fn water_reached_by_the_move_is_touched_before_1_13() {
+        let world = legacy_water_world(&[((0, 0, 0), Vec3::ZERO)]);
+        let mut state = legacy_water_player(Vec3::new(0.5, 1.5, 0.5), Vec3::new(0.0, -1.2, 0.0));
+
+        crate::versioned::dispatch("1.8.8", &mut state, &world, PhysicsConfig::default()).unwrap();
+
+        assert!(state.in_water);
+        assert_eq!(state.fall_distance, 1.2);
+    }
+
     #[test]
     fn supporting_effect_uses_entity_footprint_not_center_cell() {
         let mut world = WorldSnapshot::new();

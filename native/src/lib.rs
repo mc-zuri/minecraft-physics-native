@@ -4,6 +4,7 @@ pub mod entity;
 #[path = "../data/mod.rs"]
 pub mod data;
 pub use data as generated_data;
+mod legacy_fluid;
 pub mod math;
 mod napi_api;
 pub mod player;
