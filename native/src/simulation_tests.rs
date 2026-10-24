@@ -348,6 +348,30 @@ mod tests {
     }
 
     #[test]
+    fn ground_speed_before_1_14_divides_by_the_cubed_inertia() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 99, 0),
+            BlockState {
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        for version in ["1.8.8", "1.12.2", "1.13.2"] {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 100.0, 0.5),
+                input: Vec3::new(0.0, 0.0, -1.0),
+                on_ground: true,
+                is_player: true,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            assert_eq!(state.velocity.z, -0.05350800074768003, "{version}");
+        }
+    }
+
+    #[test]
     fn no_physics_bypasses_collision_and_clears_collision_flags() {
         let mut world = WorldSnapshot::new();
         world.set_block(

@@ -919,7 +919,16 @@ fn jump_power(
     }
 }
 
-fn friction_influenced_speed(speed: f64, friction: f64) -> f64 {
+fn friction_influenced_speed(speed: f64, friction: f64, release: MinecraftVersion) -> f64 {
+    if !release.at_least(1, 14, 0) {
+        let inertia = friction as f32 * 0.91;
+        let acceleration = if release.at_least(1, 13, 0) {
+            0.16277137_f32
+        } else {
+            0.16277136_f32
+        };
+        return f64::from(speed as f32 * (acceleration / (inertia * inertia * inertia)));
+    }
     let friction = friction as f32;
     f64::from(speed as f32 * (0.21600002_f32 / (friction * friction * friction)))
 }
@@ -1500,7 +1509,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     };
     let input_speed = if matches!(fluid, FluidState::Empty) {
         if state.on_ground {
-            friction_influenced_speed(movement_speed, block_friction)
+            friction_influenced_speed(movement_speed, block_friction, rules.release)
         } else {
             flying_speed(state, rules.release)
         }
