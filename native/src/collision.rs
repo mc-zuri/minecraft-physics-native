@@ -145,7 +145,12 @@ fn lifted_step_up(
 }
 
 fn collide_bounding_box(bounds: Aabb, movement: Vec3, obstacles: &[Aabb]) -> Vec3 {
-    collide_with_shapes(movement, bounds, obstacles)
+    let colliders = colliders_in(obstacles, bounds.expand_towards(movement));
+    collide_with_shapes(movement, bounds, &colliders)
+}
+
+fn colliders_in(obstacles: &[Aabb], query: Aabb) -> Vec<Aabb> {
+    obstacles.iter().copied().filter(|obstacle| obstacle.intersects(query)).collect()
 }
 
 fn collide_with_shapes(movement: Vec3, bounds: Aabb, colliders: &[Aabb]) -> Vec3 {
@@ -295,6 +300,17 @@ mod tests {
 
         let step = f64::from(0.6_f32);
         assert_eq!(motion, Vec3::new(1.2 - 1.0, step + (0.5 - step), 0.0));
+    }
+
+    #[test]
+    fn keeps_a_negligible_movement_with_no_obstacle_near_the_swept_box() {
+        let entity = box_at(0.0, 0.0, 0.0);
+        let movement = Vec3::new(0.5e-7, 0.0, 0.0);
+        let far = [box_at(5.0, 0.0, 0.0)];
+        let near = [box_at(1.0, 0.0, 0.0)];
+
+        assert_eq!(collide(entity, movement, &far, false, 0.6, StepUp::Lifted), movement);
+        assert_eq!(collide(entity, movement, &near, false, 0.6, StepUp::Lifted), Vec3::ZERO);
     }
 
     #[test]

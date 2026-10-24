@@ -734,21 +734,21 @@ mod tests {
     fn a_motion_cut_within_the_equality_tolerance_keeps_going_from_1_18_2() {
         let mut world = WorldSnapshot::new();
         world.set_block(
-            (0, -1, 0),
+            (-1, 0, 0),
             BlockState {
                 shape: Some(BlockShape::full_block()),
                 ..BlockState::default()
             },
         );
-        let standing = SimulationState {
-            position: Vec3::new(0.5, 0.0, 0.5),
-            velocity: Vec3::new(-9.59e-8, -0.0784, 0.0136),
-            on_ground: true,
+        let against_wall = SimulationState {
+            position: Vec3::new(0.3, 0.0, 0.5),
+            velocity: Vec3::new(-5.0e-6, 0.0, 0.0136),
+            no_gravity: true,
             ..SimulationState::default()
         };
 
-        let legacy = velocity_after_move(&world, standing, MinecraftVersion::new(1, 18, 1));
-        let modern = velocity_after_move(&world, standing, MinecraftVersion::new(1, 18, 2));
+        let legacy = velocity_after_move(&world, against_wall, MinecraftVersion::new(1, 18, 1));
+        let modern = velocity_after_move(&world, against_wall, MinecraftVersion::new(1, 18, 2));
 
         assert_eq!(legacy.x, 0.0);
         assert!(modern.x < 0.0);
