@@ -245,6 +245,7 @@ pub struct NativeSimulationState {
     pub look: Option<NativeVec3>,
     pub firework_boost: Option<NativeVec3>,
     pub stuck_speed_multiplier: Option<NativeVec3>,
+    pub previous_position: Option<NativeVec3>,
 }
 
 #[napi(object)]
@@ -559,6 +560,7 @@ impl From<NativeSimulationState> for SimulationState {
                 .stuck_speed_multiplier
                 .map(Into::into)
                 .unwrap_or(Vec3::ZERO),
+            previous_position: value.previous_position.map(Into::into),
         }
     }
 }
@@ -647,6 +649,7 @@ impl From<SimulationState> for NativeSimulationState {
             look: Some(value.look.into()),
             firework_boost: Some(value.firework_boost.into()),
             stuck_speed_multiplier: Some(value.stuck_speed_multiplier.into()),
+            previous_position: value.previous_position.map(Into::into),
         }
     }
 }
@@ -3061,6 +3064,7 @@ mod tests {
                 look: None,
                 firework_boost: None,
                 stuck_speed_multiplier: None,
+                previous_position: None,
             },
             no_physics: false,
             vehicle_id: None,

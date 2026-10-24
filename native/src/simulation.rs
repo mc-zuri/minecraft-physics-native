@@ -5,6 +5,8 @@ use crate::version::MinecraftVersion;
 use crate::world::WorldSnapshot;
 use crate::world::{BlockEffect, EntityCollisionContext, FluidContact, FluidState};
 
+type BlockPosition = (i32, i32, i32);
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PhysicsConfig {
     pub gravity: f64,
@@ -302,6 +304,7 @@ pub struct SimulationState {
     pub look: Vec3,
     pub firework_boost: Vec3,
     pub stuck_speed_multiplier: Vec3,
+    pub previous_position: Option<Vec3>,
 }
 
 impl From<EntityState> for SimulationState {
@@ -387,6 +390,7 @@ impl From<EntityState> for SimulationState {
             look: Vec3::new(0.0, 0.0, 1.0),
             firework_boost: Vec3::ZERO,
             stuck_speed_multiplier: Vec3::ZERO,
+            previous_position: None,
         }
     }
 }
@@ -687,6 +691,7 @@ fn stuck_speed_multiplier_inside(
 fn block_speed_factor(
     world: &WorldSnapshot,
     state: &SimulationState,
+    support: Option<BlockPosition>,
     release: MinecraftVersion,
 ) -> f32 {
     if state.is_player && (state.flying || state.fall_flying) {
@@ -696,7 +701,7 @@ fn block_speed_factor(
         BlockEffect::SoulSand | BlockEffect::Honey => 0.4_f32,
         _ => 1.0,
     };
-    let below = block_below_affecting_movement(world, state, release);
+    let below = block_below_affecting_movement(state, support, release);
     let at_position = factor_at(block_position(state.position));
     let factor = if at_position == 1.0 {
         factor_at(below)
@@ -719,10 +724,10 @@ fn block_speed_factor(
 }
 
 fn block_below_affecting_movement(
-    world: &WorldSnapshot,
     state: &SimulationState,
+    support: Option<BlockPosition>,
     release: MinecraftVersion,
-) -> (i32, i32, i32) {
+) -> BlockPosition {
     let below = |offset: f64| {
         (
             state.position.x.floor() as i32,
@@ -736,41 +741,62 @@ fn block_below_affecting_movement(
     if !release.at_least(1, 20, 0) {
         return below(0.5000001);
     }
-    on_position(world, state, 0.500001)
+    on_position(state, support, 0.500001)
 }
 
 fn landing_position(
-    world: &WorldSnapshot,
     state: &SimulationState,
+    support: Option<BlockPosition>,
     release: MinecraftVersion,
-) -> (i32, i32, i32) {
+) -> BlockPosition {
     if release.at_least(1, 20, 0) {
-        on_position(world, state, 0.2)
+        on_position(state, support, 0.2)
     } else {
         block_position(state.position - Vec3::new(0.0, f64::from(0.2_f32), 0.0))
     }
 }
 
-fn on_position(world: &WorldSnapshot, state: &SimulationState, offset: f32) -> (i32, i32, i32) {
+fn on_position(
+    state: &SimulationState,
+    support: Option<BlockPosition>,
+    offset: f32,
+) -> BlockPosition {
     let below = block_position(state.position - Vec3::new(0.0, f64::from(offset), 0.0));
-    let bounds = state.bounds();
-    let support_area = Aabb::new(
-        Vec3::new(bounds.min.x, bounds.min.y - 1.0e-6, bounds.min.z),
-        Vec3::new(bounds.max.x, bounds.min.y, bounds.max.z),
-    );
-    match state
-        .on_ground
-        .then(|| world.supporting_block_position(support_area, state.position))
-        .flatten()
-    {
+    match support {
         Some((x, _, z)) => (x, below.1, z),
         None => below,
     }
 }
 
+/// Entity.mainSupportingBlockPos (1.20+, checkSupportingBlock): the block under an entity on the
+/// ground that supports it, else, after a move that leaves the box over nothing, the one under
+/// the box where the move started.
+fn main_supporting_block(
+    world: &WorldSnapshot,
+    state: &SimulationState,
+    movement: Option<Vec3>,
+) -> Option<BlockPosition> {
+    if !state.on_ground {
+        return None;
+    }
+    let bounds = state.bounds();
+    let area = Aabb::new(
+        Vec3::new(bounds.min.x, bounds.min.y - 1.0e-6, bounds.min.z),
+        Vec3::new(bounds.max.x, bounds.min.y, bounds.max.z),
+    );
+    world
+        .supporting_block_position(area, state.position)
+        .or_else(|| {
+            let movement = movement?;
+            let start = area.translated(Vec3::new(-movement.x, 0.0, -movement.z));
+            world.supporting_block_position(start, state.position)
+        })
+}
+
 fn apply_block_effects(
     state: &mut SimulationState,
     world: &WorldSnapshot,
+    support: Option<BlockPosition>,
     release: MinecraftVersion,
 ) {
     if state.no_physics {
@@ -778,7 +804,7 @@ fn apply_block_effects(
     }
     let stepping_carefully = state.stepping_carefully || state.sneaking;
     if state.on_ground {
-        match world.effect_at(landing_position(world, state, release)) {
+        match world.effect_at(landing_position(state, support, release)) {
             BlockEffect::Slime if !stepping_carefully && state.velocity.y.abs() < 0.1 => {
                 let step_factor = 0.4 + state.velocity.y.abs() * 0.2;
                 state.velocity.x *= step_factor;
@@ -1271,6 +1297,7 @@ fn move_towards_closest_space(
 fn restitute_movement_after_collisions(
     state: &mut SimulationState,
     world: &WorldSnapshot,
+    support: Option<BlockPosition>,
     rules: VersionPhysicsRules,
     collisions: [bool; 3],
     moved_y: f64,
@@ -1301,7 +1328,7 @@ fn restitute_movement_after_collisions(
     let restitution = if !state.vertical_collision_below {
         entity_restitution
     } else {
-        let effect_state = world.block(landing_position(world, state, rules.release));
+        let effect_state = world.block(landing_position(state, support, rules.release));
         if -current.y < gravity || suppressing_bounce || effect_state.suppresses_bounce {
             0.0
         } else {
@@ -1375,7 +1402,11 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         state.position.y.floor() as i32,
         state.position.z.floor() as i32,
     );
-    let below_position = block_below_affecting_movement(world, state, rules.release);
+    let previous_movement = state
+        .previous_position
+        .map(|previous| state.position - previous);
+    let mut support = main_supporting_block(world, state, previous_movement);
+    let below_position = block_below_affecting_movement(state, support, rules.release);
     let bounds = state.bounds();
     let eye_height = state.eye_height.unwrap_or(state.height * 0.85);
     let eye_half_width = state.half_width * 0.8;
@@ -1821,6 +1852,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             state.block_fall_callback =
                 state.vertical_collision_below && state.controlled_by_local_instance;
             state.on_ground = state.collided_vertically && desired.y < 0.0;
+            support = main_supporting_block(world, state, Some(displacement));
         }
     } else if rules.release.at_least(1, 21, 9) {
         state.collided_horizontally = false;
@@ -1852,7 +1884,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
             }
         }
     }
-    let landed_on = world.effect_at(landing_position(world, state, rules.release));
+    let landed_on = world.effect_at(landing_position(state, support, rules.release));
     let bounce_scale = if state.is_player { 1.0 } else { 0.8 };
     let bounced =
         !restitution_enabled && collisions[1] && landed_on == BlockEffect::Slime && !state.sneaking;
@@ -1902,7 +1934,14 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     }
 
     if restitution_enabled {
-        restitute_movement_after_collisions(state, world, rules, collisions, displacement.y);
+        restitute_movement_after_collisions(
+            state,
+            world,
+            support,
+            rules,
+            collisions,
+            displacement.y,
+        );
     } else {
         if collisions[0] {
             state.velocity.x = 0.0;
@@ -1922,10 +1961,10 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         }
     }
     if !rules.release.at_least(1, 21, 2) {
-        apply_block_effects(state, world, rules.release);
+        apply_block_effects(state, world, support, rules.release);
     }
     if rules.release.at_least(1, 15, 0) && !state.no_physics {
-        let speed_factor = f64::from(block_speed_factor(world, state, rules.release));
+        let speed_factor = f64::from(block_speed_factor(world, state, support, rules.release));
         state.velocity.x *= speed_factor;
         state.velocity.z *= speed_factor;
     }
@@ -2006,12 +2045,13 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     }
 
     if rules.release.at_least(1, 21, 2) {
-        apply_block_effects(state, world, rules.release);
+        apply_block_effects(state, world, support, rules.release);
     }
     if state.is_player && state.flying && state.on_ground && !state.no_physics {
         state.flying = false;
     }
     state.was_sprinting = state.sprinting;
+    state.previous_position = Some(old_position);
 
     TickResult {
         displacement,

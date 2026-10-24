@@ -98,6 +98,11 @@ export interface NativeSimulationState {
     fireworkBoost?: NativeVec3;
     /** Entity.stuckSpeedMultiplier: what the next move is scaled by, set inside cobwebs, berry bushes and powder snow. */
     stuckSpeedMultiplier?: NativeVec3;
+    /**
+     * The position the last tick started from: its move finds the block supporting an entity that walked off
+     * an edge under the box where the move began (Entity.mainSupportingBlockPos, 1.20+).
+     */
+    previousPosition?: NativeVec3;
 }
 
 export interface NativeEntityPushState {

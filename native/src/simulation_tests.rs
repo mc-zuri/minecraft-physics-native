@@ -2205,6 +2205,76 @@ mod tests {
         assert!((state.position.x - f64::from(0.98_f32 * 0.45_f32) * java_float(0.1)).abs() < 1.0e-12);
     }
 
+    fn ice_edge_beside(lower: BlockShape) -> WorldSnapshot {
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), ice());
+        world.set_block(
+            (1, 0, 0),
+            BlockState {
+                id: 2,
+                shape: Some(BlockShape {
+                    bounds: Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.875, 1.0)),
+                    ..lower
+                }),
+                ..BlockState::default()
+            },
+        );
+        world
+    }
+
+    #[test]
+    fn walking_off_an_edge_keeps_the_block_the_move_started_on() {
+        let world = ice_edge_beside(BlockShape {
+            effect: BlockEffect::SoulSand,
+            ..BlockShape::full_block()
+        });
+        let mut state = SimulationState {
+            position: Vec3::new(1.25, 1.0, 0.5),
+            velocity: Vec3::new(0.2, -0.1, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            on_ground: true,
+            no_gravity: true,
+            ..SimulationState::default()
+        };
+
+        crate::versioned::dispatch("1.21.1", &mut state, &world, PhysicsConfig::default()).unwrap();
+
+        assert!(state.on_ground);
+        assert_eq!(state.position.x, 1.45);
+        let ice_drag = java_float(java_float(0.98) * java_float(0.91));
+        assert_eq!(state.velocity.x, 0.2 * ice_drag);
+        assert_eq!(state.previous_position, Some(Vec3::new(1.25, 1.0, 0.5)));
+    }
+
+    #[test]
+    fn the_previous_position_finds_the_block_left_behind_for_friction() {
+        let world = ice_edge_beside(BlockShape::full_block());
+        let past_the_edge = SimulationState {
+            position: Vec3::new(1.45, 1.0, 0.5),
+            velocity: Vec3::new(0.1, 0.0, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            on_ground: true,
+            no_gravity: true,
+            ..SimulationState::default()
+        };
+        let mut remembered = SimulationState {
+            previous_position: Some(Vec3::new(1.25, 1.0, 0.5)),
+            ..past_the_edge
+        };
+        let mut forgotten = past_the_edge;
+
+        crate::versioned::dispatch("1.21.1", &mut remembered, &world, PhysicsConfig::default())
+            .unwrap();
+        crate::versioned::dispatch("1.21.1", &mut forgotten, &world, PhysicsConfig::default())
+            .unwrap();
+
+        let drag = |friction: f64| java_float(java_float(friction) * java_float(0.91));
+        assert_eq!(remembered.velocity.x, 0.1 * drag(0.98));
+        assert_eq!(forgotten.velocity.x, 0.1 * drag(0.6));
+    }
+
     fn wall_along_z(suffocating: Option<bool>) -> WorldSnapshot {
         let mut world = WorldSnapshot::new();
         for y in 0..2 {
