@@ -2453,9 +2453,57 @@ mod tests {
     use super::{
         create_simulation_state, refresh_versioned_pose, simulate_versioned_entity_push,
         simulate_versioned_entity_ticks, simulate_versioned_tick, simulate_versioned_ticks,
-        NativeEntityDescriptor, NativeEntityPushState, NativeSimulationConfig, NativeSimulationState,
-        NativeVec3, NativeVersionedEntityState, NativeWorld,
+        NativeBlockShape, NativeBlockUpdate, NativeEntityDescriptor, NativeEntityPushState,
+        NativeSimulationConfig, NativeSimulationState, NativeVec3, NativeVersionedEntityState,
+        NativeWorld,
     };
+
+    fn block_shape(min: (f64, f64, f64), max: (f64, f64, f64), effect: u8) -> NativeBlockShape {
+        NativeBlockShape {
+            min_x: min.0,
+            min_y: min.1,
+            min_z: min.2,
+            max_x: max.0,
+            max_y: max.1,
+            max_z: max.2,
+            slipperiness: 0.6,
+            effect: Some(effect),
+            bounce_restitution: None,
+            suppresses_bounce: None,
+            fall_damage_resetting: None,
+        }
+    }
+
+    fn shape_update(position: (i32, i32, i32), shape: NativeBlockShape) -> NativeBlockUpdate {
+        NativeBlockUpdate {
+            x: position.0,
+            y: position.1,
+            z: position.2,
+            id: Some(1),
+            state_version: None,
+            block_entity: None,
+            remove_block_entity: None,
+            properties: None,
+            tags: None,
+            shape: Some(shape),
+            outline_shape: None,
+            interaction_shape: None,
+            fluid: None,
+            fluid_tags: None,
+            fluid_level: None,
+            fluid_source: None,
+            fluid_flow: None,
+            fluid_falling: None,
+            fall_damage_resetting: None,
+            bounce_restitution: None,
+            suppresses_bounce: None,
+            remove: None,
+        }
+    }
+
+    fn vec3(x: f64, y: f64, z: f64) -> NativeVec3 {
+        NativeVec3 { x, y, z }
+    }
 
     fn pose_state() -> NativeSimulationState {
         create_simulation_state(NativeEntityDescriptor {
@@ -2566,6 +2614,22 @@ mod tests {
         assert!(world
             .set_block_state_id(0, 0, 0, "1.22".to_string(), 7)
             .is_err());
+    }
+
+    #[test]
+    fn effect_blocks_without_collision_box_keep_their_effect() {
+        let mut world = NativeWorld::new();
+        world
+            .apply_block_updates(vec![shape_update(
+                (0, 0, 0),
+                block_shape((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 4),
+            )])
+            .expect("a cobweb has no collision box");
+        assert_eq!(world.block_at(0, 0, 0).effect, 4);
+        assert!(world
+            .collision_shapes(vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0))
+            .expect("valid query")
+            .is_empty());
     }
 
     #[test]
@@ -3105,21 +3169,13 @@ fn native_boat_state(state: BoatSimulationState) -> NativeBoatState {
 }
 
 fn valid_shape(bounds: crate::math::Aabb, slipperiness: f64) -> bool {
-    bounds.min.x.is_finite()
-        && bounds.min.y.is_finite()
-        && bounds.min.z.is_finite()
-        && bounds.max.x.is_finite()
-        && bounds.max.y.is_finite()
-        && bounds.max.z.is_finite()
+    valid_bounds(bounds)
         && bounds.min.x >= 0.0
         && bounds.min.y >= 0.0
         && bounds.min.z >= 0.0
         && bounds.max.x <= 1.0
         && bounds.max.y <= 1.0
         && bounds.max.z <= 1.0
-        && bounds.min.x < bounds.max.x
-        && bounds.min.y < bounds.max.y
-        && bounds.min.z < bounds.max.z
         && slipperiness.is_finite()
         && slipperiness >= 0.0
 }
