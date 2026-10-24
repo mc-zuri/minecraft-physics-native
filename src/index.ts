@@ -16,3 +16,4 @@ export default function loader(bot: Bot): void {
 
 export { LoadNativePhysics } from './native';
 export type * from './native';
+export * from './mineflayer';
