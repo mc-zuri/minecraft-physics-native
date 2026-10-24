@@ -1,3 +1,4 @@
+mod block_traversal;
 pub mod collision;
 pub mod entity;
 #[path = "../data/mod.rs"]

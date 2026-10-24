@@ -1,3 +1,4 @@
+use crate::block_traversal::{blocks_visited, Movement};
 use crate::collision::{resolve_motion, resolve_step_motion, vanilla_equal};
 use crate::entity::{Dimensions, EntityFlags, EntityState};
 use crate::math::{java_cos, java_cos_legacy, java_float, java_sin, java_sin_legacy, Aabb, Vec3};
@@ -798,6 +799,7 @@ fn apply_block_effects(
     world: &WorldSnapshot,
     support: Option<BlockPosition>,
     release: MinecraftVersion,
+    inside: &[((i32, i32, i32), bool)],
 ) {
     if state.no_physics {
         return;
@@ -823,9 +825,11 @@ fn apply_block_effects(
         }
     }
     let pushed_by_bubbles = !(release.at_least(1, 21, 2) && state.is_player && state.flying);
-    for position in blocks_inside(state, release) {
+    for &(position, precise) in inside {
         match world.effect_at(position) {
-            effect @ (BlockEffect::BubbleUp | BlockEffect::BubbleDown) if pushed_by_bubbles => {
+            effect @ (BlockEffect::BubbleUp | BlockEffect::BubbleDown)
+                if pushed_by_bubbles && precise =>
+            {
                 let drag_down = effect == BlockEffect::BubbleDown;
                 push_by_bubble_column(state, world, position, drag_down, release);
             }
@@ -847,6 +851,47 @@ fn apply_block_effects(
             _ => {}
         }
     }
+}
+
+/// The moves Entity.applyEffectsFromBlocks checks from 1.21.2: the tick's move, recorded by
+/// Entity.move from 1.21.5 with the movement whose axis order splits it (the collided one, the
+/// requested one from 1.21.9), and the rest of the way to the position.
+fn movements_this_tick(
+    state: &SimulationState,
+    old_position: Vec3,
+    requested: Vec3,
+    moved: Vec3,
+    release: MinecraftVersion,
+) -> Vec<Movement> {
+    let whole_tick = Movement {
+        from: old_position,
+        to: state.position,
+        axis_order: None,
+    };
+    let moved_length = moved.length_squared();
+    let recorded = moved_length > 1.0e-7 || requested.length_squared() - moved_length < 1.0e-7;
+    if !release.at_least(1, 21, 5) || state.no_physics || !recorded {
+        return vec![whole_tick];
+    }
+    let to = old_position + moved;
+    let axis_order = if release.at_least(1, 21, 9) {
+        requested
+    } else {
+        moved
+    };
+    let mut movements = vec![Movement {
+        from: old_position,
+        to,
+        axis_order: Some(axis_order),
+    }];
+    if to.distance_squared(state.position) > 9.999999439624929e-11 {
+        movements.push(Movement {
+            from: to,
+            to: state.position,
+            axis_order: None,
+        });
+    }
+    movements
 }
 
 /// BubbleColumnBlock.entityInside: a column with nothing above it
@@ -2025,7 +2070,11 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         }
     }
     if !rules.release.at_least(1, 21, 2) {
-        apply_block_effects(state, world, support, rules.release);
+        let inside: Vec<_> = blocks_inside(state, rules.release)
+            .into_iter()
+            .map(|position| (position, true))
+            .collect();
+        apply_block_effects(state, world, support, rules.release, &inside);
     }
     if rules.release.at_least(1, 15, 0) && !state.no_physics {
         let speed_factor = f64::from(block_speed_factor(world, state, support, rules.release));
@@ -2109,7 +2158,16 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     }
 
     if rules.release.at_least(1, 21, 2) {
-        apply_block_effects(state, world, support, rules.release);
+        let movements =
+            movements_this_tick(state, old_position, desired, displacement, rules.release);
+        let inside = blocks_visited(
+            &movements,
+            state.bounds(),
+            state.half_width,
+            state.height,
+            rules.release,
+        );
+        apply_block_effects(state, world, support, rules.release, &inside);
     }
     if state.is_player && state.flying && state.on_ground && !state.no_physics {
         state.flying = false;

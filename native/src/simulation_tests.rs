@@ -3648,6 +3648,80 @@ mod tests {
     }
 
     #[test]
+    fn bubble_columns_push_from_each_axis_step_of_the_move_from_1_21_5() {
+        let mut world = WorldSnapshot::new();
+        for x in 0..2 {
+            world.set_block((x, 0, 0), bubble_column(BlockEffect::BubbleUp));
+            world.set_block((x, 1, 0), bubble_column(BlockEffect::BubbleUp));
+        }
+        let leaving = SimulationState {
+            position: Vec3::new(0.9, 1.2, 0.5),
+            velocity: Vec3::new(0.5, -0.5, 0.0),
+            height: 1.8,
+            ..SimulationState::default()
+        };
+        let dragged = -0.5 * java_float(0.8);
+
+        assert_eq!(
+            bubble_push(&world, leaving, MinecraftVersion::new(1, 21, 4)),
+            dragged + 0.06 + 0.1
+        );
+        assert_eq!(
+            bubble_push(&world, leaving, MinecraftVersion::new(1, 21, 5)),
+            dragged + 0.06 + 0.06 + 0.1 + 0.1
+        );
+    }
+
+    #[test]
+    fn bubble_columns_push_in_the_direction_of_the_move_from_1_21_9() {
+        let mut world = WorldSnapshot::new();
+        for y in 0..3 {
+            world.set_block((0, y, 0), bubble_column(BlockEffect::BubbleDown));
+        }
+        let sinking = SimulationState {
+            position: Vec3::new(0.5, 1.1, 0.5),
+            velocity: Vec3::new(0.0, -0.3, 0.0),
+            height: 1.8,
+            ..SimulationState::default()
+        };
+
+        assert_eq!(bubble_push(&world, sinking, MinecraftVersion::new(1, 21, 4)), -0.3 - 0.03);
+        assert_eq!(bubble_push(&world, sinking, MinecraftVersion::new(1, 21, 9)), -0.3);
+    }
+
+    #[test]
+    fn bubble_columns_left_behind_do_not_push_from_1_21_10() {
+        let mut world = WorldSnapshot::new();
+        for y in 0..4 {
+            world.set_block((0, y, 0), bubble_column(BlockEffect::BubbleUp));
+        }
+        world.set_block(
+            (0, 4, 0),
+            BlockState {
+                fluid: FluidState::Water,
+                fluid_source: true,
+                ..BlockState::default()
+            },
+        );
+        let rising = SimulationState {
+            position: Vec3::new(0.5, 0.8, 0.5),
+            velocity: Vec3::new(0.0, 0.3, 0.0),
+            height: 1.8,
+            ..SimulationState::default()
+        };
+        let dragged = 0.3 * java_float(0.8);
+
+        assert_eq!(
+            bubble_push(&world, rising, MinecraftVersion::new(1, 21, 9)),
+            dragged + 0.06 + 0.06 + 0.06
+        );
+        assert_eq!(
+            bubble_push(&world, rising, MinecraftVersion::new(1, 21, 10)),
+            dragged + 0.06 + 0.06
+        );
+    }
+
+    #[test]
     fn nothing_above_a_bubble_column_means_no_collision_and_no_fluid_from_1_21_5() {
         let mut world = WorldSnapshot::new();
         world.set_block((0, 0, 0), bubble_column(BlockEffect::BubbleUp));
