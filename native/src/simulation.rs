@@ -1159,7 +1159,11 @@ fn glide(state: &mut SimulationState, gravity: f64, release: MinecraftVersion) {
         java_float(cos * cos * look_factor)
     };
     let mut velocity = state.velocity;
-    velocity.y += gravity * (-1.0 + lift * 0.75);
+    velocity.y += if release.at_least(1, 13, 0) {
+        gravity * (-1.0 + lift * 0.75)
+    } else {
+        -0.08 + lift * 0.06
+    };
     if velocity.y < 0.0 && look_horizontal > 0.0 {
         let dive = velocity.y * -0.1 * lift;
         velocity = velocity

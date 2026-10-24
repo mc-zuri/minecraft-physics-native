@@ -1280,6 +1280,43 @@ mod tests {
     }
 
     #[test]
+    fn gliding_lift_adds_a_literal_before_1_13() {
+        let glide = |release| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 10.0, 0.5),
+                look: Vec3::new(0.1, 0.0, 0.1),
+                fall_flying: true,
+                is_player: true,
+                half_width: 0.3,
+                height: 0.6,
+                ..SimulationState::default()
+            };
+            let rules = VersionPhysicsRules {
+                release,
+                ..VersionPhysicsRules::default()
+            };
+            tick_with_rules(
+                &mut state,
+                &WorldSnapshot::new(),
+                PhysicsConfig::default(),
+                rules,
+            );
+            state.velocity.y
+        };
+        let lift = java_float(java_float((0.1_f64 * 0.1 + 0.1 * 0.1).sqrt()) / 0.4);
+        let vertical = |falling: f64| (falling + falling * -0.1 * lift) * java_float(0.98);
+
+        assert_eq!(
+            glide(MinecraftVersion::new(1, 12, 2)),
+            vertical(-0.08 + lift * 0.06)
+        );
+        assert_eq!(
+            glide(MinecraftVersion::new(1, 13, 2)),
+            vertical(0.08 * (-1.0 + lift * 0.75))
+        );
+    }
+
+    #[test]
     fn gliding_lift_uses_a_float_look_length_before_1_17() {
         let glide = |release| {
             let mut state = SimulationState {
