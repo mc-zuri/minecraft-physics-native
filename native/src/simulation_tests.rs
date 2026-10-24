@@ -2336,6 +2336,29 @@ mod tests {
     }
 
     #[test]
+    fn lava_depth_counts_from_after_the_move_from_26_1() {
+        let lava = fluid_block_world(FluidState::Lava);
+        let sinking = |release| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 0.6, 0.5),
+                velocity: Vec3::new(0.0, -0.3, 0.0),
+                is_player: true,
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            tick_release(&mut state, &lava, release);
+            state.velocity.y
+        };
+
+        assert_eq!(sinking(MinecraftVersion::new(26, 1, 0)), -0.3 * 0.5 - 0.08 / 4.0);
+        assert_eq!(
+            sinking(MinecraftVersion::new(1, 21, 11)),
+            -0.3 * java_float(0.8) - 0.08 / 16.0 - 0.08 / 4.0
+        );
+    }
+
+    #[test]
     fn a_jump_swims_up_in_the_lava_the_last_move_reached_before_1_16() {
         let mut in_lava = SimulationState {
             position: Vec3::new(0.5, 5.0, 0.5),

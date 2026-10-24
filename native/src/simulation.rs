@@ -1793,7 +1793,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
     } else {
         FluidState::Empty
     };
-    let fluid_height = if state.in_water {
+    let mut fluid_height = if state.in_water {
         water.height
     } else {
         lava.height
@@ -2184,6 +2184,7 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         if rules.release.at_least(26, 1, 0) {
             let lava = world.fluid_contact(FluidState::Lava, state.bounds(), rules.release);
             state.in_lava = lava.touching;
+            fluid_height = lava.height;
             if affected_by_fluids && lava.touching {
                 let lava_flow_scale = if state.ultra_warm {
                     rules.ultra_warm_lava_flow_scale
