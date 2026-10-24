@@ -774,11 +774,8 @@ impl NativeWorld {
         id: u32,
     ) -> Result<()> {
         let version = MinecraftVersion::parse(&version)
-            .ok_or_else(|| Error::from_reason("block state version must be a concrete x.y.z release"))?;
-        if !versioned::is_supported(&format!(
-            "{}.{}.{}",
-            version.major, version.minor, version.patch
-        )) {
+            .ok_or_else(|| Error::from_reason("block state version must be a release name"))?;
+        if !versioned::is_supported(&version.to_string()) {
             return Err(Error::from_reason(
                 "block state version is not present in the source-backed release registry",
             ));
@@ -1041,7 +1038,7 @@ impl NativeWorld {
             entry.5 = match update.state_version.as_deref() {
                 Some(value) => Some(crate::world::VersionedBlockStateId {
                     version: MinecraftVersion::parse(value).ok_or_else(|| {
-                        Error::from_reason("block state version must be a concrete x.y.z release")
+                        Error::from_reason("block state version must be a release name")
                     })?,
                     id: update.id.unwrap_or(state.id),
                 }),
@@ -1296,7 +1293,7 @@ impl NativeWorld {
             state_version: self
                 .inner
                 .block_state_id((x, y, z))
-                .map(|state| format!("{}.{}.{}", state.version.major, state.version.minor, state.version.patch)),
+                .map(|state| state.version.to_string()),
             block_entity: self.inner.block_entity((x, y, z)).map(str::to_owned),
             properties: self.inner
                 .block_properties((x, y, z))
@@ -2455,9 +2452,9 @@ fn valid_state(state: SimulationState) -> bool {
 mod tests {
     use super::{
         create_simulation_state, refresh_versioned_pose, simulate_versioned_entity_push,
-        simulate_versioned_entity_ticks, simulate_versioned_ticks, NativeEntityDescriptor,
-        NativeEntityPushState, NativeSimulationConfig, NativeSimulationState, NativeVec3,
-        NativeVersionedEntityState, NativeWorld,
+        simulate_versioned_entity_ticks, simulate_versioned_tick, simulate_versioned_ticks,
+        NativeEntityDescriptor, NativeEntityPushState, NativeSimulationConfig, NativeSimulationState,
+        NativeVec3, NativeVersionedEntityState, NativeWorld,
     };
 
     fn pose_state() -> NativeSimulationState {
@@ -2532,6 +2529,43 @@ mod tests {
             pushable: true,
             pushthrough,
         }
+    }
+
+    #[test]
+    fn versioned_tick_accepts_every_release_name() {
+        for release in crate::generated_data::RELEASES {
+            let result = simulate_versioned_tick(
+                release.version.to_string(),
+                &NativeWorld::new(),
+                pose_state(),
+                NativeSimulationConfig {
+                    gravity: None,
+                    drag: None,
+                    movement_speed: None,
+                    sprint_multiplier: None,
+                    jump_velocity: None,
+                    step_height: None,
+                    negligible_velocity: None,
+                },
+            );
+            assert!(result.is_ok(), "{} should be accepted", release.version);
+        }
+    }
+
+    #[test]
+    fn block_state_ids_keep_two_part_release_names() {
+        let mut world = NativeWorld::new();
+        world.set_full_block(0, 0, 0, 1);
+        world
+            .set_block_state_id(0, 0, 0, "1.21".to_string(), 7)
+            .expect("1.21 is a release");
+        assert_eq!(
+            world.block_at(0, 0, 0).state_version.as_deref(),
+            Some("1.21")
+        );
+        assert!(world
+            .set_block_state_id(0, 0, 0, "1.22".to_string(), 7)
+            .is_err());
     }
 
     #[test]
