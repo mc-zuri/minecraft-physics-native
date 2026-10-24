@@ -45,6 +45,11 @@ export interface NativeSimulationState {
     sprinting?: boolean;
     /** Sprinting at the end of the previous tick: the airborne speed before 1.19.4 follows it. */
     wasSprinting?: boolean;
+    /**
+     * Whether the movement speed attribute holds the sprint modifier (LivingEntity.setSprinting adds it, a sync from the
+     * server without it drops it); `sprinting` when left out.
+     */
+    sprintModifier?: boolean;
     inWater?: boolean;
     firstTick?: boolean;
     inLava?: boolean;

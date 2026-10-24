@@ -3695,6 +3695,35 @@ mod tests {
     }
 
     #[test]
+    fn a_sprint_without_its_modifier_moves_at_the_walking_speed() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 1.0, 0.5),
+            velocity: Vec3::new(0.0, -0.08 * java_float(0.98), 0.0),
+            input: Vec3::new(1.0, 0.0, 0.0),
+            on_ground: true,
+            is_player: true,
+            sprinting: true,
+            sprint_modifier: Some(false),
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+
+        tick(&mut state, &world, PhysicsConfig::default());
+
+        assert_eq!(state.position.x, 0.5 + java_float(0.98) * java_float(0.1));
+    }
+
+    #[test]
     fn climbing_jumps_up_when_requested_or_blocked() {
         let mut state = SimulationState {
             position: Vec3::new(0.0, 2.0, 0.0),

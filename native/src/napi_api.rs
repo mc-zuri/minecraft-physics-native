@@ -210,6 +210,9 @@ pub struct NativeSimulationState {
     pub riptide_launch: Option<u8>,
     pub sprinting: Option<bool>,
     pub was_sprinting: Option<bool>,
+    /// Whether the movement speed attribute holds the sprint modifier (LivingEntity.setSprinting
+    /// adds it, a sync from the server without it drops it); `sprinting` when left out.
+    pub sprint_modifier: Option<bool>,
     pub in_water: Option<bool>,
     pub in_lava: Option<bool>,
     pub ultra_warm: Option<bool>,
@@ -621,6 +624,7 @@ impl From<NativeSimulationState> for SimulationState {
             riptide_launch: value.riptide_launch,
             sprinting: value.sprinting.unwrap_or(false),
             was_sprinting: value.was_sprinting.unwrap_or(false),
+            sprint_modifier: value.sprint_modifier,
             in_water: value.in_water.unwrap_or(false),
             in_lava: value.in_lava.unwrap_or(false),
             ultra_warm: value.ultra_warm.unwrap_or(false),
@@ -720,6 +724,7 @@ impl From<SimulationState> for NativeSimulationState {
             riptide_launch: value.riptide_launch,
             sprinting: Some(value.sprinting),
             was_sprinting: Some(value.was_sprinting),
+            sprint_modifier: value.sprint_modifier,
             in_water: Some(value.in_water),
             in_lava: Some(value.in_lava),
             ultra_warm: Some(value.ultra_warm),
@@ -3361,6 +3366,7 @@ mod tests {
                 riptide_launch: None,
                 sprinting: None,
                 was_sprinting: None,
+                sprint_modifier: None,
                 in_water: None,
                 in_lava: None,
                 ultra_warm: None,
