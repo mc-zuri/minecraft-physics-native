@@ -532,6 +532,9 @@ pub struct NativeHorseState {
     pub dashing: Option<bool>,
     pub sitting: Option<bool>,
     pub pose_time: Option<i64>,
+    /// Where this tick's step toward a server teleport's target puts a ridden mob, in place of the
+    /// fade of its motion.
+    pub lerp_position: Option<NativeVec3>,
 }
 
 #[napi(object)]
@@ -3686,6 +3689,7 @@ fn native_horse_state(state: HorseSimulationState) -> NativeHorseState {
         dashing: None,
         sitting: None,
         pose_time: None,
+        lerp_position: None,
     }
 }
 
@@ -3738,6 +3742,7 @@ fn ridden_mob_state(value: NativeHorseState) -> Result<RiddenMobState> {
             jumping: value.jump_requested,
             released_jump: value.rider_jump,
         },
+        lerp_position: value.lerp_position.map(Into::into),
         ..defaults
     };
     let finite = mob.position.is_finite()
@@ -3817,6 +3822,7 @@ fn native_ridden_mob_state(mob: RiddenMobState) -> NativeHorseState {
         dashing: Some(mob.dashing),
         sitting: Some(mob.sitting),
         pose_time: Some(mob.pose_time),
+        lerp_position: None,
     }
 }
 

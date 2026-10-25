@@ -163,6 +163,9 @@ pub struct RiddenMobState {
     pub sitting: bool,
     pub pose_time: i64,
     pub rider: RiderInput,
+    /// Where this tick's step toward a server teleport's target puts the mob (LivingEntity.aiStep's
+    /// interpolation, in place of the fade of its motion); its turn is the caller's.
+    pub lerp_position: Option<Vec3>,
 }
 
 impl RiddenMobState {
@@ -203,6 +206,7 @@ impl RiddenMobState {
             sitting: false,
             pose_time: 1000,
             rider: RiderInput::default(),
+            lerp_position: None,
         }
     }
 
@@ -221,10 +225,10 @@ impl RiddenMobState {
 }
 
 /// One client tick of a mob its player rides and steers, which ticks before its rider: Entity's
-/// fluid push, LivingEntity.aiStep (the motion it does not run the AI of fades before 1.21.5,
-/// a negligible one is dropped), travelRidden (tickRidden with its rider, then travel at the
-/// ridden speed with the ridden input), the mob's own tick after its move, and the riding jump
-/// its rider released.
+/// fluid push, LivingEntity.aiStep (a step toward a server teleport's target, else the motion it
+/// does not run the AI of fades before 1.21.5; a negligible one is dropped), travelRidden
+/// (tickRidden with its rider, then travel at the ridden speed with the ridden input), the mob's
+/// own tick after its move, and the riding jump its rider released.
 pub fn tick_ridden_mob(mob: &mut RiddenMobState, world: &WorldSnapshot, release: MinecraftVersion) {
     let (width, height) = mob.kind.dimensions();
     let kept_box = (!release.at_least(1, 17, 0))
@@ -257,7 +261,12 @@ pub fn tick_ridden_mob(mob: &mut RiddenMobState, world: &WorldSnapshot, release:
         mob.suffocating = !strider_is_warm(&body, world, support, release);
     }
     let lava_height = push_by_fluids(mob, &mut body, world, release);
-    if !release.at_least(1, 21, 5) {
+    if let Some(position) = mob.lerp_position.take() {
+        body.position = position;
+        if body.bounding_box.is_some() {
+            body.bounding_box = Some(mob.box_at(position));
+        }
+    } else if !release.at_least(1, 21, 5) {
         body.velocity = body.velocity.scale(0.98);
     }
     let negligible = if release.at_least(1, 9, 0) {
@@ -1127,6 +1136,35 @@ mod tests {
         assert_eq!(horse.position.x, 1.058985149775619);
         assert_eq!(horse.velocity.x, 0.18481291409014125);
         assert!(horse.on_ground);
+    }
+
+    #[test]
+    fn mob_easing_toward_a_server_teleport_steps_there_in_place_of_the_fade() {
+        let world = stone_floor((-3, 6), 100, (2170, 2177));
+        let start = Vec3::new(0.5, 101.0, 2173.5);
+        let step = Vec3::new(1.0, 101.0, 2173.5);
+        let velocity = Vec3::new(0.1, 0.0, 0.0);
+        let release = MinecraftVersion::new(1, 20, 4);
+        let mut faded = ridden(RiddenMobKind::Horse, step, velocity, 270.0);
+        faded.on_ground = true;
+        tick_ridden_mob(&mut faded, &world, release);
+        let mut stepped = ridden(RiddenMobKind::Horse, start, velocity, 270.0);
+        stepped.on_ground = true;
+        stepped.lerp_position = Some(step);
+        tick_ridden_mob(&mut stepped, &world, release);
+        assert_eq!(faded.position.x, 1.0 + 0.1 * 0.98);
+        assert_eq!(stepped.position.x, 1.0 + 0.1);
+        assert_eq!(stepped.lerp_position, None);
+
+        let mut kept = ridden(RiddenMobKind::Horse, step, Vec3::ZERO, 270.0);
+        kept.on_ground = true;
+        tick_ridden_mob(&mut kept, &world, V1_16_5);
+        let mut stepped = ridden(RiddenMobKind::Horse, start, Vec3::ZERO, 270.0);
+        stepped.on_ground = true;
+        stepped.lerp_position = Some(step);
+        tick_ridden_mob(&mut stepped, &world, V1_16_5);
+        assert_eq!(stepped.position, kept.position);
+        assert_eq!(stepped.bounding_box, kept.bounding_box);
     }
 
     #[test]

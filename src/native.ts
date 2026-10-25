@@ -717,6 +717,8 @@ export interface NativeHorseState {
     /** A camel sitting, and the ticks since it last sat down or stood up. */
     sitting?: boolean;
     poseTime?: number;
+    /** Where this tick's step toward a server teleport's target puts the mob, in place of the fade of its motion. */
+    lerpPosition?: NativeVec3;
 }
 
 export interface NativeProjectileState {
