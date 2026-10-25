@@ -181,6 +181,15 @@ describe('NativePhysics', () => {
         assert.equal(ctx.state.pose, adapter.Pose.SNEAKING);
     });
 
+    it('lets a player in a chunk column the world has not loaded sink as 1.8 does', () => {
+        const { registry, world } = worldOf('1.8.8', floor);
+        unloadedFromX16(world);
+        const physics = new adapter.NativePhysics(registry);
+        const ctx = playerState(20.5, 5, 0.5);
+        physics.simulate(ctx, world);
+        assert.equal(ctx.state.vel.y, -0.09800000190734864);
+    });
+
     it('lets the ground not stop the fall of a player removed at its 20th tick of death', () => {
         const { registry, world } = worldOf('1.18.2', floor);
         const physics = new adapter.NativePhysics(registry);

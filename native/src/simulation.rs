@@ -1031,6 +1031,20 @@ pub(crate) fn position_of_bounding_box(bounds: Aabb) -> Vec3 {
     )
 }
 
+/// Whether the chunk column under the entity is loaded, as LivingEntity.travel asks before 1.14
+/// (a client entity over one that is not sinks at 0.1): its x and z cast to int on 1.8, floored
+/// since.
+fn column_loaded(world: &WorldSnapshot, position: Vec3, release: MinecraftVersion) -> bool {
+    let block = |value: f64| {
+        if release.at_least(1, 9, 0) {
+            value.floor() as i32
+        } else {
+            value as i32
+        }
+    };
+    world.is_chunk_loaded(block(position.x) >> 4, block(position.z) >> 4)
+}
+
 pub(crate) fn block_position(position: Vec3) -> (i32, i32, i32) {
     (
         position.x.floor() as i32,
@@ -2702,6 +2716,10 @@ pub(crate) fn tick_with_rules_and_rounding_and_restitution(
         if state.levitation {
             let target = 0.05 * (f64::from(state.levitation_amplifier.unwrap_or(0)) + 1.0);
             state.velocity.y += (target - state.velocity.y) * 0.2;
+        } else if !rules.release.at_least(1, 14, 0)
+            && !column_loaded(world, state.position, rules.release)
+        {
+            state.velocity.y = if state.position.y > 0.0 { -0.1 } else { 0.0 };
         } else if !state.no_gravity {
             state.velocity.y -= travel_gravity;
         }

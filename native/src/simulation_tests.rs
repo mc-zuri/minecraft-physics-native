@@ -423,6 +423,33 @@ mod tests {
     }
 
     #[test]
+    fn a_player_over_a_column_not_loaded_sinks_at_a_tenth_before_1_14() {
+        let mut world = WorldSnapshot::new();
+        world.set_chunk_loaded(0, 0, true);
+        let fall = |version: &str, x: f64, y: f64| {
+            let mut state = SimulationState {
+                position: Vec3::new(x, y, 0.5),
+                half_width: 0.3,
+                height: 1.8,
+                is_player: true,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            state.velocity.y
+        };
+        let sinking = -0.1 * java_float(0.98);
+        let falling = -0.08 * java_float(0.98);
+        assert_eq!(fall("1.8.8", 20.5, 5.0), sinking);
+        assert_eq!(fall("1.8.8", 20.5, -5.0), 0.0);
+        assert_eq!(fall("1.8.8", 0.5, 5.0), falling);
+        assert_eq!(fall("1.13.2", 20.5, 5.0), sinking);
+        assert_eq!(fall("1.14.4", 20.5, 5.0), falling);
+        assert_eq!(fall("1.8.8", -0.5, 5.0), falling);
+        assert_eq!(fall("1.9.4", -0.5, 5.0), sinking);
+    }
+
+    #[test]
     fn push_out_of_blocks_before_1_14_tests_the_cell_half_a_block_above_the_feet() {
         let mut world = WorldSnapshot::new();
         world.set_block(
