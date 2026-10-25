@@ -189,10 +189,7 @@ export class NativePhysics extends NativeEngine implements IPhysics {
             else state.fireworkRocketDuration = 0;
         }
 
-        const reach = Math.max(Math.abs(state.vel.x), Math.abs(state.vel.y), Math.abs(state.vel.z));
-        const standing = this.poseSize(Pose.STANDING, state.scale);
-        const margin = 3 + Math.ceil(reach) + (riptideLaunch ? 5 : 0) + (state.fireworkRocketDuration > 0 ? 2 : 0);
-        sync.sync(world, this.boxAround(state.pos, standing.width, standing.height), margin);
+        sync.sync(world, this.reachOf(state, riptideLaunch !== undefined), 0);
 
         const wasInWater = state.isInWater;
         const wasInLava = state.isInLava;
@@ -816,6 +813,28 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         if (this.lt('1.9') || !feet.name.endsWith('trapdoor') || feet.props.open !== 'true') return false;
         const below = sync.blockAt(x, y - 1, z);
         return below?.name === 'ladder' && below.props.facing === feet.props.facing;
+    }
+
+    /**
+     * The blocks the tick can reach: the player's box and where its motion takes it, with a block around (the block that
+     * supports it, its poses, what its input adds), its step above, and with auto-jump the 7 ticks of speed it looks
+     * ahead; a riptide launch or rockets take it further.
+     */
+    private reachOf(state: PlayerState, launching: boolean): Box {
+        const { width, height } = this.poseSize(Pose.STANDING, state.scale);
+        const b = this.boxAround(state.pos, width, height);
+        const v = state.vel;
+        const boost = (launching ? 4 : 0) + (state.fireworkRocketDuration > 0 ? 2 : 0);
+        const ahead = 1 + boost + (state.autoJumpEnabled ? 8 * Math.sqrt(v.x * v.x + v.z * v.z) : 0);
+        const step = this.attributeValueOf(state.attributes, 'stepHeight') ?? 0.6;
+        return box(
+            Math.min(b.minX, b.minX + v.x) - ahead,
+            Math.min(b.minY, b.minY + v.y) - 1 - boost,
+            Math.min(b.minZ, b.minZ + v.z) - ahead,
+            Math.max(b.maxX, b.maxX + v.x) + ahead,
+            Math.max(b.maxY, b.maxY + v.y) + 1 + step + boost,
+            Math.max(b.maxZ, b.maxZ + v.z) + ahead,
+        );
     }
 
     // ---- sizes ----
