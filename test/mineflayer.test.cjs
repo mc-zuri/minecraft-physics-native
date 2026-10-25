@@ -68,7 +68,9 @@ function riddenState(type, x, y, z, fields = {}) {
         boosting: false, boostTime: 0, boostTimeTotal: 0, suffocating: false, noAi: false, jumpPendingScale: 0,
         dashCooldown: 0, dashing: false, camelSitting: false, poseTime: 1000, horseJumping: false, standing: false,
         allowStandSliding: false, saddled: true, ownForward: 0, standCounter: 0, standAnim: 0, standAnimO: 0,
-        keptBoundingBox: null, dimensions: { width: f32(1.3964844), height: f32(1.6) },
+        keptBoundingBox: null, dimensions: { width: f32(1.3964844), height: f32(1.6) }, pitch: 0, lerpTarget: null,
+        lerpSteps: 0, lerpPrevious: null, lerpStart: null, lerpTicks: 0, lerpYaw: null, lerpPitch: 0,
+        lerpPreviousRotation: null, lerpStartRotation: null,
         getBB() {
             return { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 };
         },
@@ -193,5 +195,36 @@ describe('NativeRiddenMobPhysics', () => {
         for (let tick = 0; tick < 10; tick += 1) physics.simulateRidden(ctx, world, rider);
         assert.equal(ctx.state.standAnim, 0);
         assert.equal(ctx.state.standAnimO, 0);
+    });
+
+    it('eases a ridden mob toward a server teleport over the steps left, or puts it there from afar', () => {
+        const { registry, world } = worldOf('1.21.4', floor);
+        const physics = new adapter.NativeRiddenMobPhysics(registry);
+        const ctx = riddenState('horse', 0.5, 1, 0.5, { onGround: true });
+        const rider = { yawDegrees: 0, pitchDegrees: 0 };
+        physics.teleportRidden(ctx.state, new Vec3(1.5, 1, 0.5));
+        assert.deepEqual(physics.lerpTargetOf(ctx.state).toArray(), [1.5, 1, 0.5]);
+        let x = 0.5;
+        for (const steps of [3, 2, 1]) {
+            physics.simulateRidden(ctx, world, rider);
+            x += (1 / steps) * (1.5 - x);
+            assert.equal(ctx.state.pos.x, x);
+        }
+        assert.equal(ctx.state.lerpSteps, 0);
+        assert.deepEqual(physics.lerpTargetOf(ctx.state).toArray(), ctx.state.pos.toArray());
+        physics.teleportRidden(ctx.state, new Vec3(100.5, 1, 0.5));
+        assert.equal(ctx.state.pos.x, 100.5);
+        assert.equal(ctx.state.lerpSteps, 0);
+    });
+
+    it('reports the rotation a ridden mob\'s interpolation heads to from 1.21.5', () => {
+        const turned = version => {
+            const physics = new adapter.NativeRiddenMobPhysics(require('prismarine-registry')(version));
+            const { state } = riddenState('horse', 0.5, 1, 0.5, { yawDegrees: 10, pitchDegrees: 5 });
+            physics.interpolateRidden(state, new Vec3(1.5, 1, 0.5), 3, { yaw: 90, pitch: 20 });
+            return physics.lerpTargetRotationOf(state);
+        };
+        assert.deepEqual(turned('1.21.5'), { yaw: 90, pitch: 20 });
+        assert.deepEqual(turned('1.21.4'), { yaw: 10, pitch: 5 });
     });
 });

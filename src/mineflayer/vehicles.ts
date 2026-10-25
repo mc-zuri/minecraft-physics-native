@@ -50,6 +50,12 @@ export interface RiderInput {
     jumping?: boolean;
 }
 
+/** A rotation in float degrees. */
+export interface Rotation {
+    yaw: number;
+    pitch: number;
+}
+
 /** mineflayer-physics-utils' RiddenMobState, the fields the adapter uses. */
 export interface RiddenMobState {
     age: number;
@@ -65,6 +71,7 @@ export interface RiddenMobState {
     fallDistance: number;
     yawDegrees?: number;
     pitchDegrees: number;
+    pitch: number;
     movementSpeed: number;
     jumpStrength: number;
     flyingSpeed: number;
@@ -89,6 +96,20 @@ export interface RiddenMobState {
     standAnimO: number;
     keptBoundingBox: KeptBoundingBox | null;
     dimensions?: { width: number; height: number };
+    /**
+     * Where a server teleport has the mob interpolate to and the steps left (LivingEntity.lerpTo, InterpolationHandler),
+     * where the last step left it (1.21.5+), where the step started from and the ticks into it (26.3+); the rotation it
+     * heads to (null: none), its rotation after the last step and the one the step started from.
+     */
+    lerpTarget: Vec3 | null;
+    lerpSteps: number;
+    lerpPrevious: Vec3 | null;
+    lerpStart: Vec3 | null;
+    lerpTicks: number;
+    lerpYaw: number | null;
+    lerpPitch: number;
+    lerpPreviousRotation: Rotation | null;
+    lerpStartRotation: Rotation | null;
     getBB(): Box;
 }
 
@@ -98,6 +119,29 @@ const NAUTILUSES = new Set(['nautilus', 'zombie_nautilus']);
 const vec = (v: { x: number; y: number; z: number }): NativeVec3 => ({ x: v.x, y: v.y, z: v.z });
 const nativeBox = (b: Box): NativeAabb => ({ min: { x: b.minX, y: b.minY, z: b.minZ }, max: { x: b.maxX, y: b.maxY, z: b.maxZ } });
 const samePosition = (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) => a.x === b.x && a.y === b.y && a.z === b.z;
+
+/** Mth.wrapDegrees of a float: within [-180, 180). */
+function wrapDegreesF(degrees: number): number {
+    let wrapped = f32(degrees % 360);
+    if (wrapped >= 180) wrapped = f32(wrapped - 360);
+    if (wrapped < -180) wrapped = f32(wrapped + 360);
+    return wrapped;
+}
+
+/** Mth.wrapDegrees of a double: within [-180, 180). */
+function wrapDegreesD(degrees: number): number {
+    let wrapped = degrees % 360;
+    if (wrapped >= 180) wrapped -= 360;
+    if (wrapped < -180) wrapped += 360;
+    return wrapped;
+}
+
+/** Entity.setRot: the yaw and pitch, each kept within 360. */
+function setRot(mob: RiddenMobState, yaw: number, pitch: number): void {
+    mob.yawDegrees = f32(yaw % 360);
+    mob.pitchDegrees = f32(pitch % 360);
+    mob.pitch = -mob.pitchDegrees * (Math.PI / 180);
+}
 
 /** A box of the state's own AABB class (its getBB's). */
 function stateBox(state: { getBB(): Box }, b: NativeAabb): Box {
@@ -223,6 +267,7 @@ export class NativeRiddenMobPhysics extends NativeEngine {
         const sync = syncAround(this, world, mob.pos, mob.vel, halfWidth, mob.dimensions?.height ?? 1.8);
         const carry = this.carries.get(mob);
         const fresh = carry && samePosition(carry.position, mob.pos) ? carry : { previousPosition: undefined };
+        const lerpPosition = this.lerpStep(mob);
         const kept = mob.keptBoundingBox && this.lt('1.17') && samePosition(mob.keptBoundingBox.pos, mob.pos) ? mob.keptBoundingBox.bb : null;
         const input: NativeHorseState = {
             ...fresh,
@@ -266,6 +311,7 @@ export class NativeRiddenMobPhysics extends NativeEngine {
             sitting: mob.camelSitting,
             poseTime: mob.poseTime,
             boundingBox: kept ? nativeBox(kept) : undefined,
+            lerpPosition: lerpPosition && vec(lerpPosition),
         };
         const output = this.binding.simulateVersionedHorseTick(this.version, sync.world, input);
         this.carries.set(mob, output);
@@ -319,6 +365,121 @@ export class NativeRiddenMobPhysics extends NativeEngine {
             const cube = f32(f32(f32(f32(0.8) * anim) * anim) * anim);
             mob.standAnim = Math.max(f32(anim + f32(f32(f32(cube - anim) * f32(0.6)) - f32(0.05))), 0);
         }
+    }
+
+    /**
+     * LivingEntity.aiStep's step toward a teleport's target (Mth.lerp of 1 / the steps left from 1.20.2, a division
+     * before; from 26.3 SteppedInterpolationHandler's float share of the step's ticks), with the mob's own move and turn
+     * since the last step carried into the target from 1.21.5 (InterpolationHandler.interpolate). The mob turns now; the
+     * engine puts it where the step leads after the fluids of its tick start.
+     */
+    private lerpStep(mob: RiddenMobState): Vec3 | undefined {
+        const t = mob.lerpTarget;
+        if (!(mob.lerpSteps > 0) || !t) return undefined;
+        const n = mob.lerpSteps;
+        const p = mob.pos;
+        if (!this.lt('1.21.5') && mob.lerpPrevious) {
+            const dx = p.x - mob.lerpPrevious.x;
+            const dy = p.y - mob.lerpPrevious.y;
+            const dz = p.z - mob.lerpPrevious.z;
+            t.set(t.x + dx, t.y + dy, t.z + dz);
+            mob.lerpStart?.set(mob.lerpStart.x + dx, mob.lerpStart.y + dy, mob.lerpStart.z + dz);
+        }
+        const turning = mob.lerpYaw !== null;
+        if (turning && !this.lt('1.21.5') && mob.lerpPreviousRotation) {
+            const yawTurn = f32((mob.yawDegrees ?? 0) - mob.lerpPreviousRotation.yaw);
+            const pitchTurn = f32(mob.pitchDegrees - mob.lerpPreviousRotation.pitch);
+            mob.lerpYaw = f32(mob.lerpYaw! + yawTurn);
+            mob.lerpPitch = f32(mob.lerpPitch + pitchTurn);
+            if (mob.lerpStartRotation) {
+                mob.lerpStartRotation.yaw = f32(mob.lerpStartRotation.yaw + yawTurn);
+                mob.lerpStartRotation.pitch = f32(mob.lerpStartRotation.pitch + pitchTurn);
+            }
+        }
+        const yaw = mob.yawDegrees ?? 0;
+        const pitch = mob.pitchDegrees;
+        const stepped = p.clone();
+        if (!this.lt('26.3') && mob.lerpStart) {
+            const s = mob.lerpStart;
+            const a = f32(mob.lerpTicks / 3);
+            const from = mob.lerpStartRotation;
+            if (mob.lerpTicks < 3) {
+                stepped.set(s.x + (t.x - s.x) * a, s.y + (t.y - s.y) * a, s.z + (t.z - s.z) * a);
+                if (turning && from) setRot(mob, f32(from.yaw + f32(a * wrapDegreesF(f32(mob.lerpYaw! - from.yaw)))), f32(from.pitch + f32(a * f32(mob.lerpPitch - from.pitch))));
+            } else {
+                stepped.set(t.x, t.y, t.z);
+                if (turning) setRot(mob, mob.lerpYaw!, mob.lerpPitch);
+            }
+            mob.lerpTicks += 1;
+        } else if (this.lt('1.20.2')) {
+            stepped.set(p.x + (t.x - p.x) / n, p.y + (t.y - p.y) / n, p.z + (t.z - p.z) / n);
+            if (turning) setRot(mob, f32(yaw + f32(f32(wrapDegreesD(mob.lerpYaw! - yaw)) / n)), f32(pitch + f32((mob.lerpPitch - pitch) / n)));
+        } else {
+            stepped.set(p.x + (1 / n) * (t.x - p.x), p.y + (1 / n) * (t.y - p.y), p.z + (1 / n) * (t.z - p.z));
+            if (turning) setRot(mob, f32(yaw + (1 / n) * wrapDegreesD(mob.lerpYaw! - yaw)), f32(pitch + (1 / n) * (mob.lerpPitch - pitch)));
+        }
+        mob.lerpSteps -= 1;
+        mob.lerpPrevious = stepped.clone();
+        mob.lerpPreviousRotation = { yaw: mob.yawDegrees ?? 0, pitch: mob.pitchDegrees };
+        if (mob.lerpSteps <= 0) mob.lerpYaw = null;
+        mob.keptBoundingBox = null;
+        return stepped;
+    }
+
+    /**
+     * A server teleport of the mob its rider controls (ClientPacketListener.handleTeleportEntity, which applies it to a
+     * controlled vehicle from 1.21.2): the mob interpolates there over 3 ticks, or is put there at once when it is more
+     * than 64 blocks away.
+     */
+    teleportRidden(mob: RiddenMobState, target: Vec3, rotation?: Rotation): void {
+        const dx = mob.pos.x - target.x;
+        const dy = mob.pos.y - target.y;
+        const dz = mob.pos.z - target.z;
+        if (dx * dx + dy * dy + dz * dz <= 4096) {
+            this.interpolateRidden(mob, target, 3, rotation);
+            return;
+        }
+        mob.pos.set(target.x, target.y, target.z);
+        if (rotation) setRot(mob, rotation.yaw, rotation.pitch);
+        mob.lerpSteps = 0;
+        mob.lerpTarget = null;
+        mob.lerpYaw = null;
+        mob.keptBoundingBox = null;
+    }
+
+    /**
+     * The mob eases to target over the steps left (LivingEntity.lerpTo, InterpolationHandler.interpolateTo), turning to
+     * the rotation given; without one, from 1.21.5, to the rotation it already heads to, else its own.
+     */
+    interpolateRidden(mob: RiddenMobState, target: Vec3, steps: number, rotation?: Rotation): void {
+        const heading = mob.lerpSteps > 0 && mob.lerpYaw !== null ? { yaw: mob.lerpYaw, pitch: mob.lerpPitch } : null;
+        const to = rotation ?? (this.lt('1.21.5') ? null : heading ?? { yaw: mob.yawDegrees ?? 0, pitch: mob.pitchDegrees });
+        mob.lerpTarget = target.clone();
+        mob.lerpSteps = steps;
+        mob.lerpPrevious = mob.pos.clone();
+        mob.lerpYaw = to ? f32(to.yaw) : null;
+        mob.lerpPitch = to ? f32(to.pitch) : 0;
+        mob.lerpPreviousRotation = { yaw: mob.yawDegrees ?? 0, pitch: mob.pitchDegrees };
+        // 26.3: one step of the update interval (3 ticks) from where the mob is, its first tick a third of the way
+        if (!this.lt('26.3')) {
+            mob.lerpStart = mob.pos.clone();
+            mob.lerpStartRotation = { yaw: mob.yawDegrees ?? 0, pitch: mob.pitchDegrees };
+            mob.lerpTicks = 1 + (3 - steps);
+        }
+    }
+
+    /** Where the mob is headed (Entity.lerpTargetX, what the vehicle move reports): the teleport's target while it runs. */
+    lerpTargetOf(mob: RiddenMobState): Vec3 {
+        return mob.lerpSteps > 0 && mob.lerpTarget ? mob.lerpTarget.clone() : mob.pos.clone();
+    }
+
+    /**
+     * The rotation the vehicle move reports: from 1.21.5 the one the interpolation heads to while it runs
+     * (Entity.lerpTargetYRot / XRot), else the mob's own.
+     */
+    lerpTargetRotationOf(mob: RiddenMobState): Rotation {
+        if (!this.lt('1.21.5') && mob.lerpSteps > 0 && mob.lerpYaw !== null) return { yaw: mob.lerpYaw, pitch: mob.lerpPitch };
+        return { yaw: mob.yawDegrees ?? 0, pitch: mob.pitchDegrees };
     }
 
     /**
