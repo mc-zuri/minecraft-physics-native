@@ -7,6 +7,7 @@
     "scripts": {
         "lint": "eslint src --ext .ts,.tsx",
         "build": "tsc",
+        "test": "tsc && node --test \"test/*.test.cjs\"",
         "native:build": "pnpm generate:block-registries && pnpm generate:block-states && pnpm generate:native-data && napi build --manifest-path native/Cargo.toml --release --platform --output-dir native/artifacts --js native.js --dts native.d.ts",
         "generate:versions": "node scripts/generate-version-manifest.cjs",
         "generate:block-registries": "node scripts/generate-block-registry-manifest.cjs",

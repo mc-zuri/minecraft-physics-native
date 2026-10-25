@@ -1,0 +1,155 @@
+// The mineflayer adapter (dist/mineflayer) on small prismarine worlds: the NativeWorld it keeps in step, and the player
+// ticks it runs. Run after `pnpm build` and the native build: node --test test/
+const assert = require('node:assert/strict');
+const { describe, it } = require('node:test');
+const { EventEmitter } = require('node:events');
+const { Vec3 } = require('vec3');
+const adapter = require('..');
+
+const f32 = Math.fround;
+
+/** A prismarine world of the given blocks ("x,y,z" -> state id), air elsewhere. */
+function worldOf(version, place) {
+    const registry = require('prismarine-registry')(version);
+    const Block = require('prismarine-block')(registry);
+    const blocks = new Map();
+    place({ registry, Block, set: (x, y, z, id) => blocks.set(`${x},${y},${z}`, id) });
+    const air = registry.blocksByName.air.defaultState ?? 0;
+    const stateAt = pos => blocks.get(`${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}`) ?? air;
+    const world = Object.assign(new EventEmitter(), {
+        getBlock: pos => Block.fromStateId(stateAt(pos), 0),
+        getBlockStateId: stateAt,
+        setBlock(x, y, z, id) {
+            blocks.set(`${x},${y},${z}`, id);
+            world.emit('blockUpdate', null, { position: new Vec3(x, y, z) });
+        },
+    });
+    return { registry, Block, world };
+}
+
+/** A stone floor at y 0 from -4 to 4. */
+const floor = ({ registry, set }) => {
+    const stone = registry.blocksByName.stone.defaultState ?? registry.blocksByName.stone.id << 4;
+    for (let x = -4; x <= 4; x += 1) for (let z = -4; z <= 4; z += 1) set(x, 0, z, stone);
+};
+
+const controls = (keys = {}) => ({ forward: false, back: false, left: false, right: false, jump: false, sprint: false, sneak: false, ...keys });
+
+/** The fields of mineflayer-physics-utils' PlayerState the adapter reads, for a player standing at (x, y, z). */
+function playerState(x, y, z, fields = {}) {
+    const state = {
+        age: 0, pos: new Vec3(x, y, z), vel: new Vec3(0, 0, 0), onGround: false, lastOnGround: false, onClimbable: false,
+        isInWater: false, isUnderWater: false, isInLava: false, isInWeb: false, isCollidedHorizontally: false,
+        isCollidedHorizontallyMinor: false, isCollidedVertically: false, fallDistance: 0, scale: 1, isInPowderSnow: false,
+        wasInPowderSnow: false, keptBoundingBox: null, stuckSpeedMultiplier: new Vec3(0, 0, 0), nearbyEntities: [],
+        pistonDeltas: [0, 0, 0], pistonDeltasTick: -1, jumpTicks: 0, sprintTriggerTime: 0, prevForwardImpulse: 0,
+        autoJumpEnabled: false, autoJumpTime: 0, autoJumping: false, flyJumpTriggerTime: 0, attributes: {}, yaw: Math.PI,
+        yawDegrees: 0, pitch: 0, control: controls(), prevControl: controls(), heading: { forward: 0, strafe: 0 },
+        prevHeading: { forward: 0, strafe: 0 }, isUsingItem: false, effects: {}, jumpBoost: 0, speed: 0, slowness: 0,
+        dolphinsGrace: 0, slowFalling: 0, levitation: 0, blindness: 0, depthStrider: 0, swiftSneak: 0, riptide: 0,
+        itemUseTicks: 0, autoSpinAttackTicks: 0, soulSpeed: 0, pose: 0, gameMode: 'survival', food: 20, mayFly: false,
+        flying: false, swimming: false, sprinting: false, crouching: false, fallFlying: false, flySpeed: f32(0.05),
+        validElytraEquipped: false, canWalkOnPowderSnow: false, fireworkRocketDuration: 0, fireworkRockets: 0,
+        fireworkRocketsBeforePlayer: 0, supportingBlockPos: null,
+        getBB() {
+            return { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 };
+        },
+        ...fields,
+    };
+    return { state };
+}
+
+describe('NativeWorldSync', () => {
+    it('writes the blocks around an entity and the ones a world changes', () => {
+        const { registry, world } = worldOf('1.21.1', floor);
+        const sync = new adapter.NativeWorldSync(adapter.LoadNativePhysics(), registry);
+        const around = { minX: -0.3, minY: 1, minZ: -0.3, maxX: 0.3, maxY: 2.8, maxZ: 0.3 };
+        sync.sync(world, around, 2);
+        assert.deepEqual(sync.collisions({ minX: -0.5, minY: 0.5, minZ: -0.5, maxX: 0.5, maxY: 1.5, maxZ: 0.5 }).length, 4);
+        world.setBlock(0, 1, 0, registry.blocksByName.stone.defaultState);
+        sync.sync(world, around, 2);
+        const box = sync.collisions({ minX: 0.1, minY: 1.1, minZ: 0.1, maxX: 0.9, maxY: 1.9, maxZ: 0.9 });
+        assert.deepEqual(box.map(({ min, max }) => [min.y, max.y]), [[1, 2]]);
+    });
+
+    it('joins a fence to its neighbours before 1.13', () => {
+        const { registry, world } = worldOf('1.12.2', ({ registry: r, set }) => {
+            floor({ registry: r, set });
+            set(0, 1, 0, r.blocksByName.fence.id << 4);
+            set(1, 1, 0, r.blocksByName.stone.id << 4);
+        });
+        const sync = new adapter.NativeWorldSync(adapter.LoadNativePhysics(), registry);
+        sync.sync(world, { minX: -0.5, minY: 1, minZ: -0.5, maxX: 0.5, maxY: 2, maxZ: 0.5 }, 1);
+        const fence = sync.collisions({ minX: 0.3, minY: 1.1, minZ: 0.3, maxX: 0.99, maxY: 2.4, maxZ: 0.7 });
+        assert.equal(Math.max(...fence.map(({ max }) => max.x)), 1);
+        assert.deepEqual([...new Set(fence.map(({ max }) => max.y))], [2.5]);
+        const west = sync.collisions({ minX: 0.01, minY: 1.1, minZ: 0.3, maxX: 0.37, maxY: 2.4, maxZ: 0.7 });
+        assert.deepEqual(west, []);
+    });
+
+    it('gives a fluid the flow toward its lower neighbour', () => {
+        const { registry, world } = worldOf('1.21.1', ({ registry: r, Block, set }) => {
+            floor({ registry: r, set });
+            set(0, 1, 0, Block.fromProperties('water', { level: 0 }, 0).stateId);
+            set(1, 1, 0, Block.fromProperties('water', { level: 2 }, 0).stateId);
+        });
+        const sync = new adapter.NativeWorldSync(adapter.LoadNativePhysics(), registry);
+        sync.sync(world, { minX: -0.5, minY: 1, minZ: -0.5, maxX: 0.5, maxY: 2, maxZ: 0.5 }, 2);
+        const flow = sync.world.fluidFlowAt(0, 1, 0);
+        assert.ok(flow.x > 0 && flow.z === 0, `flow ${JSON.stringify(flow)}`);
+    });
+});
+
+describe('NativePhysics', () => {
+    it('lets a player fall and land as vanilla does', () => {
+        const { registry, world } = worldOf('1.21.1', floor);
+        const physics = new adapter.NativePhysics(registry);
+        const ctx = playerState(0.5, 3, 0.5);
+        physics.simulate(ctx, world);
+        assert.equal(ctx.state.pos.y, 3);
+        assert.equal(ctx.state.vel.y, -0.0784000015258789);
+        physics.simulate(ctx, world);
+        assert.equal(ctx.state.pos.y, 3 - 0.0784000015258789);
+        for (let tick = 0; tick < 20; tick += 1) physics.simulate(ctx, world);
+        assert.equal(ctx.state.pos.y, 1);
+        assert.ok(ctx.state.onGround);
+        assert.equal(ctx.state.age, 22);
+    });
+
+    it('starts a sprint with the sprint key and moves along the yaw', () => {
+        const { registry, world } = worldOf('1.21.1', floor);
+        const physics = new adapter.NativePhysics(registry);
+        const ctx = playerState(0.5, 1, 0.5, { onGround: true });
+        ctx.state.control = controls({ forward: true, sprint: true });
+        for (let tick = 0; tick < 5; tick += 1) physics.simulate(ctx, world);
+        assert.ok(ctx.state.sprinting);
+        assert.ok(ctx.state.pos.z > 1, `z ${ctx.state.pos.z}`);
+        assert.equal(ctx.state.pos.x, 0.5);
+        assert.equal(ctx.state.pos.y, 1);
+    });
+
+    it('crouches where the player has no room to stand', () => {
+        const { registry, world } = worldOf('1.21.1', ({ registry: r, Block, set }) => {
+            floor({ registry: r, set });
+            const slab = Block.fromProperties('stone_slab', { type: 'top', waterlogged: false }, 0).stateId;
+            for (let x = -1; x <= 1; x += 1) for (let z = -1; z <= 1; z += 1) set(x, 2, z, slab);
+        });
+        const physics = new adapter.NativePhysics(registry);
+        const ctx = playerState(0.5, 1, 0.5, { onGround: true });
+        physics.simulate(ctx, world);
+        assert.equal(ctx.state.pose, adapter.Pose.SNEAKING);
+    });
+
+    it('keeps the box vanilla keeps before 1.17 while the player stays where it left it', () => {
+        const { registry, world } = worldOf('1.16.5', floor);
+        const physics = new adapter.NativePhysics(registry);
+        const ctx = playerState(0.5, 1, 0.5, { onGround: true });
+        physics.simulate(ctx, world);
+        const kept = ctx.state.keptBoundingBox;
+        assert.equal(kept.bb.minY, 1);
+        assert.equal(kept.bb.maxY, 1 + f32(1.8));
+        ctx.state.pos.set(2.5, 1, 2.5);
+        physics.simulate(ctx, world);
+        assert.equal(ctx.state.keptBoundingBox.bb.minX, 2.5 - f32(0.6) / 2);
+    });
+});
