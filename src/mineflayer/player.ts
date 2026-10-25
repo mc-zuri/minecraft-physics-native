@@ -428,14 +428,15 @@ export class NativePhysics extends NativeEngine implements IPhysics {
 
     /**
      * The entities near the player as the engine's entities array: how each pushes and whether it collides, where the
-     * player's move meets it and where its own tick leaves it.
+     * player's move meets it (where its tick left it when the client ticks it before the player) and where its own tick
+     * leaves it.
      */
     private entitiesOf(state: PlayerState): Float64Array {
         const entities = state.nearbyEntities ?? [];
         const out = new Float64Array(entities.length * NATIVE_PLAYER_ENTITY_LENGTH);
         entities.forEach((entity, i) => {
             const ticked = entity.afterTick ?? entity;
-            const { boundingBox: b, position: p } = entity;
+            const { boundingBox: b, position: p } = entity.ticksBeforePlayer ? ticked : entity;
             const { boundingBox: tb, position: tp } = ticked;
             out.set([
                 ENTITY_KINDS[this.entityKind(entity)], entity.ticksBeforePlayer ? 1 : 0,

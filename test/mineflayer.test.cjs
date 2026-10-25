@@ -178,6 +178,20 @@ describe('NativePhysics', () => {
         assert.equal(carrying.state.vel.x, -push);
     });
 
+    it('meets a boat the client ticks before the player where its tick left it', () => {
+        const { registry, world } = worldOf('1.16.5', () => {});
+        const physics = new adapter.NativePhysics(registry);
+        const boatAt = y => ({ position: new Vec3(0.5, y, 0.5), boundingBox: { minX: -0.1875, minY: y, minZ: -0.1875, maxX: 1.1875, maxY: y + 0.5625, maxZ: 1.1875 } });
+        const standing = ticksBeforePlayer => {
+            const boat = { id: 3, name: 'boat', living: false, ...boatAt(9.4375), ticksBeforePlayer, afterTick: boatAt(9.3375) };
+            const ctx = playerState(0.5, 10, 0.5, { onGround: true, vel: new Vec3(0, -0.0784000015258789, 0), nearbyEntities: [boat] });
+            physics.simulate(ctx, world);
+            return ctx.state.onGround;
+        };
+        assert.equal(standing(false), true);
+        assert.equal(standing(true), false);
+    });
+
     it('keeps the box vanilla keeps before 1.17 while the player stays where it left it', () => {
         const { registry, world } = worldOf('1.16.5', floor);
         const physics = new adapter.NativePhysics(registry);
