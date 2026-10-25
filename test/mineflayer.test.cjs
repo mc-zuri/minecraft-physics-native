@@ -27,6 +27,17 @@ function worldOf(version, place) {
     return { registry, Block, world };
 }
 
+/** prismarine-world's view of a world whose chunk columns from x 16 on are not loaded: no block there, state id 0. */
+function unloadedFromX16(world) {
+    const { getBlock, getBlockStateId } = world;
+    const loaded = pos => Math.floor(pos.x) < 16;
+    return Object.assign(world, {
+        getColumnAt: pos => (loaded(pos) ? {} : null),
+        getBlock: pos => (loaded(pos) ? getBlock(pos) : null),
+        getBlockStateId: pos => (loaded(pos) ? getBlockStateId(pos) : 0),
+    });
+}
+
 /** A stone floor at y 0 from -4 to 4. */
 const floor = ({ registry, set }) => {
     const stone = registry.blocksByName.stone.defaultState ?? registry.blocksByName.stone.id << 4;
@@ -105,6 +116,16 @@ describe('NativeWorldSync', () => {
         assert.deepEqual([...new Set(fence.map(({ max }) => max.y))], [2.5]);
         const west = sync.collisions({ minX: 0.01, minY: 1.1, minZ: 0.3, maxX: 0.37, maxY: 2.4, maxZ: 0.7 });
         assert.deepEqual(west, []);
+    });
+
+    it('leaves out the chunk columns a prismarine world has not loaded', () => {
+        const { registry, world } = worldOf('1.21.1', floor);
+        unloadedFromX16(world);
+        const sync = new adapter.NativeWorldSync(adapter.LoadNativePhysics(), registry);
+        sync.sync(world, { minX: 15.2, minY: 1, minZ: 0.2, maxX: 15.8, maxY: 2.8, maxZ: 0.8 }, 2);
+        assert.equal(sync.world.isChunkLoaded(0, 0), true);
+        assert.equal(sync.world.isChunkLoaded(1, 0), false);
+        assert.equal(sync.blockAt(16, 1, 0), null);
     });
 
     it('gives a fluid the flow toward its lower neighbour', () => {

@@ -16,6 +16,8 @@ export interface PrismarineWorld {
     getBlock(pos: Vec3Like): PrismarineBlock | null | undefined;
     /** The state id at a position, read without building a block (prismarine-world's). */
     getBlockStateId?(pos: Vec3Like): number | null | undefined;
+    /** The chunk column at a position (prismarine-world's): where it has none, its state id is 0 and no block. */
+    getColumnAt?(pos: Vec3Like): unknown;
     /**
      * prismarine-world's events: a world that emits 'blockUpdate' (and the chunk columns it loads and unloads) has only
      * the blocks it changed and those newly near the entity read again; any other world has all of them read each tick.
@@ -86,7 +88,9 @@ export class NativeWorldSync {
     private readonly current = new Set<string>();
     private readonly outdated = new Set<string>();
     private readonly loadedChunks = new Set<string>();
+    /** The chunk column of the cell read last, and whether the world has it. */
     private lastChunk = '';
+    private lastChunkLoaded = false;
     private readonly cursor = new Cursor();
     private source: PrismarineWorld | null = null;
     /** Whether the source tells its block changes, the cells it changed since the last sync, and the cells written then. */
@@ -128,6 +132,7 @@ export class NativeWorldSync {
     sync(source: PrismarineWorld, box: BoxLike, margin: number): void {
         if (source !== this.source) this.reset(source);
         else if (this.ids.size > CACHE_LIMIT) this.forget();
+        this.lastChunk = '';
         const region: Region = [
             Math.floor(box.minX - margin), Math.floor(box.minY - margin), Math.floor(box.minZ - margin),
             Math.floor(box.maxX + margin), Math.floor(box.maxY + margin), Math.floor(box.maxZ + margin),
@@ -281,6 +286,12 @@ export class NativeWorldSync {
 
     private read(source: PrismarineWorld, x: number, y: number, z: number): number {
         const pos = this.cursor.set(x, y, z);
+        const chunk = `${x >> 4},${z >> 4}`;
+        if (chunk !== this.lastChunk) {
+            this.lastChunk = chunk;
+            this.lastChunkLoaded = !source.getColumnAt || source.getColumnAt(pos) != null;
+        }
+        if (!this.lastChunkLoaded) return UNKNOWN;
         let id = source.getBlockStateId?.(pos);
         let block: PrismarineBlock | null | undefined;
         if (id == null) {
@@ -293,13 +304,9 @@ export class NativeWorldSync {
             if (!block) return UNKNOWN;
             this.described.set(id, describeBlock(block));
         }
-        const chunk = `${x >> 4},${z >> 4}`;
-        if (chunk !== this.lastChunk) {
-            this.lastChunk = chunk;
-            if (!this.loadedChunks.has(chunk)) {
-                this.loadedChunks.add(chunk);
-                this.world.setChunkLoaded(x >> 4, z >> 4, true);
-            }
+        if (!this.loadedChunks.has(chunk)) {
+            this.loadedChunks.add(chunk);
+            this.world.setChunkLoaded(x >> 4, z >> 4, true);
         }
         return id;
     }
