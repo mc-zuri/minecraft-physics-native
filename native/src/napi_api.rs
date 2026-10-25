@@ -2052,7 +2052,7 @@ fn dimensions_for_pose(
 
 }
 
-fn validated_simulation_config(config: NativeSimulationConfig) -> Result<PhysicsConfig> {
+pub(crate) fn validated_simulation_config(config: NativeSimulationConfig) -> Result<PhysicsConfig> {
     let config: PhysicsConfig = config.into();
     config.validate().map_err(Error::from_reason)?;
     Ok(config)
@@ -2772,10 +2772,10 @@ mod tests {
     use super::{
         create_simulation_state, refresh_versioned_pose, simulate_versioned_entity_push,
         simulate_versioned_entity_ticks, simulate_versioned_piston_push, simulate_versioned_tick,
-        simulate_versioned_ticks,
-        NativeAabb, NativeBlockShape, NativeBlockUpdate, NativeEntityDescriptor,
-        NativeEntityPushState, NativeMovingPiston, NativeNearbyEntity, NativeSimulationConfig,
-        NativeSimulationState, NativeVec3, NativeVersionedEntityState, NativeWorld,
+        simulate_versioned_ticks, NativeAabb, NativeBlockShape, NativeBlockUpdate,
+        NativeEntityDescriptor, NativeEntityPushState, NativeMovingPiston, NativeNearbyEntity,
+        NativeSimulationConfig, NativeSimulationState, NativeVec3, NativeVersionedEntityState,
+        NativeWorld,
     };
 
     fn block_shape(min: (f64, f64, f64), max: (f64, f64, f64), effect: u8) -> NativeBlockShape {

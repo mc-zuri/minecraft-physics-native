@@ -395,8 +395,108 @@ export interface NativeBlockUpdate {
     remove?: boolean;
 }
 
+/**
+ * A local player whose state the engine keeps between ticks (simulateVersionedTick's tick): each tick sends only what
+ * changes, in a Float64Array laid out as NativePlayerInput, and gets the result back laid out as NativePlayerOutput.
+ * The rest of the state (attributes, effects, the counters the engine keeps) stays until setState replaces it.
+ */
+export interface NativePlayer {
+    /** Replaces the whole state, its nearby entities too. */
+    setState(state: NativeSimulationState): void;
+    /** The whole state after the last tick or push. */
+    state(): NativeSimulationState;
+    /** Replaces the bounding box kept before 1.17 (a refitted size). */
+    setBoundingBox(boundingBox?: NativeAabb | null): void;
+    /** One tick; `entities` holds this tick's nearby entities, NATIVE_PLAYER_ENTITY_LENGTH numbers each. */
+    tick(world: NativeWorld, input: Float64Array, entities: Float64Array): Float64Array;
+    /** The pushes of moving pistons after the tick, each call after the others of the same tick. */
+    pushByMovingPistons(world: NativeWorld, pistons: NativeMovingPiston[]): Float64Array;
+}
+
+/** The indices of a NativePlayer's input array (native/src/napi_player.rs). */
+export const NativePlayerInput = {
+    POSITION: 0,
+    VELOCITY: 3,
+    YAW: 6,
+    PITCH: 7,
+    LOOK: 8,
+    STRAFE: 11,
+    FORWARD: 12,
+    HALF_WIDTH: 13,
+    HEIGHT: 14,
+    EYE_HEIGHT: 15,
+    FLAGS: 16,
+    FALL_DISTANCE: 17,
+    JUMP_TICKS: 18,
+    AUTO_JUMP_TIME: 19,
+    STUCK_SPEED_MULTIPLIER: 20,
+    RIPTIDE_LAUNCH: 23,
+    FIREWORK_ROCKETS: 24,
+    FIREWORK_ROCKETS_BEFORE_PLAYER: 25,
+    FLYING_SPEED: 26,
+    LENGTH: 27,
+} as const;
+
+/** The bits of the input array's flags. UNMOVED: the player is where the last tick left it (else the position that
+ * tick started from and the kept box go, as after a teleport). */
+export const NativePlayerInputFlag = {
+    JUMP_REQUESTED: 1 << 0,
+    SPRINTING: 1 << 1,
+    WAS_SPRINTING: 1 << 2,
+    SNEAKING: 1 << 3,
+    MOVING_SLOWLY: 1 << 4,
+    SWIMMING: 1 << 5,
+    FLYING: 1 << 6,
+    FALL_FLYING: 1 << 7,
+    USING_ITEM: 1 << 8,
+    AUTO_JUMP: 1 << 9,
+    NO_PHYSICS: 1 << 10,
+    ON_GROUND: 1 << 11,
+    COLLIDED_HORIZONTALLY: 1 << 12,
+    MINOR_HORIZONTAL_COLLISION: 1 << 13,
+    COLLIDED_VERTICALLY: 1 << 14,
+    VERTICAL_COLLISION_BELOW: 1 << 15,
+    IN_WATER: 1 << 16,
+    IN_LAVA: 1 << 17,
+    IN_POWDER_SNOW: 1 << 18,
+    UNMOVED: 1 << 19,
+    SPRINT_MODIFIER: 1 << 20,
+} as const;
+
+/** The indices of a NativePlayer's output array; the kept box is NaN without one. */
+export const NativePlayerOutput = {
+    POSITION: 0,
+    VELOCITY: 3,
+    FLAGS: 6,
+    FALL_DISTANCE: 7,
+    JUMP_TICKS: 8,
+    AUTO_JUMP_TIME: 9,
+    STUCK_SPEED_MULTIPLIER: 10,
+    BOUNDING_BOX: 13,
+    LENGTH: 19,
+} as const;
+
+export const NativePlayerOutputFlag = {
+    ON_GROUND: 1 << 0,
+    COLLIDED_HORIZONTALLY: 1 << 1,
+    MINOR_HORIZONTAL_COLLISION: 1 << 2,
+    COLLIDED_VERTICALLY: 1 << 3,
+    IN_WATER: 1 << 4,
+    IN_LAVA: 1 << 5,
+    IN_POWDER_SNOW: 1 << 6,
+    IN_WEB: 1 << 7,
+} as const;
+
+/**
+ * The numbers of one nearby entity in a NativePlayer's entities array: its kind (0 inert, 1 living, 2 boat, 3 shulker,
+ * 4 happy ghast), whether it ticks before the player, where the player's move meets it (position, box: min, max) and
+ * where its own tick leaves it (position, box).
+ */
+export const NATIVE_PLAYER_ENTITY_LENGTH = 20;
+
 export interface NativePhysicsBinding {
     NativeWorld: new () => NativeWorld;
+    NativePlayer: new (version: string, state: NativeSimulationState, config: NativeSimulationConfig) => NativePlayer;
     simulateTick(
         world: NativeWorld,
         state: NativeSimulationState,
