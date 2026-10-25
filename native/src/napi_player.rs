@@ -36,7 +36,9 @@ pub mod input {
     pub const FIREWORK_ROCKETS: usize = 24;
     pub const FIREWORK_ROCKETS_BEFORE_PLAYER: usize = 25;
     pub const FLYING_SPEED: usize = 26;
-    pub const LENGTH: usize = 27;
+    /// UseEffects.speedMultiplier of the item in use: 0.2, a spear's 1.0 (1.21.11+).
+    pub const ITEM_USE_SPEED_MULTIPLIER: usize = 27;
+    pub const LENGTH: usize = 28;
 }
 
 /// The bits of the input array's flags.
@@ -66,6 +68,8 @@ pub mod input_flag {
     pub const UNMOVED: u32 = 1 << 19;
     /// The movement speed attribute holds the sprint modifier (sprintModifier).
     pub const SPRINT_MODIFIER: u32 = 1 << 20;
+    /// Removed from the level this tick (LocalPlayer.tickDeath at the 20th tick of death, 1.17+).
+    pub const REMOVED: u32 = 1 << 21;
 }
 
 /// The results of a NativePlayer's tick, by their index in its output array.
@@ -263,6 +267,8 @@ impl NativePlayer {
         state.flying = flag(input_flag::FLYING);
         state.fall_flying = flag(input_flag::FALL_FLYING);
         state.using_item = flag(input_flag::USING_ITEM);
+        state.item_use_speed_multiplier = Some(values[ITEM_USE_SPEED_MULTIPLIER] as f32);
+        state.removed = flag(input_flag::REMOVED);
         state.auto_jump = flag(input_flag::AUTO_JUMP);
         state.no_physics = flag(input_flag::NO_PHYSICS);
         state.on_ground = flag(input_flag::ON_GROUND);
@@ -501,6 +507,7 @@ mod tests {
         values[input::FALL_DISTANCE] = state.fall_distance.unwrap_or(0.0);
         values[input::JUMP_TICKS] = f64::from(state.jump_ticks.unwrap_or(0));
         values[input::FLYING_SPEED] = state.flying_speed.unwrap_or(0.02);
+        values[input::ITEM_USE_SPEED_MULTIPLIER] = state.item_use_speed_multiplier.unwrap_or(0.2);
         values
     }
 
@@ -559,5 +566,28 @@ mod tests {
             .step(&mut world, &values, &shulker)
             .expect("the tick runs");
         assert_eq!(landed[output::POSITION + 1], 1.1);
+    }
+
+    #[test]
+    fn the_input_takes_the_item_use_speed_and_the_removal() {
+        let mut world = floor();
+        let mut walk = |flags: u32, item_use_speed: f64| {
+            let mut player =
+                NativePlayer::new("1.21.11".to_string(), walker(), config()).expect("it runs");
+            let mut values = input_of(&walker(), false);
+            values[input::FLAGS] = f64::from(values[input::FLAGS] as u32 | flags);
+            values[input::ITEM_USE_SPEED_MULTIPLIER] = item_use_speed;
+            player
+                .step(&mut world, &values, &[])
+                .expect("the tick runs")
+        };
+        let walking = walk(0, 0.2);
+        let charging = walk(input_flag::USING_ITEM, 1.0);
+        let eating = walk(input_flag::USING_ITEM, 0.2);
+        assert_eq!(charging[output::VELOCITY], walking[output::VELOCITY]);
+        assert!(eating[output::VELOCITY] < walking[output::VELOCITY]);
+
+        let removed = walk(input_flag::REMOVED, 0.2);
+        assert_eq!(removed[output::POSITION], walker().position.x);
     }
 }

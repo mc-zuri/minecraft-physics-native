@@ -111,6 +111,7 @@ export interface PlayerState {
     prevHeading: { forward: number; strafe: number };
     isUsingItem: boolean;
     useItemCanSprint?: boolean;
+    useItemSpeedMultiplier?: number;
     effects: Record<number, Effect | undefined> | Effect[];
     jumpBoost: number;
     speed: number;

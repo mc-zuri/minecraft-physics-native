@@ -262,6 +262,7 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         input[In.FIREWORK_ROCKETS] = rocketsBefore + rocketsAfter;
         input[In.FIREWORK_ROCKETS_BEFORE_PLAYER] = rocketsBefore;
         input[In.FLYING_SPEED] = state.flySpeed ?? f32(0.05);
+        input[In.ITEM_USE_SPEED_MULTIPLIER] = state.useItemSpeedMultiplier ?? f32(0.2);
 
         const carry = this.carryFor(state, kept);
         input[In.FLAGS] = flags | bit(samePosition(carry.position, pos), InFlag.UNMOVED);

@@ -434,7 +434,8 @@ export const NativePlayerInput = {
     FIREWORK_ROCKETS: 24,
     FIREWORK_ROCKETS_BEFORE_PLAYER: 25,
     FLYING_SPEED: 26,
-    LENGTH: 27,
+    ITEM_USE_SPEED_MULTIPLIER: 27,
+    LENGTH: 28,
 } as const;
 
 /** The bits of the input array's flags. UNMOVED: the player is where the last tick left it (else the position that
@@ -461,6 +462,7 @@ export const NativePlayerInputFlag = {
     IN_POWDER_SNOW: 1 << 18,
     UNMOVED: 1 << 19,
     SPRINT_MODIFIER: 1 << 20,
+    REMOVED: 1 << 21,
 } as const;
 
 /** The indices of a NativePlayer's output array; the kept box is NaN without one. */
