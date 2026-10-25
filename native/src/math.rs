@@ -1,6 +1,8 @@
 use std::ops::{Add, Sub};
 use std::sync::OnceLock;
 
+use crate::trig;
+
 const SIN_SCALE: f64 = 10430.378350470453;
 const ATAN_LUT_SIZE: usize = 257;
 const ATAN_FRAC_BIAS: f64 = f64::from_bits(4_805_340_802_404_319_232);
@@ -10,7 +12,7 @@ fn sine_table() -> &'static [f32; 65536] {
     TABLE.get_or_init(|| {
         let mut table = [0.0; 65536];
         for (index, value) in table.iter_mut().enumerate() {
-            *value = (index as f64 / SIN_SCALE).sin() as f32;
+            *value = trig::sin(index as f64 / SIN_SCALE) as f32;
         }
 
         table
@@ -22,7 +24,7 @@ fn legacy_sine_table() -> &'static [f32; 65536] {
     TABLE.get_or_init(|| {
         let mut table = [0.0; 65536];
         for (index, value) in table.iter_mut().enumerate() {
-            *value = (index as f64 * std::f64::consts::PI * 2.0 / 65536.0).sin() as f32;
+            *value = trig::sin(index as f64 * std::f64::consts::PI * 2.0 / 65536.0) as f32;
         }
 
         table
@@ -35,9 +37,10 @@ fn atan_tables() -> (&'static [f64; ATAN_LUT_SIZE], &'static [f64; ATAN_LUT_SIZE
         let mut asin = [0.0; ATAN_LUT_SIZE];
         let mut cosine = [0.0; ATAN_LUT_SIZE];
         for index in 0..ATAN_LUT_SIZE {
-            let angle = (index as f64 / 256.0).asin();
+            // Java's Math.asin is fdlibm's, which libm ports
+            let angle = libm::asin(index as f64 / 256.0);
             asin[index] = angle;
-            cosine[index] = angle.cos();
+            cosine[index] = trig::cos(angle);
         }
         (asin, cosine)
     });
@@ -993,6 +996,17 @@ mod tests {
         smoothstep_derivative, sqrt_f32, square, triangle_wave, unpack_degrees, wrap_degrees,
         wrap_degrees_f32, wrap_degrees_i32, wrap_degrees_i64, Aabb, Vec3,
     };
+
+    #[test]
+    fn atan_tables_hold_java_values_where_msvc_differs() {
+        let (asin, cosine) = super::atan_tables();
+        for (index, bits) in [(98, 0x3fd9_2445_4c46_2cc4), (161, 0x3fe5_c3c0_c108_f95c)] {
+            assert_eq!(asin[index].to_bits(), bits, "ASIN_TAB[{index}]");
+        }
+        for (index, bits) in [(125, 0x3feb_ed0b_dee7_064d), (205, 0x3fe3_2aa7_b2d3_fd8f)] {
+            assert_eq!(cosine[index].to_bits(), bits, "COS_TAB[{index}]");
+        }
+    }
 
     #[test]
     fn java_float_rounds_to_binary32() {

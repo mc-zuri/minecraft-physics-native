@@ -14,6 +14,7 @@ use crate::projectile::{
 };
 use crate::ridden::{tick_ridden_mob, RiddenMobKind, RiddenMobState, RiderInput};
 use crate::simulation::{PhysicsConfig, SimulationState};
+use crate::trig;
 use crate::vehicle::{
     tick_boat, tick_boat_in_world, tick_horse, BoatSimulationState, BoatStatus,
     HorseSimulationState, LegacyBoatState,
@@ -2006,11 +2007,12 @@ pub fn create_simulation_state(
     state.water_movement_efficiency = descriptor.water_movement_efficiency.unwrap_or(0.0);
     state.pitch = descriptor.pitch.unwrap_or(0.0);
     state.look = descriptor.look.map(Into::into).unwrap_or_else(|| {
-        let horizontal = descriptor.pitch.unwrap_or(0.0).cos();
+        let pitch = descriptor.pitch.unwrap_or(0.0);
+        let horizontal = trig::cos(pitch);
         Vec3::new(
-            -descriptor.yaw.sin() * horizontal,
-            -descriptor.pitch.unwrap_or(0.0).sin(),
-            descriptor.yaw.cos() * horizontal,
+            -trig::sin(descriptor.yaw) * horizontal,
+            -trig::sin(pitch),
+            trig::cos(descriptor.yaw) * horizontal,
         )
     });
     state.firework_boost = descriptor

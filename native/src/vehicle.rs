@@ -5,6 +5,7 @@ use crate::simulation::{
     block_speed_factor, landing_position, main_supporting_block, moves_position, mth_cos, mth_sin,
     position_of_bounding_box, push_by_fluid, SimulationState,
 };
+use crate::trig;
 use crate::version::MinecraftVersion;
 use crate::world::{BlockEffect, EntityCollisionContext, FluidState, WorldSnapshot};
 
@@ -156,8 +157,8 @@ fn apply_boat_controls(state: &mut BoatSimulationState) {
     if state.input_down {
         acceleration -= 0.005;
     }
-    state.velocity.x += state.yaw.sin() * acceleration;
-    state.velocity.z -= state.yaw.cos() * acceleration;
+    state.velocity.x += trig::sin(state.yaw) * acceleration;
+    state.velocity.z -= trig::cos(state.yaw) * acceleration;
 }
 
 /// The boat's width and height: EntityType.BOAT's 1.375 by 0.5625.
@@ -594,8 +595,8 @@ fn tick_legacy_boat(
     let rider_yaw = rider.rider_yaw + -rider.rider_strafe * 90.0;
     let radians = f64::from(rider_yaw * std::f32::consts::PI / 180.0);
     let (multiplier, forward) = (rider.speed_multiplier, f64::from(rider.rider_forward));
-    velocity.x += -radians.sin() * multiplier * forward * f64::from(0.05_f32);
-    velocity.z += radians.cos() * multiplier * forward * f64::from(0.05_f32);
+    velocity.x += -trig::sin(radians) * multiplier * forward * f64::from(0.05_f32);
+    velocity.z += trig::cos(radians) * multiplier * forward * f64::from(0.05_f32);
     let mut speed = velocity.horizontal_length();
     if speed > 0.35 {
         let scale = 0.35 / speed;
@@ -1193,8 +1194,9 @@ pub fn tick_horse(state: &mut HorseSimulationState) {
     };
     let forward = forward * input_scale;
     let strafe = strafe * input_scale;
-    state.velocity.x += (state.yaw.sin() * forward + state.yaw.cos() * strafe) * speed;
-    state.velocity.z += (state.yaw.cos() * forward - state.yaw.sin() * strafe) * speed;
+    let (sin, cos) = (trig::sin(state.yaw), trig::cos(state.yaw));
+    state.velocity.x += (sin * forward + cos * strafe) * speed;
+    state.velocity.z += (cos * forward - sin * strafe) * speed;
     if state.in_water {
         state.velocity.y -= 0.01;
         state.velocity.x *= 0.8;

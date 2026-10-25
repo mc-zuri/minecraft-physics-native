@@ -6,6 +6,7 @@ use crate::math::{
     fast_inv_sqrt, fast_inv_sqrt_f32, java_cos, java_cos_legacy, java_float, java_sin,
     java_sin_legacy, lerp, Aabb, Vec3,
 };
+use crate::trig;
 use crate::version::MinecraftVersion;
 use crate::world::WorldSnapshot;
 use crate::world::{BlockEffect, EntityCollisionContext, FluidContact, FluidState};
@@ -1185,7 +1186,7 @@ fn glide(state: &mut SimulationState, gravity: f64, release: MinecraftVersion) {
         (vector_length(look, release) / 0.4).min(1.0)
     };
     let lift = if release.at_least(1, 18, 2) {
-        let cos = state.pitch.cos();
+        let cos = trig::cos(state.pitch);
         cos * cos * look_factor
     } else {
         let cos = mth_cos(state.pitch, release);
