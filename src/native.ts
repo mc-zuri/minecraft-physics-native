@@ -411,6 +411,11 @@ export interface NativePlayer {
     tick(world: NativeWorld, input: Float64Array, entities: Float64Array): Float64Array;
     /** The pushes of moving pistons after the tick, each call after the others of the same tick. */
     pushByMovingPistons(world: NativeWorld, pistons: NativeMovingPiston[]): Float64Array;
+    /**
+     * The pushes the nearby entities took back from the player in the last tick (Entity.push: the other way), three
+     * numbers each: the entity's index in the entities array, then x and z.
+     */
+    entityPushes(): Float64Array;
 }
 
 /** The indices of a NativePlayer's input array (native/src/napi_player.rs). */

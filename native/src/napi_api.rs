@@ -4,7 +4,8 @@ use napi_derive::napi;
 
 use crate::entity::{
     boost_by_attached_rockets, entity_push_impulses_with_pushthrough, nearby_entity_colliders,
-    push_by_nearby_entities, Dimensions, EntityFlags, EntityState, NearbyEntity, NearbyEntityKind,
+    push_by_nearby_entities, Dimensions, EntityFlags, EntityPush, EntityState, NearbyEntity,
+    NearbyEntityKind,
 };
 use crate::math::{Aabb, Vec3};
 use crate::piston::{push_by_moving_pistons, MovingPiston};
@@ -1581,6 +1582,7 @@ pub fn simulate_versioned_tick(
 /// simulateVersionedTick's tick before the pistons: the rockets and entities the client ticks
 /// before the player, its tick with the colliders among the entities in the world, then the
 /// rockets and entities after it. `rockets` counts all the attached rockets and those before.
+/// Returns the pushes the entities took back from the player.
 pub(crate) fn tick_local_player(
     version: &str,
     release: MinecraftVersion,
@@ -1589,10 +1591,11 @@ pub(crate) fn tick_local_player(
     nearby_entities: &[NearbyEntity],
     (rockets, rockets_before_player): (u32, u32),
     config: PhysicsConfig,
-) -> Result<()> {
+) -> Result<Vec<EntityPush>> {
     state.minor_horizontal_collision_supported = release.supports_minor_horizontal_collision();
     boost_by_attached_rockets(state, rockets_before_player, release);
-    push_by_nearby_entities(state, world.snapshot(), nearby_entities, true, release);
+    let mut pushes =
+        push_by_nearby_entities(state, world.snapshot(), nearby_entities, true, release);
     world
         .inner
         .set_entity_colliders(nearby_entity_colliders(nearby_entities, false));
@@ -1600,8 +1603,14 @@ pub(crate) fn tick_local_player(
     world.inner.set_entity_colliders(Vec::new());
     result.map_err(Error::from_reason)?;
     boost_by_attached_rockets(state, rockets - rockets_before_player, release);
-    push_by_nearby_entities(state, world.snapshot(), nearby_entities, false, release);
-    Ok(())
+    pushes.extend(push_by_nearby_entities(
+        state,
+        world.snapshot(),
+        nearby_entities,
+        false,
+        release,
+    ));
+    Ok(pushes)
 }
 
 /// The moving pistons' pushes after the player's tick, with the colliders among the entities

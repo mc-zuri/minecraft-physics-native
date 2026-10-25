@@ -2,7 +2,7 @@ use napi::bindgen_prelude::{Float64Array, Float64ArraySlice, Result};
 use napi::Error;
 use napi_derive::napi;
 
-use crate::entity::{NearbyEntity, NearbyEntityKind};
+use crate::entity::{EntityPush, NearbyEntity, NearbyEntityKind};
 use crate::math::{Aabb, Vec3};
 use crate::napi_api::{
     push_local_player_by_pistons, tick_local_player, validated_simulation_config, NativeAabb,
@@ -114,6 +114,7 @@ pub struct NativePlayer {
     config: PhysicsConfig,
     state: SimulationState,
     nearby_entities: Vec<NearbyEntity>,
+    pushes: Vec<EntityPush>,
     piston_deltas: [f64; 3],
 }
 
@@ -138,6 +139,7 @@ impl NativePlayer {
             config: validated_simulation_config(config)?,
             state: SimulationState::default(),
             nearby_entities: Vec::new(),
+            pushes: Vec::new(),
             piston_deltas: [0.0; 3],
         };
         player.set_state(state);
@@ -183,6 +185,18 @@ impl NativePlayer {
         self.step(world, &input, &entities).map(Float64Array::new)
     }
 
+    /// The pushes the nearby entities took back from the player in the last tick (Entity.push: the
+    /// other way), three numbers each: the entity's index in the entities array, then x and z.
+    #[napi]
+    pub fn entity_pushes(&self) -> Float64Array {
+        let values: Vec<f64> = self
+            .pushes
+            .iter()
+            .flat_map(|push| [push.index as f64, push.x, push.z])
+            .collect();
+        Float64Array::new(values)
+    }
+
     /// The pushes of moving pistons after the tick (simulateVersionedTick's movingPistons), each
     /// call after the others of the same tick; the results come back laid out as `output`.
     #[napi]
@@ -226,7 +240,7 @@ impl NativePlayer {
             .map(nearby_entity)
             .collect();
         self.piston_deltas = [0.0; 3];
-        tick_local_player(
+        self.pushes = tick_local_player(
             &self.version,
             self.release,
             world,
@@ -371,6 +385,7 @@ fn nearby_entity(values: &[f64]) -> NearbyEntity {
 #[cfg(test)]
 mod tests {
     use super::{input, input_flag, output, output_flag, NativePlayer, ENTITY_LENGTH};
+    use crate::entity::EntityPush;
     use crate::napi_api::{
         simulate_versioned_tick, NativeBlockShape, NativeBlockUpdate, NativeSimulationConfig,
         NativeSimulationState, NativeVec3, NativeWorld,
@@ -566,6 +581,37 @@ mod tests {
             .step(&mut world, &values, &shulker)
             .expect("the tick runs");
         assert_eq!(landed[output::POSITION + 1], 1.1);
+    }
+
+    #[test]
+    fn the_nearby_entities_take_back_the_pushes_they_give() {
+        let mut world = floor();
+        let mut player =
+            NativePlayer::new("1.21.11".to_string(), walker(), config()).expect("1.21.11 runs");
+        let mut values = input_of(&walker(), false);
+        values[input::FORWARD] = 0.0;
+        values[input::FLAGS] = f64::from(input_flag::ON_GROUND);
+        let mut cow = vec![0.0; ENTITY_LENGTH];
+        cow[0] = 1.0;
+        for at in [2, 11] {
+            cow[at..at + 3].copy_from_slice(&[1.0, 1.0, 0.5]);
+            cow[at + 3..at + 9].copy_from_slice(&[0.55, 1.0, 0.05, 1.45, 2.4, 0.95]);
+        }
+        let inert = vec![0.0; ENTITY_LENGTH];
+        let entities = [inert, cow].concat();
+        let pushed = player
+            .step(&mut world, &values, &entities)
+            .expect("the tick runs");
+        let push = 0.5 / 0.5_f64.sqrt() * f64::from(0.05_f32);
+        assert_eq!(pushed[output::VELOCITY], -push);
+        assert_eq!(
+            player.pushes,
+            vec![EntityPush {
+                index: 1,
+                x: push,
+                z: 0.0
+            }]
+        );
     }
 
     #[test]

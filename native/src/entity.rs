@@ -207,25 +207,37 @@ pub fn nearby_entity_colliders(
         .collect()
 }
 
+/// The push a nearby entity took back from the player it pushed (Entity.push: the other way), by
+/// its index among the nearby entities.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EntityPush {
+    pub index: usize,
+    pub x: f64,
+    pub z: f64,
+}
+
 /// The pushes of the entities that tick before the local player (or after it), in the order the
 /// client ticks them. From 1.9 the client's entities push the local player alone
-/// (EntitySelector.pushableBy) when it is pushable: not a spectator, not on a climbable.
+/// (EntitySelector.pushableBy) when it is pushable: not a spectator, not on a climbable. Returns
+/// the pushes they took back.
 pub fn push_by_nearby_entities(
     state: &mut SimulationState,
     world: &WorldSnapshot,
     entities: &[NearbyEntity],
     before_player: bool,
     release: MinecraftVersion,
-) {
+) -> Vec<EntityPush> {
+    let mut pushes = Vec::new();
     if !release.at_least(1, 9, 0) || (state.is_player && state.no_physics) {
-        return;
+        return pushes;
     }
     if climbable(world, state) {
-        return;
+        return pushes;
     }
-    for entity in entities
+    for (index, entity) in entities
         .iter()
-        .filter(|entity| entity.ticks_before_player == before_player)
+        .enumerate()
+        .filter(|(_, entity)| entity.ticks_before_player == before_player)
     {
         let player_box = state.bounds();
         let other_box = entity.tick_bounding_box;
@@ -241,6 +253,11 @@ pub fn push_by_nearby_entities(
                 }
                 if let Some((x, z)) = push_impulse(entity.tick_position, state.position, release) {
                     state.velocity = state.velocity + Vec3::new(x, 0.0, z);
+                    pushes.push(EntityPush {
+                        index,
+                        x: -x,
+                        z: -z,
+                    });
                 }
             }
             NearbyEntityKind::Living | NearbyEntityKind::Shulker | NearbyEntityKind::HappyGhast => {
@@ -249,11 +266,13 @@ pub fn push_by_nearby_entities(
                 }
                 if let Some((x, z)) = push_impulse(state.position, entity.tick_position, release) {
                     state.velocity = state.velocity + Vec3::new(-x, 0.0, -z);
+                    pushes.push(EntityPush { index, x, z });
                 }
             }
             NearbyEntityKind::Inert => {}
         }
     }
+    pushes
 }
 
 /// Entity.push(Entity) from `from` toward `to`: what `to` gets, 0.05 away from `from`, nothing
