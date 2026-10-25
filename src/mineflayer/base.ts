@@ -32,6 +32,15 @@ const EFFECT_NAMES: IPhysics['statusEffectNames'] = Object.freeze({
 });
 const ENCHANTMENT_NAMES: IPhysics['enchantmentNames'] = Object.freeze({ 0: 'depth_strider', 1: 'swift_sneak', 2: 'soul_speed', 3: 'riptide' });
 
+/** A comparison of releases, or `unknown` when minecraft-data does not know the other release (it throws). */
+function compared(compare: () => boolean, unknown: boolean): boolean {
+    try {
+        return compare();
+    } catch {
+        return unknown;
+    }
+}
+
 /** A prismarine registry (minecraft-data's IndexedData of a release). */
 export type PhysicsRegistry = IPhysics['data'];
 
@@ -57,15 +66,16 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
 
     readonly supportFeature = (feature: string): boolean => !!this.registry.supportFeature?.(feature);
 
+    /** Whether the registry's release is older than `version` (one its minecraft-data does not know yet is newer). */
     protected lt(version: string): boolean {
         let older = this.older.get(version);
-        if (older === undefined) this.older.set(version, (older = this.registry.version['<'](version)));
+        if (older === undefined) this.older.set(version, (older = compared(() => this.registry.version['<'](version), true)));
         return older;
     }
 
     protected gt(version: string): boolean {
         let newer = this.newer.get(version);
-        if (newer === undefined) this.newer.set(version, (newer = this.registry.version['>'](version)));
+        if (newer === undefined) this.newer.set(version, (newer = compared(() => this.registry.version['>'](version), false)));
         return newer;
     }
 
