@@ -4,7 +4,17 @@
 // (a port of BotcraftPhysics' localPlayerAIStep): crouching, sprinting, flying and the elytra's start, swimming, the
 // pose and, before 1.14, the player's height.
 import type { IPhysics } from '@nxg-org/mineflayer-physics-util/dist/physics/engines/IPhysics';
-import type { NativeMovingPiston, NativeNearbyEntity, NativeSimulationState, NativeVec3 } from '../native';
+import {
+    NATIVE_PLAYER_ENTITY_LENGTH,
+    NativePlayerInput,
+    NativePlayerInputFlag,
+    NativePlayerOutput,
+    NativePlayerOutputFlag,
+    type NativeMovingPiston,
+    type NativePlayer,
+    type NativeSimulationState,
+    type NativeVec3,
+} from '../native';
 import { NativeEngine, type NativeEngineOptions, type PhysicsRegistry } from './base';
 import { EFFECT, FLUID_LAVA, type DescribedBlock } from './blocks';
 import { floatRadians, mthFor, viewVector, type Mth } from './mth';
@@ -55,19 +65,37 @@ const CLIMBABLE = new Set(['ladder', 'vine', 'scaffolding', 'weeping_vines', 'we
 
 type Size = { width: number; height: number };
 
-/** What the engine keeps of a player between its ticks that mineflayer-physics-utils' state has no field for. */
+/**
+ * The engine's own copy of a player (a NativePlayer, which keeps what mineflayer-physics-utils' state has no field for:
+ * the position the tick started from, its counters), with what the adapter sent it.
+ */
 interface Carry {
-    /** Where the engine left the player: a position set since (a teleport) drops the rest. */
-    position: NativeVec3;
-    previousPosition?: NativeVec3;
-    tickCount: number;
-    ticksFrozen: number;
-    /** The engine's state after the tick and the size it moved with, for the pistons that push the player after it. */
-    afterTick: NativeSimulationState;
+    player: NativePlayer;
+    /** Where the engine left the player: a position set since (a teleport) drops the position the tick started from. */
+    position: Vec3Like;
+    /** The inputs that rarely change (attributes, effects, enchantments), sent with the whole state when they do. */
+    slow: Partial<NativeSimulationState>;
+    /** The box the engine keeps before 1.17 (null without one), and the size the player moved with. */
+    kept: Box | null;
     size: Size;
-    nearbyEntities: NativeNearbyEntity[];
-    pistonDeltas?: NativeVec3;
 }
+
+type Vec3Like = { x: number; y: number; z: number };
+
+const In = NativePlayerInput;
+const InFlag = NativePlayerInputFlag;
+const Out = NativePlayerOutput;
+const OutFlag = NativePlayerOutputFlag;
+
+/** The kinds of the nearby entities in a NativePlayer's entities array. */
+const ENTITY_KINDS: Record<string, number> = { inert: 0, living: 1, boat: 2, shulker: 3, happy_ghast: 4 };
+
+const sameInputs = (a: Partial<NativeSimulationState>, b: Partial<NativeSimulationState>) => {
+    const keys = Object.keys(a) as (keyof NativeSimulationState)[];
+    return keys.length === Object.keys(b).length && keys.every(key => Object.is(a[key], b[key]));
+};
+const sameBox = (a: Box | null, b: Box | null) => a === b || (!!a && !!b && a.minX === b.minX && a.minY === b.minY
+    && a.minZ === b.minZ && a.maxX === b.maxX && a.maxY === b.maxY && a.maxZ === b.maxZ);
 
 const box = (minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number): Box => ({ minX, minY, minZ, maxX, maxY, maxZ });
 const shrink = (b: Box, by: number): Box => box(b.minX + by, b.minY + by, b.minZ + by, b.maxX - by, b.maxY - by, b.maxZ - by);
@@ -84,6 +112,7 @@ const isWaterish = (block: DescribedBlock | null): block is DescribedBlock => !!
 export class NativePhysics extends NativeEngine implements IPhysics {
     readonly mth: Mth;
     private readonly carries = new WeakMap<object, Carry>();
+    private readonly input = new Float64Array(In.LENGTH);
 
     constructor(registry: PhysicsRegistry, options: NativeEngineOptions = {}) {
         super(registry, options);
@@ -107,10 +136,6 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         const state = ctx.state as PlayerState;
         const carry = this.carries.get(state);
         if (!carry || !samePosition(carry.position, state.pos)) return;
-        if (state.pistonDeltasTick !== state.age) {
-            state.pistonDeltasTick = state.age;
-            carry.pistonDeltas = undefined;
-        }
         const [dx, dy, dz] = piston.direction;
         const movingPiston: NativeMovingPiston = {
             x: piston.pos[0],
@@ -122,13 +147,7 @@ export class NativePhysics extends NativeEngine implements IPhysics {
             progress: piston.progress,
             shapes: piston.shapes.map(([minX, minY, minZ, maxX, maxY, maxZ]) => nativeBox(box(minX, minY, minZ, maxX, maxY, maxZ))),
         };
-        const input = { ...carry.afterTick, nearbyEntities: carry.nearbyEntities, movingPistons: [movingPiston] };
-        const pushed = this.binding.simulateVersionedPistonPush(this.version, this.syncOf(world).world, input, {}, carry.pistonDeltas);
-        carry.pistonDeltas = pushed.pistonDeltas;
-        carry.afterTick = pushed.state;
-        carry.position = pushed.state.position;
-        state.pistonDeltas = [pushed.pistonDeltas.x, pushed.pistonDeltas.y, pushed.pistonDeltas.z];
-        this.takeMove(state, pushed.state, carry.size);
+        this.takeOutput(state, carry, carry.player.pushByMovingPistons(this.syncOf(world).world, [movingPiston]));
     }
 
     /**
@@ -201,87 +220,61 @@ export class NativePhysics extends NativeEngine implements IPhysics {
             else state.fireworkRocketDuration = 0;
         }
 
-        const carry = this.carries.get(state);
-        const fresh = carry && samePosition(carry.position, state.pos) ? carry : undefined;
         const kept = this.keptFor(state);
         const size = this.moveSize(state, kept !== null);
-        const nearbyEntities = this.nearbyEntitiesOf(state);
-        const rockets = rocketsBefore + rocketsAfter;
-        const input: NativeSimulationState = {
-            ...this.attributesAndEffects(state),
-            position: vec(state.pos),
-            velocity: vec(state.vel),
-            previousPosition: fresh?.previousPosition,
-            boundingBox: kept ? nativeBox(kept) : undefined,
-            halfWidth: size.width / 2,
-            height: size.height,
-            eyeHeight: f32(this.eyeHeight(state)),
-            yaw: floatRadians(this.yawDegrees(state)),
-            pitch: floatRadians(this.pitchDegrees(state)),
-            look: viewVector(this.mth, this.lt('1.13'), this.pitchDegrees(state), this.yawDegrees(state)),
-            input: { x: strafeKey, y: 0, z: forwardKey },
-            jumpRequested: control.jump,
-            autoJump: state.autoJumpEnabled,
-            autoJumpTime: state.autoJumpTime,
-            riptideLaunch,
-            onGround: state.onGround,
-            collidedHorizontally: state.isCollidedHorizontally,
-            minorHorizontalCollision: !!state.isCollidedHorizontallyMinor,
-            collidedVertically: state.isCollidedVertically,
-            verticalCollisionBelow: state.isCollidedVertically && state.onGround,
-            inWater: wasInWater,
-            inLava: wasInLava,
-            inPowderSnow: state.isInPowderSnow,
-            jumpTicks: state.jumpTicks,
-            fallDistance: state.fallDistance,
-            stuckSpeedMultiplier: vec(state.stuckSpeedMultiplier),
-            tickCount: carry?.tickCount ?? 0,
-            ticksFrozen: carry?.ticksFrozen ?? 0,
-            sprinting: state.sprinting,
-            wasSprinting: sprintedBefore,
-            sprintModifier: this.hasSprintModifier(state),
-            sneaking: control.sneak,
-            movingSlowly,
-            swimming: state.swimming,
-            flying: state.flying,
-            fallFlying: state.fallFlying,
-            usingItem: state.isUsingItem,
-            noPhysics: state.gameMode === 'spectator',
-            isPlayer: true,
-            controlledByLocalInstance: true,
-            flyingSpeed: state.flySpeed ?? f32(0.05),
-            depthStrider: state.depthStrider,
-            soulSpeed: state.soulSpeed,
-            powderSnowWalkable: state.canWalkOnPowderSnow,
-        };
-        if (nearbyEntities.length) input.nearbyEntities = nearbyEntities;
-        if (rockets) Object.assign(input, { fireworkRockets: rockets, fireworkRocketsBeforePlayer: rocketsBefore });
+        const bit = (set: boolean, flag: number) => (set ? flag : 0);
+        const flags = bit(control.jump, InFlag.JUMP_REQUESTED) | bit(state.sprinting, InFlag.SPRINTING)
+            | bit(sprintedBefore, InFlag.WAS_SPRINTING) | bit(this.hasSprintModifier(state), InFlag.SPRINT_MODIFIER)
+            | bit(control.sneak, InFlag.SNEAKING) | bit(movingSlowly, InFlag.MOVING_SLOWLY)
+            | bit(state.swimming, InFlag.SWIMMING) | bit(state.flying, InFlag.FLYING)
+            | bit(state.fallFlying, InFlag.FALL_FLYING) | bit(state.isUsingItem, InFlag.USING_ITEM)
+            | bit(state.autoJumpEnabled, InFlag.AUTO_JUMP) | bit(state.gameMode === 'spectator', InFlag.NO_PHYSICS)
+            | bit(state.onGround, InFlag.ON_GROUND) | bit(state.isCollidedHorizontally, InFlag.COLLIDED_HORIZONTALLY)
+            | bit(!!state.isCollidedHorizontallyMinor, InFlag.MINOR_HORIZONTAL_COLLISION)
+            | bit(state.isCollidedVertically, InFlag.COLLIDED_VERTICALLY)
+            | bit(state.isCollidedVertically && state.onGround, InFlag.VERTICAL_COLLISION_BELOW)
+            | bit(wasInWater, InFlag.IN_WATER) | bit(wasInLava, InFlag.IN_LAVA) | bit(state.isInPowderSnow, InFlag.IN_POWDER_SNOW);
+        const yaw = this.yawDegrees(state);
+        const pitch = this.pitchDegrees(state);
+        const look = viewVector(this.mth, this.lt('1.13'), pitch, yaw);
+        const { pos, vel, stuckSpeedMultiplier: stuck } = state;
+        const input = this.input;
+        input[In.POSITION] = pos.x;
+        input[In.POSITION + 1] = pos.y;
+        input[In.POSITION + 2] = pos.z;
+        input[In.VELOCITY] = vel.x;
+        input[In.VELOCITY + 1] = vel.y;
+        input[In.VELOCITY + 2] = vel.z;
+        input[In.YAW] = floatRadians(yaw);
+        input[In.PITCH] = floatRadians(pitch);
+        input[In.LOOK] = look.x;
+        input[In.LOOK + 1] = look.y;
+        input[In.LOOK + 2] = look.z;
+        input[In.STRAFE] = strafeKey;
+        input[In.FORWARD] = forwardKey;
+        input[In.HALF_WIDTH] = size.width / 2;
+        input[In.HEIGHT] = size.height;
+        input[In.EYE_HEIGHT] = f32(this.eyeHeight(state));
+        input[In.FALL_DISTANCE] = state.fallDistance;
+        input[In.JUMP_TICKS] = state.jumpTicks;
+        input[In.AUTO_JUMP_TIME] = state.autoJumpTime;
+        input[In.STUCK_SPEED_MULTIPLIER] = stuck.x;
+        input[In.STUCK_SPEED_MULTIPLIER + 1] = stuck.y;
+        input[In.STUCK_SPEED_MULTIPLIER + 2] = stuck.z;
+        input[In.RIPTIDE_LAUNCH] = riptideLaunch ?? 0;
+        input[In.FIREWORK_ROCKETS] = rocketsBefore + rocketsAfter;
+        input[In.FIREWORK_ROCKETS_BEFORE_PLAYER] = rocketsBefore;
+        input[In.FLYING_SPEED] = state.flySpeed ?? f32(0.05);
+
+        const carry = this.carryFor(state, kept);
+        input[In.FLAGS] = flags | bit(samePosition(carry.position, pos), InFlag.UNMOVED);
         const flyingDuringMove = state.flying;
         // isInWeb: the move is slowed by a cobweb, berry bush or powder snow (Entity.isInWeb before 1.14), unless the lift
         // of a riptide launch from the ground took the slowdown
-        const stuck = state.stuckSpeedMultiplier;
         const slowed = stuck.x * stuck.x + stuck.y * stuck.y + stuck.z * stuck.z > 1e-7 && !(riptideLaunch && wasInWater && state.onGround);
-        const output = this.binding.simulateVersionedTick(this.version, sync.world, input, {});
+        carry.size = size;
+        this.takeOutput(state, carry, carry.player.tick(sync.world, input, this.entitiesOf(state)));
         if (state.gameMode !== 'spectator') state.isInWeb = slowed;
-        this.carries.set(state, {
-            position: output.position,
-            previousPosition: output.previousPosition,
-            tickCount: output.tickCount ?? 0,
-            ticksFrozen: output.ticksFrozen ?? 0,
-            afterTick: output,
-            size,
-            nearbyEntities,
-        });
-        this.takeMove(state, output, size);
-        state.isInWater = !!output.inWater;
-        state.isInLava = !!output.inLava;
-        state.isInPowderSnow = !!output.inPowderSnow;
-        state.jumpTicks = output.jumpTicks ?? 0;
-        state.autoJumpTime = output.autoJumpTime ?? 0;
-        if (output.stuckSpeedMultiplier) {
-            const { x, y, z } = output.stuckSpeedMultiplier;
-            state.stuckSpeedMultiplier.set(x, y, z);
-        }
         state.pushedEntities = [];
 
         // LivingEntity.aiStep after the move: the spin attack runs down, and ends on hitting a wall
@@ -303,18 +296,79 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         state.prevControl.sneak = control.sneak;
     }
 
-    /** The move's result on the state: position, motion, contacts, the fall and (before 1.17) the box it keeps. */
-    private takeMove(state: PlayerState, output: NativeSimulationState, size: Size): void {
-        state.pos.set(output.position.x, output.position.y, output.position.z);
-        state.vel.set(output.velocity.x, output.velocity.y, output.velocity.z);
-        state.onGround = output.onGround;
-        state.isCollidedHorizontally = output.collidedHorizontally;
-        state.isCollidedHorizontallyMinor = !!output.minorHorizontalCollision;
-        state.isCollidedVertically = output.collidedVertically;
-        state.fallDistance = output.fallDistance ?? 0;
-        const kept = output.boundingBox;
-        state.keptBoundingBox = kept && this.lt('1.17')
-            ? { bb: this.stateBox(state, box(kept.min.x, kept.min.y, kept.min.z, kept.max.x, kept.max.y, kept.max.z)), pos: state.pos.clone(), ...size }
+    /**
+     * The engine's copy of the player, brought up to date with what the adapter does not send every tick: the whole
+     * state when the attributes, effects or enchantments changed, the kept box when it is not the engine's.
+     */
+    private carryFor(state: PlayerState, kept: Box | null): Carry {
+        const slow = this.slowInputs(state);
+        const carry = this.carries.get(state);
+        if (!carry) {
+            const created: NativeSimulationState = {
+                ...slow,
+                position: vec(state.pos),
+                velocity: vec(state.vel),
+                halfWidth: 0.3,
+                height: 1.8,
+                onGround: state.onGround,
+                collidedHorizontally: false,
+                collidedVertically: false,
+                isPlayer: true,
+                controlledByLocalInstance: true,
+                boundingBox: kept ? nativeBox(kept) : undefined,
+            };
+            const player = new this.binding.NativePlayer(this.version, created, {});
+            const fresh = { player, position: vec(state.pos), slow, kept, size: { width: 0.6, height: 1.8 } };
+            this.carries.set(state, fresh);
+            return fresh;
+        }
+        if (!sameInputs(slow, carry.slow)) {
+            const dropped = Object.fromEntries(Object.keys(carry.slow).map(key => [key, undefined]));
+            carry.player.setState({ ...carry.player.state(), ...dropped, ...slow });
+            carry.slow = slow;
+        }
+        if (!sameBox(kept, carry.kept)) {
+            carry.player.setBoundingBox(kept ? nativeBox(kept) : null);
+            carry.kept = kept;
+        }
+        return carry;
+    }
+
+    /** The engine's inputs that rarely change: the synced attributes, the effects and the enchantments. */
+    private slowInputs(state: PlayerState): Partial<NativeSimulationState> {
+        return {
+            ...this.attributesAndEffects(state),
+            depthStrider: state.depthStrider,
+            soulSpeed: state.soulSpeed,
+            powderSnowWalkable: state.canWalkOnPowderSnow,
+        };
+    }
+
+    /**
+     * The result of the engine's tick or push on the state: position, motion, contacts, fluids, the fall, the jump
+     * counters, the stuck multiplier and (before 1.17) the box it keeps.
+     */
+    private takeOutput(state: PlayerState, carry: Carry, out: Float64Array): void {
+        const flags = out[Out.FLAGS];
+        const flag = (bit: number) => (flags & bit) !== 0;
+        state.pos.set(out[Out.POSITION], out[Out.POSITION + 1], out[Out.POSITION + 2]);
+        state.vel.set(out[Out.VELOCITY], out[Out.VELOCITY + 1], out[Out.VELOCITY + 2]);
+        state.onGround = flag(OutFlag.ON_GROUND);
+        state.isCollidedHorizontally = flag(OutFlag.COLLIDED_HORIZONTALLY);
+        state.isCollidedHorizontallyMinor = flag(OutFlag.MINOR_HORIZONTAL_COLLISION);
+        state.isCollidedVertically = flag(OutFlag.COLLIDED_VERTICALLY);
+        state.isInWater = flag(OutFlag.IN_WATER);
+        state.isInLava = flag(OutFlag.IN_LAVA);
+        state.isInPowderSnow = flag(OutFlag.IN_POWDER_SNOW);
+        state.fallDistance = out[Out.FALL_DISTANCE];
+        state.jumpTicks = out[Out.JUMP_TICKS];
+        state.autoJumpTime = out[Out.AUTO_JUMP_TIME];
+        state.stuckSpeedMultiplier.set(out[Out.STUCK_SPEED_MULTIPLIER], out[Out.STUCK_SPEED_MULTIPLIER + 1], out[Out.STUCK_SPEED_MULTIPLIER + 2]);
+        carry.position = vec(state.pos);
+        const at = Out.BOUNDING_BOX;
+        carry.kept = Number.isNaN(out[at]) ? null : box(out[at], out[at + 1], out[at + 2], out[at + 3], out[at + 4], out[at + 5]);
+        state.keptBoundingBox = carry.kept && this.lt('1.17')
+            ? { bb: this.stateBox(state, carry.kept), pos: state.pos.clone(), ...carry.size }
             : null;
     }
 
@@ -374,18 +428,24 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         return !!this.attribute(state.attributes, 'movementSpeed')?.modifiers.some(entry => String(entry.uuid ?? entry.id).toLowerCase() === id);
     }
 
-    /** The entities near the player as the engine's: how each pushes and whether it collides. */
-    private nearbyEntitiesOf(state: PlayerState): NativeNearbyEntity[] {
-        return (state.nearbyEntities ?? []).map(entity => {
-            const tick = entity.afterTick ? { tickPosition: vec(entity.afterTick.position), tickBoundingBox: nativeBox(entity.afterTick.boundingBox) } : {};
-            return {
-                kind: this.entityKind(entity),
-                position: vec(entity.position),
-                boundingBox: nativeBox(entity.boundingBox),
-                ticksBeforePlayer: !!entity.ticksBeforePlayer,
-                ...tick,
-            };
+    /**
+     * The entities near the player as the engine's entities array: how each pushes and whether it collides, where the
+     * player's move meets it and where its own tick leaves it.
+     */
+    private entitiesOf(state: PlayerState): Float64Array {
+        const entities = state.nearbyEntities ?? [];
+        const out = new Float64Array(entities.length * NATIVE_PLAYER_ENTITY_LENGTH);
+        entities.forEach((entity, i) => {
+            const ticked = entity.afterTick ?? entity;
+            const { boundingBox: b, position: p } = entity;
+            const { boundingBox: tb, position: tp } = ticked;
+            out.set([
+                ENTITY_KINDS[this.entityKind(entity)], entity.ticksBeforePlayer ? 1 : 0,
+                p.x, p.y, p.z, b.minX, b.minY, b.minZ, b.maxX, b.maxY, b.maxZ,
+                tp.x, tp.y, tp.z, tb.minX, tb.minY, tb.minZ, tb.maxX, tb.maxY, tb.maxZ,
+            ], i * NATIVE_PLAYER_ENTITY_LENGTH);
         });
+        return out;
     }
 
     private entityKind(entity: PlayerState['nearbyEntities'][number]): string {

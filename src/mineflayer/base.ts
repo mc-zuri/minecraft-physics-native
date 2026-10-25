@@ -44,6 +44,9 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
     private readonly registry: Registry;
     private readonly syncs = new WeakMap<object, NativeWorldSync>();
     private attributeRanges?: Map<string, { min: number; max: number }>;
+    private readonly attributeKeys = new Map<string, string | null>();
+    private readonly older = new Map<string, boolean>();
+    private readonly newer = new Map<string, boolean>();
 
     constructor(registry: PhysicsRegistry, options: NativeEngineOptions = {}) {
         this.data = registry;
@@ -55,11 +58,15 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
     readonly supportFeature = (feature: string): boolean => !!this.registry.supportFeature?.(feature);
 
     protected lt(version: string): boolean {
-        return this.registry.version['<'](version);
+        let older = this.older.get(version);
+        if (older === undefined) this.older.set(version, (older = this.registry.version['<'](version)));
+        return older;
     }
 
     protected gt(version: string): boolean {
-        return this.registry.version['>'](version);
+        let newer = this.newer.get(version);
+        if (newer === undefined) this.newer.set(version, (newer = this.registry.version['>'](version)));
+        return newer;
     }
 
     /** The NativeWorld kept in step with a prismarine world. */
@@ -103,10 +110,14 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
      * ("movementSpeed"): its resource, namespaced on 1.16 - 1.20.4; null when the release has no such attribute.
      */
     attributeKey(name: string): string | null {
-        const data = this.registry.attributesByName?.[name];
-        if (!data) return null;
-        const namespaced = this.registry.version['>=']('1.16') && this.registry.version['<']('1.20.5');
-        return namespaced && !data.resource.startsWith('minecraft:') ? `minecraft:${data.resource}` : data.resource;
+        let attributeKey = this.attributeKeys.get(name);
+        if (attributeKey === undefined) {
+            const data = this.registry.attributesByName?.[name];
+            const namespaced = !this.lt('1.16') && this.lt('1.20.5');
+            attributeKey = !data ? null : namespaced && !data.resource.startsWith('minecraft:') ? `minecraft:${data.resource}` : data.resource;
+            this.attributeKeys.set(name, attributeKey);
+        }
+        return attributeKey;
     }
 
     /** The synced attribute of that name, when the state has it. */
