@@ -44,6 +44,10 @@ export type Attributes = Record<string, Attribute | undefined>;
 
 /** An entity near the player (mineflayer-physics-utils' NearbyEntity). */
 export interface NearbyEntity {
+    /** Its entity id, to tell whom a push went to (pushedEntities). */
+    id?: number;
+    /** It carries passengers: a push from the player does not move it (Entity.push). */
+    isVehicle?: boolean;
     name: string;
     living: boolean;
     position: Vec3;
@@ -91,7 +95,8 @@ export interface PlayerState {
     keptBoundingBox: KeptBoundingBox | null;
     stuckSpeedMultiplier: Vec3;
     nearbyEntities: NearbyEntity[];
-    pushedEntities?: unknown[];
+    /** The entities the player pushed back this tick, and how far (Entity.push: the other way). */
+    pushedEntities?: { id: number; x: number; z: number }[];
     pistonDeltas: number[];
     pistonDeltasTick: number;
     jumpTicks: number;

@@ -160,6 +160,24 @@ describe('NativePhysics', () => {
         assert.equal(ctx.state.pose, adapter.Pose.SNEAKING);
     });
 
+    it('tells the entities the player pushed back, but not those that carry passengers', () => {
+        const { registry, world } = worldOf('1.21.1', floor);
+        const physics = new adapter.NativePhysics(registry);
+        const cow = fields => ({
+            id: 7, name: 'cow', living: true, position: new Vec3(1, 1, 0.5),
+            boundingBox: { minX: 0.55, minY: 1, minZ: 0.05, maxX: 1.45, maxY: 2.4, maxZ: 0.95 }, ...fields,
+        });
+        const ctx = playerState(0.5, 1, 0.5, { onGround: true, nearbyEntities: [cow()] });
+        physics.simulate(ctx, world);
+        const push = (0.5 / Math.sqrt(0.5)) * f32(0.05);
+        assert.deepEqual(ctx.state.pushedEntities, [{ id: 7, x: push, z: 0 }]);
+        assert.equal(ctx.state.vel.x, -push);
+        const carrying = playerState(0.5, 1, 0.5, { onGround: true, nearbyEntities: [cow({ isVehicle: true })] });
+        physics.simulate(carrying, world);
+        assert.deepEqual(carrying.state.pushedEntities, []);
+        assert.equal(carrying.state.vel.x, -push);
+    });
+
     it('keeps the box vanilla keeps before 1.17 while the player stays where it left it', () => {
         const { registry, world } = worldOf('1.16.5', floor);
         const physics = new adapter.NativePhysics(registry);

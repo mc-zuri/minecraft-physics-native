@@ -273,7 +273,7 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         carry.size = size;
         this.takeOutput(state, carry, carry.player.tick(sync.world, input, this.entitiesOf(state)));
         if (state.gameMode !== 'spectator') state.isInWeb = slowed;
-        state.pushedEntities = [];
+        state.pushedEntities = this.pushedEntities(state, carry);
 
         // LivingEntity.aiStep after the move: the spin attack runs down, and ends on hitting a wall
         if (state.autoSpinAttackTicks > 0) {
@@ -444,6 +444,19 @@ export class NativePhysics extends NativeEngine implements IPhysics {
             ], i * NATIVE_PLAYER_ENTITY_LENGTH);
         });
         return out;
+    }
+
+    /** The entities the player pushed back in its tick, as the engine tells them, but those that carry passengers. */
+    private pushedEntities(state: PlayerState, carry: Carry): { id: number; x: number; z: number }[] {
+        const entities = state.nearbyEntities ?? [];
+        if (entities.length === 0) return [];
+        const pushes = carry.player.entityPushes();
+        const pushed = [];
+        for (let at = 0; at < pushes.length; at += 3) {
+            const { id, isVehicle } = entities[pushes[at]];
+            if (id != null && !isVehicle) pushed.push({ id, x: pushes[at + 1], z: pushes[at + 2] });
+        }
+        return pushed;
     }
 
     private entityKind(entity: PlayerState['nearbyEntities'][number]): string {
