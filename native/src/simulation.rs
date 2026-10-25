@@ -1765,7 +1765,8 @@ pub(crate) fn collide_with_world(
             swept.max.z,
         ),
     );
-    let mut obstacles = world.collision_shapes_for_entity(query, context);
+    let (mut obstacles, entered) =
+        world.collision_shapes_with_entered_for_entity(query, bounds, context);
     obstacles.extend(
         world.entity_collisions(entity_collision_query(swept, query, rules.release), context),
     );
@@ -1792,6 +1793,7 @@ pub(crate) fn collide_with_world(
             bounds,
             desired,
             &obstacles,
+            &entered,
             state.on_ground,
             max_step,
             collision,

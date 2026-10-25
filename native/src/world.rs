@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::collision::{reaches_into, BlockVoxelShape};
 use crate::math::{Aabb, Vec3};
 use crate::version::MinecraftVersion;
 use crate::voxel_shape::VoxelShape;
@@ -880,8 +881,24 @@ impl WorldSnapshot {
         context: &EntityCollisionContext,
     ) -> Vec<Aabb> {
         let mut shapes = Vec::new();
-        self.collect_collision_shapes(query, Some(context), &mut shapes);
+        self.collect_collision_shapes(query, Some(context), &mut shapes, None);
         shapes
+    }
+
+    /// collision_shapes_for_entity, with the whole shapes of the blocks among them the entity's
+    /// box is inside.
+    #[must_use]
+    pub fn collision_shapes_with_entered_for_entity(
+        &self,
+        query: Aabb,
+        entity: Aabb,
+        context: &EntityCollisionContext,
+    ) -> (Vec<Aabb>, Vec<BlockVoxelShape>) {
+        let mut shapes = Vec::new();
+        let mut entered = Vec::new();
+        let inside = Some((entity, &mut entered));
+        self.collect_collision_shapes(query, Some(context), &mut shapes, inside);
+        (shapes, entered)
     }
 
     #[must_use]
@@ -1100,7 +1117,7 @@ impl WorldSnapshot {
     }
 
     pub fn collision_shapes_into(&self, query: Aabb, shapes: &mut Vec<Aabb>) {
-        self.collect_collision_shapes(query, None, shapes);
+        self.collect_collision_shapes(query, None, shapes, None);
     }
 
     fn collect_collision_shapes(
@@ -1108,6 +1125,7 @@ impl WorldSnapshot {
         query: Aabb,
         context: Option<&EntityCollisionContext>,
         shapes: &mut Vec<Aabb>,
+        mut entered: Option<(Aabb, &mut Vec<BlockVoxelShape>)>,
     ) {
         shapes.clear();
         let cells_x = query.min.x.floor() as i32..query.max.x.ceil() as i32;
@@ -1138,12 +1156,24 @@ impl WorldSnapshot {
                         match context.map_or(EntityCollisionShape::Stored, |context| {
                             self.entity_collision_shape((x, y, z), context)
                         }) {
-                            EntityCollisionShape::Stored => shapes.extend(
-                                self.block_collision_shapes((x, y, z))
-                                    .filter(|shape| is_non_empty_shape(shape.bounds))
-                                    .map(|shape| shape.bounds.translated(offset))
-                                    .filter(|bounds| inside || bounds.intersects(query)),
-                            ),
+                            EntityCollisionShape::Stored => {
+                                let boxes = || {
+                                    self.block_collision_shapes((x, y, z))
+                                        .filter(|shape| is_non_empty_shape(shape.bounds))
+                                        .map(move |shape| shape.bounds.translated(offset))
+                                };
+                                shapes.extend(
+                                    boxes().filter(|bounds| inside || bounds.intersects(query)),
+                                );
+                                if let Some((entity, entered)) = entered.as_mut() {
+                                    if boxes().any(|bounds| reaches_into(*entity, bounds)) {
+                                        entered.push(BlockVoxelShape {
+                                            origin: offset,
+                                            boxes: boxes().collect(),
+                                        });
+                                    }
+                                }
+                            }
                             EntityCollisionShape::Box(bounds) => {
                                 if inside || bounds.intersects(query) {
                                     shapes.push(bounds);

@@ -862,7 +862,8 @@ fn collide_vehicle(
             swept.max.z,
         ),
     );
-    let mut obstacles = world.collision_shapes_for_entity(query, &context);
+    let (mut obstacles, entered) =
+        world.collision_shapes_with_entered_for_entity(query, bounds, &context);
     if rules.stands_on_lava {
         obstacles.extend(lava_surfaces(world, query, body.position.y));
     }
@@ -890,6 +891,7 @@ fn collide_vehicle(
         bounds,
         movement,
         &obstacles,
+        &entered,
         body.on_ground,
         max_step,
         rules,

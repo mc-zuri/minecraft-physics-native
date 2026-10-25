@@ -82,6 +82,112 @@ pub fn resolve_motion(entity: Aabb, desired: Vec3, obstacles: &[Aabb]) -> (Vec3,
     (resolved, collided)
 }
 
+/// Whether a box reaches more than 1.0E-7 into another on every axis.
+#[must_use]
+pub fn reaches_into(entity: Aabb, bounds: Aabb) -> bool {
+    [Axis::X, Axis::Y, Axis::Z].into_iter().all(|axis| {
+        component(entity.max, axis) - COLLISION_EPSILON > component(bounds.min, axis)
+            && component(entity.min, axis) + COLLISION_EPSILON < component(bounds.max, axis)
+    })
+}
+
+/// The collision shape of a block (its boxes, the block at `origin`) as a VoxelShape. A box inside
+/// it collides with it over its grid, not box by box.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlockVoxelShape {
+    pub origin: Vec3,
+    pub boxes: Vec<Aabb>,
+}
+
+impl BlockVoxelShape {
+    fn is_entered_by(&self, entity: Aabb) -> bool {
+        self.boxes
+            .iter()
+            .any(|bounds| reaches_into(entity, *bounds))
+    }
+
+    /// VoxelShape.getCoords: Shapes.create gives a box on a 1/2^n grid of its block on every axis
+    /// that whole grid, any other box its bounds; Shapes.or joins them.
+    fn grid(&self, axis: Axis) -> Vec<f64> {
+        let origin = component(self.origin, axis);
+        let mut lines: Vec<f64> = Vec::new();
+        for bounds in &self.boxes {
+            let local = Aabb::new(bounds.min - self.origin, bounds.max - self.origin);
+            let bits = [Axis::X, Axis::Y, Axis::Z]
+                .map(|axis| grid_bits(component(local.min, axis), component(local.max, axis)));
+            if bits.iter().all(Option::is_some) {
+                let parts = 1_u32 << bits[axis_index(axis)].unwrap_or(0);
+                lines.extend((0..=parts).map(|line| f64::from(line) / f64::from(parts) + origin));
+            } else {
+                lines.extend([component(bounds.min, axis), component(bounds.max, axis)]);
+            }
+        }
+        lines.sort_by(f64::total_cmp);
+        lines.dedup_by(|line, kept| *line - *kept < COLLISION_EPSILON);
+        lines
+    }
+
+    /// VoxelShape.collideX: the first layer of cells beyond the face the box leads with that holds
+    /// a full cell across the box stops it at that layer. A box inside the shape so passes the
+    /// layers it is in.
+    fn collide(&self, axis: Axis, entity: Aabb, delta: f64) -> f64 {
+        if delta.abs() < COLLISION_EPSILON {
+            return 0.0;
+        }
+        let grids = [Axis::X, Axis::Y, Axis::Z].map(|axis| self.grid(axis));
+        let grid = |axis: Axis| &grids[axis_index(axis)];
+        let cells = |axis: Axis| grid(axis).len() - 1;
+        let find_index = |axis: Axis, value: f64| {
+            grid(axis).iter().take_while(|line| **line <= value).count() as isize - 1
+        };
+        let across = |other: Axis| {
+            let first = find_index(other, component(entity.min, other) + COLLISION_EPSILON);
+            let last = find_index(other, component(entity.max, other) - COLLISION_EPSILON);
+            first.max(0) as usize..((last + 1).max(0) as usize).min(cells(other))
+        };
+        let [first, second] = axis.others();
+        let center = |axis: Axis, cell: usize| (grid(axis)[cell] + grid(axis)[cell + 1]) / 2.0;
+        let is_full = |layer: usize| {
+            across(first).any(|cell_first| {
+                across(second).any(|cell_second| {
+                    let point = set_component(
+                        set_component(
+                            set_component(Vec3::ZERO, axis, center(axis, layer)),
+                            first,
+                            center(first, cell_first),
+                        ),
+                        second,
+                        center(second, cell_second),
+                    );
+                    self.boxes.iter().any(|bounds| bounds.contains(point))
+                })
+            })
+        };
+        if delta > 0.0 {
+            let leading = component(entity.max, axis);
+            let behind = find_index(axis, leading - COLLISION_EPSILON);
+            let layers = (behind + 1).max(0) as usize..cells(axis);
+            if let Some(layer) = layers.into_iter().find(|layer| is_full(*layer)) {
+                let gap = grid(axis)[layer] - leading;
+                if gap >= -COLLISION_EPSILON {
+                    return delta.min(gap);
+                }
+            }
+        } else {
+            let leading = component(entity.min, axis);
+            let behind = find_index(axis, leading + COLLISION_EPSILON);
+            let layers = 0..behind.max(0) as usize;
+            if let Some(layer) = layers.rev().find(|layer| is_full(*layer)) {
+                let gap = grid(axis)[layer + 1] - leading;
+                if gap <= COLLISION_EPSILON {
+                    return delta.max(gap);
+                }
+            }
+        }
+        delta
+    }
+}
+
 /// How Entity.collide steps up onto what blocks a horizontal movement.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StepUp {
@@ -102,12 +208,14 @@ pub struct CollisionRules {
 }
 
 /// Entity.collide: the movement collided with the obstacles, stepping up when a grounded or
-/// landing entity runs into something.
+/// landing entity runs into something. `entered` holds the shapes of the blocks among the
+/// obstacles the entity is inside.
 #[must_use]
 pub fn collide(
     bounds: Aabb,
     movement: Vec3,
     obstacles: &[Aabb],
+    entered: &[BlockVoxelShape],
     on_ground: bool,
     max_step: f32,
     rules: CollisionRules,
@@ -116,7 +224,7 @@ pub fn collide(
     let collided = if movement.length_squared() == 0.0 {
         movement
     } else {
-        collide_bounding_box(bounds, movement, obstacles, border)
+        collide_bounding_box(bounds, movement, obstacles, entered, border)
     };
     let landing = movement.y != collided.y && movement.y < 0.0;
     let blocked = movement.x != collided.x || movement.z != collided.z;
@@ -126,13 +234,13 @@ pub fn collide(
     match rules.step_up {
         StepUp::Lifted => {
             let colliders = |bounds: Aabb, movement: Vec3| {
-                collide_bounding_box(bounds, movement, obstacles, border)
+                collide_bounding_box(bounds, movement, obstacles, entered, border)
             };
             lifted_step_up(bounds, movement, collided, colliders, f64::from(max_step))
         }
-        StepUp::CandidateHeights => {
-            candidate_step_up(bounds, movement, collided, landing, obstacles, max_step)
-        }
+        StepUp::CandidateHeights => candidate_step_up(
+            bounds, movement, collided, landing, obstacles, entered, max_step,
+        ),
     }
 }
 
@@ -168,6 +276,7 @@ fn candidate_step_up(
     collided: Vec3,
     landing: bool,
     obstacles: &[Aabb],
+    entered: &[BlockVoxelShape],
     max_step: f32,
 ) -> Vec3 {
     let grounded = if landing {
@@ -182,7 +291,7 @@ fn candidate_step_up(
     let colliders = block_shapes_in(obstacles, query);
     for height in candidate_step_heights(grounded, &colliders, max_step, collided.y as f32) {
         let lifted = Vec3::new(movement.x, f64::from(height), movement.z);
-        let stepped = collide_with_shapes(lifted, grounded, &colliders, false);
+        let stepped = collide_with_shapes(lifted, grounded, &colliders, entered, false);
         if stepped.horizontal_length_squared() > collided.horizontal_length_squared() {
             let distance_to_ground = bounds.min.y - grounded.min.y;
             return stepped + Vec3::new(0.0, -distance_to_ground, 0.0);
@@ -273,9 +382,15 @@ fn block_shapes_in(obstacles: &[Aabb], query: Aabb) -> Vec<Aabb> {
         .collect()
 }
 
-fn collide_bounding_box(bounds: Aabb, movement: Vec3, obstacles: &[Aabb], border: bool) -> Vec3 {
+fn collide_bounding_box(
+    bounds: Aabb,
+    movement: Vec3,
+    obstacles: &[Aabb],
+    entered: &[BlockVoxelShape],
+    border: bool,
+) -> Vec3 {
     let colliders = colliders_in(obstacles, bounds.expand_towards(movement));
-    collide_with_shapes(movement, bounds, &colliders, border)
+    collide_with_shapes(movement, bounds, &colliders, entered, border)
 }
 
 fn colliders_in(obstacles: &[Aabb], query: Aabb) -> Vec<Aabb> {
@@ -286,7 +401,13 @@ fn colliders_in(obstacles: &[Aabb], query: Aabb) -> Vec<Aabb> {
         .collect()
 }
 
-fn collide_with_shapes(movement: Vec3, bounds: Aabb, colliders: &[Aabb], border: bool) -> Vec3 {
+fn collide_with_shapes(
+    movement: Vec3,
+    bounds: Aabb,
+    colliders: &[Aabb],
+    entered: &[BlockVoxelShape],
+    border: bool,
+) -> Vec3 {
     if colliders.is_empty() && !border {
         return movement;
     }
@@ -297,26 +418,26 @@ fn collide_with_shapes(movement: Vec3, bounds: Aabb, colliders: &[Aabb], border:
         mut z,
     } = movement;
     if y != 0.0 {
-        y = shapes_collide(Axis::Y, entity, colliders, border, y);
+        y = shapes_collide(Axis::Y, entity, colliders, entered, border, y);
         if y != 0.0 {
             entity = entity.translated(Vec3::new(0.0, y, 0.0));
         }
     }
     let z_first = x.abs() < z.abs();
     if z_first && z != 0.0 {
-        z = shapes_collide(Axis::Z, entity, colliders, border, z);
+        z = shapes_collide(Axis::Z, entity, colliders, entered, border, z);
         if z != 0.0 {
             entity = entity.translated(Vec3::new(0.0, 0.0, z));
         }
     }
     if x != 0.0 {
-        x = shapes_collide(Axis::X, entity, colliders, border, x);
+        x = shapes_collide(Axis::X, entity, colliders, entered, border, x);
         if !z_first && x != 0.0 {
             entity = entity.translated(Vec3::new(x, 0.0, 0.0));
         }
     }
     if !z_first && z != 0.0 {
-        z = shapes_collide(Axis::Z, entity, colliders, border, z);
+        z = shapes_collide(Axis::Z, entity, colliders, entered, border, z);
     }
     Vec3::new(x, y, z)
 }
@@ -325,17 +446,30 @@ fn shapes_collide(
     axis: Axis,
     entity: Aabb,
     colliders: &[Aabb],
+    entered: &[BlockVoxelShape],
     border: bool,
     mut delta: f64,
 ) -> f64 {
     if border && delta.abs() < COLLISION_EPSILON {
         return 0.0;
     }
+    let inside: Vec<&BlockVoxelShape> = entered
+        .iter()
+        .filter(|shape| shape.is_entered_by(entity))
+        .collect();
     for collider in colliders {
         if delta.abs() < COLLISION_EPSILON {
             return 0.0;
         }
-        delta = clip_axis(entity, *collider, delta, axis);
+        if !inside.iter().any(|shape| shape.boxes.contains(collider)) {
+            delta = clip_axis(entity, *collider, delta, axis);
+        }
+    }
+    for shape in inside {
+        if delta.abs() < COLLISION_EPSILON {
+            return 0.0;
+        }
+        delta = shape.collide(axis, entity, delta);
     }
     delta
 }
@@ -364,7 +498,7 @@ pub fn collide_legacy(
 ) -> LegacyMove {
     let offset = |axis: Axis, entity: Aabb, colliders: &[Aabb], delta: f64| {
         if voxel_shapes {
-            shapes_collide(axis, entity, colliders, false, delta)
+            shapes_collide(axis, entity, colliders, &[], false, delta)
         } else {
             colliders.iter().fold(delta, |delta, collider| {
                 aabb_offset(entity, *collider, delta, axis)
@@ -522,7 +656,7 @@ fn set_component(value: Vec3, axis: Axis, component: f64) -> Vec3 {
 mod tests {
     use super::{
         block_shapes_in, clip_axis, collide, collide_legacy, resolve_motion, vanilla_equal,
-        y_coordinates, Axis, CollisionRules, StepUp,
+        y_coordinates, Axis, BlockVoxelShape, CollisionRules, StepUp,
     };
     use crate::math::{Aabb, Vec3};
 
@@ -584,7 +718,15 @@ mod tests {
         let entity = box_at(0.0, 0.0, 0.0);
         let movement = Vec3::new(1.5, 0.0, 0.0);
 
-        let motion = collide(entity, movement, &[half_block_step()], true, 1.0, LIFTED);
+        let motion = collide(
+            entity,
+            movement,
+            &[half_block_step()],
+            &[],
+            true,
+            1.0,
+            LIFTED,
+        );
 
         assert_eq!(motion, Vec3::new(1.5, 0.5, 0.0));
     }
@@ -599,7 +741,7 @@ mod tests {
         ];
         let movement = Vec3::new(0.5, -0.3, 0.0);
 
-        let motion = collide(entity, movement, &obstacles, false, 0.6, LIFTED);
+        let motion = collide(entity, movement, &obstacles, &[], false, 0.6, LIFTED);
 
         let step = f64::from(0.6_f32);
         assert_eq!(motion, Vec3::new(0.5, step + (0.5 - (0.1 + step)), 0.0));
@@ -617,7 +759,7 @@ mod tests {
         ];
         let movement = Vec3::new(0.5, -0.0784, 0.0);
 
-        let motion = collide(entity, movement, &obstacles, true, 0.6, LIFTED);
+        let motion = collide(entity, movement, &obstacles, &[], true, 0.6, LIFTED);
 
         let step = f64::from(0.6_f32);
         assert_eq!(motion, Vec3::new(1.2 - 1.0, step + (0.5 - step), 0.0));
@@ -636,8 +778,8 @@ mod tests {
         ];
         let jump = Vec3::new(0.3, 0.42, 0.0);
 
-        let modern = collide(entity, jump, &obstacles, true, 0.6, CANDIDATE_HEIGHTS);
-        let legacy = collide(entity, jump, &obstacles, true, 0.6, LIFTED);
+        let modern = collide(entity, jump, &obstacles, &[], true, 0.6, CANDIDATE_HEIGHTS);
+        let legacy = collide(entity, jump, &obstacles, &[], true, 0.6, LIFTED);
 
         assert_eq!(modern, Vec3::new(0.3, 0.125, 0.0));
         assert!(legacy.y > 0.19);
@@ -653,7 +795,15 @@ mod tests {
         ];
         let movement = Vec3::new(0.3, -0.1, 0.0);
 
-        let motion = collide(entity, movement, &obstacles, false, 0.6, CANDIDATE_HEIGHTS);
+        let motion = collide(
+            entity,
+            movement,
+            &obstacles,
+            &[],
+            false,
+            0.6,
+            CANDIDATE_HEIGHTS,
+        );
 
         assert_eq!(motion, Vec3::new(0.3, 0.5 + -(0.05 - (0.05 + -0.05)), 0.0));
     }
@@ -683,13 +833,58 @@ mod tests {
     }
 
     #[test]
+    fn a_box_inside_a_shape_of_several_boxes_stands_on_a_line_of_its_grid() {
+        let origin = Vec3::new(0.0, 100.0, 0.0);
+        let plate = Aabb::new(Vec3::new(0.75, 100.0, 0.0), Vec3::new(1.0, 101.0, 1.0));
+        let arm = Aabb::new(
+            Vec3::new(-0.25, 100.375, 0.375),
+            Vec3::new(0.75, 100.625, 0.625),
+        );
+        let piston_head = BlockVoxelShape {
+            origin,
+            boxes: vec![plate, arm],
+        };
+        let entity = Aabb::new(Vec3::new(0.6, 100.5, 0.2), Vec3::new(1.2, 102.3, 0.8));
+        let fall = Vec3::new(0.0, -0.2, 0.0);
+
+        let boxes = collide(entity, fall, &[plate, arm], &[], false, 0.6, LIFTED);
+        let shape = collide(
+            entity,
+            fall,
+            &[plate, arm],
+            &[piston_head],
+            false,
+            0.6,
+            LIFTED,
+        );
+
+        assert_eq!(boxes.y, -0.2);
+        assert_eq!(shape.y, -0.125);
+    }
+
+    #[test]
+    fn a_box_inside_a_box_on_a_quarter_grid_stops_at_the_line_below_it() {
+        let block = Aabb::new(Vec3::new(3.0, 64.0, 5.0), Vec3::new(4.0, 64.75, 6.0));
+        let shape = BlockVoxelShape {
+            origin: Vec3::new(3.0, 64.0, 5.0),
+            boxes: vec![block],
+        };
+        let entity = Aabb::new(Vec3::new(3.2, 64.6, 5.2), Vec3::new(3.8, 66.4, 5.8));
+        let fall = Vec3::new(0.0, -0.5, 0.0);
+
+        let landed = collide(entity, fall, &[block], &[shape], false, 0.6, LIFTED);
+
+        assert_eq!(landed.y, 64.5 - 64.6);
+    }
+
+    #[test]
     fn legacy_collision_moves_on_y_then_x_then_z() {
         let entity = box_at(0.0, 0.0, 0.0);
         let corner = [box_at(1.0, 0.0, 1.0)];
         let movement = Vec3::new(0.5, 0.0, 0.8);
 
         let legacy = collide_legacy(entity, movement, &corner, false, 0.6, false);
-        let modern = collide(entity, movement, &corner, false, 0.6, LIFTED);
+        let modern = collide(entity, movement, &corner, &[], false, 0.6, LIFTED);
 
         assert_eq!(legacy.movement, Vec3::new(0.5, 0.0, 0.0));
         assert_eq!(legacy.bounds, entity.translated(Vec3::new(0.5, 0.0, 0.0)));
@@ -756,11 +951,11 @@ mod tests {
         let near = [box_at(1.0, 0.0, 0.0)];
 
         assert_eq!(
-            collide(entity, movement, &far, false, 0.6, LIFTED),
+            collide(entity, movement, &far, &[], false, 0.6, LIFTED),
             movement
         );
         assert_eq!(
-            collide(entity, movement, &near, false, 0.6, LIFTED),
+            collide(entity, movement, &near, &[], false, 0.6, LIFTED),
             Vec3::ZERO
         );
     }
@@ -775,10 +970,13 @@ mod tests {
         };
 
         assert_eq!(
-            collide(entity, movement, &[], false, 0.6, bordered),
+            collide(entity, movement, &[], &[], false, 0.6, bordered),
             Vec3::ZERO
         );
-        assert_eq!(collide(entity, movement, &[], false, 0.6, LIFTED), movement);
+        assert_eq!(
+            collide(entity, movement, &[], &[], false, 0.6, LIFTED),
+            movement
+        );
     }
 
     #[test]
