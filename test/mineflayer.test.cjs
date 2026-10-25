@@ -160,6 +160,15 @@ describe('NativePhysics', () => {
         assert.equal(ctx.state.pose, adapter.Pose.SNEAKING);
     });
 
+    it('lets the ground not stop the fall of a player removed at its 20th tick of death', () => {
+        const { registry, world } = worldOf('1.18.2', floor);
+        const physics = new adapter.NativePhysics(registry);
+        const ctx = playerState(0.5, 1, 0.5, { onGround: true, vel: new Vec3(0, -0.0784000015258789, 0), removed: true });
+        physics.simulate(ctx, world);
+        assert.equal(ctx.state.pos.y, 1);
+        assert.equal(ctx.state.vel.y, -0.1552320045166016);
+    });
+
     it('tells the entities the player pushed back, but not those that carry passengers', () => {
         const { registry, world } = worldOf('1.21.1', floor);
         const physics = new adapter.NativePhysics(registry);

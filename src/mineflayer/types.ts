@@ -147,6 +147,8 @@ export interface PlayerState {
     fireworkRockets: number;
     fireworkRocketsBeforePlayer: number;
     supportingBlockPos: Vec3 | null;
+    /** Removed from the level this tick (LocalPlayer.tickDeath at the 20th tick of death, 1.17+). */
+    removed?: boolean;
     getBB(): Box & { clone(): Box };
 }
 

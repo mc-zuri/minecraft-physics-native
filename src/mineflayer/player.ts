@@ -230,7 +230,8 @@ export class NativePhysics extends NativeEngine implements IPhysics {
             | bit(!!state.isCollidedHorizontallyMinor, InFlag.MINOR_HORIZONTAL_COLLISION)
             | bit(state.isCollidedVertically, InFlag.COLLIDED_VERTICALLY)
             | bit(state.isCollidedVertically && state.onGround, InFlag.VERTICAL_COLLISION_BELOW)
-            | bit(wasInWater, InFlag.IN_WATER) | bit(wasInLava, InFlag.IN_LAVA) | bit(state.isInPowderSnow, InFlag.IN_POWDER_SNOW);
+            | bit(wasInWater, InFlag.IN_WATER) | bit(wasInLava, InFlag.IN_LAVA) | bit(state.isInPowderSnow, InFlag.IN_POWDER_SNOW)
+            | bit(!!state.removed, InFlag.REMOVED);
         const yaw = this.yawDegrees(state);
         const pitch = this.pitchDegrees(state);
         const look = viewVector(this.mth, this.lt('1.13'), pitch, yaw);
