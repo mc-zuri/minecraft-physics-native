@@ -59,6 +59,24 @@ function playerState(x, y, z, fields = {}) {
     return { state };
 }
 
+/** The fields of mineflayer-physics-utils' RiddenMobState the adapter reads, for a mob of that type at (x, y, z). */
+function riddenState(type, x, y, z, fields = {}) {
+    const state = {
+        age: 0, type, pos: new Vec3(x, y, z), vel: new Vec3(0, 0, 0), onGround: false, lastOnGround: false, isInWater: false,
+        isInLava: false, isCollidedHorizontally: false, isCollidedVertically: false, fallDistance: 0, yawDegrees: 0,
+        pitchDegrees: 0, movementSpeed: 0.22499999403953552, jumpStrength: 0.7, flyingSpeed: 0.05, riddenSpeed: 0,
+        boosting: false, boostTime: 0, boostTimeTotal: 0, suffocating: false, noAi: false, jumpPendingScale: 0,
+        dashCooldown: 0, dashing: false, camelSitting: false, poseTime: 1000, horseJumping: false, standing: false,
+        allowStandSliding: false, saddled: true, ownForward: 0, standCounter: 0, standAnim: 0, standAnimO: 0,
+        keptBoundingBox: null, dimensions: { width: f32(1.3964844), height: f32(1.6) },
+        getBB() {
+            return { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 };
+        },
+        ...fields,
+    };
+    return { state };
+}
+
 describe('NativeWorldSync', () => {
     it('writes the blocks around an entity and the ones a world changes', () => {
         const { registry, world } = worldOf('1.21.1', floor);
@@ -151,5 +169,29 @@ describe('NativePhysics', () => {
         ctx.state.pos.set(2.5, 1, 2.5);
         physics.simulate(ctx, world);
         assert.equal(ctx.state.keptBoundingBox.bb.minX, 2.5 - f32(0.6) / 2);
+    });
+});
+
+describe('NativeRiddenMobPhysics', () => {
+    it('animates the stand of a rearing horse, which seats its rider back and up', () => {
+        const { registry, world } = worldOf('1.20.4', floor);
+        const physics = new adapter.NativeRiddenMobPhysics(registry);
+        const ctx = riddenState('horse', 0.5, 1, 0.5, { onGround: true, standing: true });
+        const rider = { yawDegrees: 0, pitchDegrees: 0 };
+        const rearing = anim => Math.min(f32(anim + f32(f32(f32(1 - anim) * f32(0.4)) + f32(0.05))), 1);
+        physics.simulateRidden(ctx, world, rider);
+        assert.equal(ctx.state.standAnimO, 0);
+        assert.equal(ctx.state.standAnim, rearing(0));
+        physics.simulateRidden(ctx, world, rider);
+        assert.equal(ctx.state.standAnimO, rearing(0));
+        assert.equal(ctx.state.standAnim, rearing(rearing(0)));
+        ctx.state.standing = false;
+        const settling = ctx.state.standAnim;
+        physics.simulateRidden(ctx, world, rider);
+        const cube = f32(f32(f32(f32(0.8) * settling) * settling) * settling);
+        assert.equal(ctx.state.standAnim, f32(settling + f32(f32(f32(cube - settling) * f32(0.6)) - f32(0.05))));
+        for (let tick = 0; tick < 10; tick += 1) physics.simulateRidden(ctx, world, rider);
+        assert.equal(ctx.state.standAnim, 0);
+        assert.equal(ctx.state.standAnimO, 0);
     });
 });

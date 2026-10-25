@@ -85,6 +85,8 @@ export interface RiddenMobState {
     saddled: boolean;
     ownForward: number;
     standCounter: number;
+    standAnim: number;
+    standAnimO: number;
     keptBoundingBox: KeptBoundingBox | null;
     dimensions?: { width: number; height: number };
     getBB(): Box;
@@ -298,9 +300,25 @@ export class NativeRiddenMobPhysics extends NativeEngine {
         } else {
             mob.keptBoundingBox = null;
         }
+        if (HORSES.has(mob.type)) this.animateStand(mob);
         mob.lastOnGround = mob.onGround;
         mob.age += 1;
         return ctx.state;
+    }
+
+    /**
+     * AbstractHorse.tick's stand animation after the move, which seats the rider back and up: toward 1 while the horse
+     * rears, back toward 0 after.
+     */
+    private animateStand(mob: RiddenMobState): void {
+        const anim = mob.standAnim;
+        mob.standAnimO = anim;
+        if (mob.standing) {
+            mob.standAnim = Math.min(f32(anim + f32(f32(f32(1 - anim) * f32(0.4)) + f32(0.05))), 1);
+        } else {
+            const cube = f32(f32(f32(f32(0.8) * anim) * anim) * anim);
+            mob.standAnim = Math.max(f32(anim + f32(f32(f32(cube - anim) * f32(0.6)) - f32(0.05))), 0);
+        }
     }
 
     /**
