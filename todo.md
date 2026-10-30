@@ -18,29 +18,29 @@
 
 ## Current next work priorities
 
-- [x] Model the modern `WATER_MOVEMENT_EFFICIENCY` attribute separately from
+- [ ] Model the modern `WATER_MOVEMENT_EFFICIENCY` attribute separately from
       legacy Depth Strider interpolation, including the native state bridge and
-      adapter-side attribute extraction.
-- [x] Add differential runtime fixtures proving legacy Depth Strider and modern
-      water-efficiency behavior independently for every supported release.
-- [x] Populate modern movement-efficiency, air-drag, and friction attributes
+      adapter-side attribute extraction. [parity: partial, D-156]
+- [ ] Add differential runtime fixtures proving legacy Depth Strider and modern
+      water-efficiency behavior independently for every supported release. [parity: non-physics-false]
+- [ ] Populate modern movement-efficiency, air-drag, and friction attributes
       at the PlayerState boundary using explicit normalized aliases, preserving
-      modifier resolution rather than relying on suffix matches.
-- [x] Apply the same explicit attribute forwarding to generic EntityState
+      modifier resolution rather than relying on suffix matches. [parity: partial, D-064, D-066]
+- [ ] Apply the same explicit attribute forwarding to generic EntityState
       updates; do not let an initialized empty attribute map mask Mineflayer
-      entity attributes.
+      entity attributes. [parity: deviates, D-068]
 - [x] Forward modern water-movement-efficiency attributes for generic living
       entities as well as players.
-- [x] Accept compact Mineflayer attribute objects without an empty modifier
-      array while retaining vanilla modifier operation ordering.
+- [ ] Accept compact Mineflayer attribute objects without an empty modifier
+      array while retaining vanilla modifier operation ordering. [parity: deviates, D-066, D-067]
 - [x] Add native regressions for modern air-drag interpolation and ground
       friction-modifier behavior.
 - [x] Preserve explicit zero-valued modern drag/friction modifiers across the
       N-API boundary; missing values use the source default without conflating
       absence with a supplied zero.
-- [x] Add an explicit per-version behavior contract registry so each concrete
+- [ ] Add an explicit per-version behavior contract registry so each concrete
       release must declare the exact source-owned fluid and water-efficiency
-      breakpoint policy before dispatch is accepted.
+      breakpoint policy before dispatch is accepted. [parity: partial, D-157]
 - [ ] Continue source-specialized travel, collision, entity, vehicle, effect,
       and prediction conformance work.
 - [x] Parallelize independent per-release source indexing and memoize resolved
@@ -90,95 +90,95 @@
       validate the native-only distribution.
 - [ ] Re-run targeted validation after every substantive physics behavioral fix;
       do not claim parity completion while the behavior test matrix remains red.
-- [x] Specialize the modern firework rocket tick path to the Java source
+- [ ] Specialize the modern firework rocket tick path to the Java source
       ordering: skip the boost when `shotAtAngle` is set, use the 1.15/1.0
       horizontal scaling unless the entity is already horizontally colliding,
-      and add the source `+0.04` upward acceleration before gravity/inertia.
+      and add the source `+0.04` upward acceleration before gravity/inertia. [parity: deviates, D-135]
 - [x] Expand the explicit projectile family registry to cover the common
       source-derived thrown and fireball families used across the supported
       versions (`small_fireball`, `wither_skull`, `experience_bottle`,
       `llama_spit`, and aliases from modern decompiled names).
-- [x] Ensure family-specific projectile defaults are resolved from the source
+- [ ] Ensure family-specific projectile defaults are resolved from the source
       registry before fallbacks, so `llama_spit`, `shulker_bullet`, and other
       modern families use their Java-backed gravity/drag values instead of the
-      generic projectile defaults when the caller omits explicit overrides.
-- [x] Correct source gravity defaults for thrown potions, experience bottles,
-      and firework rockets from the authoritative projectile classes.
-- [x] Correct source gravity defaults for fishing hooks and fireball-family
-      projectiles, which inherit zero gravity or apply their own hook gravity.
-- [x] Correct source inertia defaults for firework, fireball-family, and
-      fishing-hook projectile classes.
-- [x] Preserve `AbstractHurtingProjectile` power acceleration and apply it
-      after movement using the source inertia ordering.
-- [x] Normalize namespaced and alias-style modern projectile IDs before family
+      generic projectile defaults when the caller omits explicit overrides. [parity: partial, D-135]
+- [ ] Correct source gravity defaults for thrown potions, experience bottles,
+      and firework rockets from the authoritative projectile classes. [parity: partial, D-133]
+- [ ] Correct source gravity defaults for fishing hooks and fireball-family
+      projectiles, which inherit zero gravity or apply their own hook gravity. [parity: deviates, D-135]
+- [ ] Correct source inertia defaults for firework, fireball-family, and
+      fishing-hook projectile classes. [parity: deviates, D-134]
+- [ ] Preserve `AbstractHurtingProjectile` power acceleration and apply it
+      after movement using the source inertia ordering. [parity: deviates, D-134]
+- [ ] Normalize namespaced and alias-style modern projectile IDs before family
       dispatch, so `minecraft:small_fireball`, `minecraft:firework_rocket`,
       `fire_charge`, and `large_fireball` resolve to their intended Java
-      projectile families without drifting to `Generic`.
-- [x] Harden the projectile-family resolver for `entity:` prefixes, dotted IDs,
+      projectile families without drifting to `Generic`. [parity: partial, D-143]
+- [ ] Harden the projectile-family resolver for `entity:` prefixes, dotted IDs,
       and common legacy alias forms like `big_fireball`, `dragon_fireball`, and
-      namespaced modern firework IDs before source fallback is considered.
-- [x] Correct `Entity.push` to apply independent `pushthrough` scaling on each
+      namespaced modern firework IDs before source fallback is considered. [parity: partial, D-143]
+- [ ] Correct `Entity.push` to apply independent `pushthrough` scaling on each
       side instead of treating the pair as if only one entity had a source-owned
       pushthrough value. The native helper continues to preserve the zero-value
       compatibility wrapper while matching the version-owned per-entity impulse
-      boundary.
+      boundary. [parity: deviates, D-097]
 - [x] Match the modern water travel climbable branch: horizontal collision
       raises the post-move vertical component before water drag/falling
       adjustment; lava retains its separate shallow/deep path.
 - [x] Carry the source `FALL_DAMAGE_IMMUNE` entity boundary into the native
       state bridge and short-circuit fall-damage calculation before applying
       safe-distance or multiplier arithmetic.
-- [x] Route the source modern safe-fall-distance/fall-power calculation through
+- [ ] Route the source modern safe-fall-distance/fall-power calculation through
       the dedicated 26.1, 26.1.1, 26.1.2, and 26.2 profiles; legacy releases
-      retain their source-specific three-block and jump-boost formula.
-- [x] Apply the legacy Jump Boost amplifier to pre-modern fall-damage power
-      before the profile-owned rounding operation.
-- [x] Wire the fall-damage-immunity boundary through `IEntityState`,
+      retain their source-specific three-block and jump-boost formula. [parity: deviates, D-004]
+- [ ] Apply the legacy Jump Boost amplifier to pre-modern fall-damage power
+      before the profile-owned rounding operation. [parity: partial, D-004]
+- [ ] Wire the fall-damage-immunity boundary through `IEntityState`,
       `EntityState`, `PlayerState`, and the native TypeScript adapter so the
-      source-derived native calculation is reachable from runtime state.
-- [x] Refresh vertical collision flags on zero-Y local movement requests,
+      source-derived native calculation is reachable from runtime state. [parity: non-physics-false]
+- [ ] Refresh vertical collision flags on zero-Y local movement requests,
       matching the source `Entity.move` rest-state assignment instead of
-      preserving stale collision/on-ground flags.
+      preserving stale collision/on-ground flags. [parity: deviates, D-072]
 - [x] Replace shape-height enumeration in step-up resolution with the
       source-ordered two-candidate `Entity.collide` algorithm: raised motion,
       expanded-box lift, horizontal motion, and final vertical correction.
-- [x] Match source fluid escape-jump gating with an explicit `is_free` world
+- [ ] Match source fluid escape-jump gating with an explicit `is_free` world
       query, including collision and liquid occupancy checks, instead of
-      treating every horizontal collision while climbing as a jump.
-- [x] Add an explicit `controlled_by_local_instance` boundary instead of
-      conflating player identity with Java local-control semantics.
+      treating every horizontal collision while climbing as a jump. [parity: partial, D-013, D-014, D-015]
+- [ ] Add an explicit `controlled_by_local_instance` boundary instead of
+      conflating player identity with Java local-control semantics. [parity: partial, D-072]
 - [x] Preserve the typed `controlledByLocalInstance` and `blockFallCallback`
       values across the native bridge rather than overwriting them with the
       player default or a static false value.
-- [x] Preserve the full source-owned apply-back boundary set (`safeFallDistance`,
+- [ ] Preserve the full source-owned apply-back boundary set (`safeFallDistance`,
       `fallDamageImmune`, `fallDamageMultiplier`, `entityBounciness`,
       `blockBounciness`, and `controlledByLocalInstance`) when writing state
-      back to bot/entity instances, rather than dropping those runtime fields.
-- [x] Gate the block fall callback event on the explicit local-control
+      back to bot/entity instances, rather than dropping those runtime fields. [parity: non-physics-false]
+- [ ] Gate the block fall callback event on the explicit local-control
       boundary, matching `Entity.move` rather than emitting it for remote
-      entities.
-- [x] Add the source `Entity.move` fall-damage-resetting ray boundary:
+      entities. [parity: partial, D-026]
+- [ ] Add the source `Entity.move` fall-damage-resetting ray boundary:
       typed block state, deterministic world sweep, movement-length threshold,
-      and reset-before-accumulation ordering.
-- [x] Expose fall-damage-resetting membership on shape-based N-API world
-      updates so the typed source boundary is reachable from runtime callers.
-- [x] Apply the post-movement water guard from `Entity.checkFallDamage` before
-      accumulating downward fall distance.
+      and reset-before-accumulation ordering. [parity: deviates, D-003]
+- [ ] Expose fall-damage-resetting membership on shape-based N-API world
+      updates so the typed source boundary is reachable from runtime callers. [parity: partial, D-003]
+- [ ] Apply the post-movement water guard from `Entity.checkFallDamage` before
+      accumulating downward fall distance. [parity: deviates, D-001]
 - [x] Replace center-cell support-effect lookup with a source-shaped underside
       support query over the entity footprint, including multi-shape blocks.
-- [x] Add the player source `maybeBackOffFromEdge` collision branch for
-      sneaking movement, including 0.05 stepping and max-down-step checks.
-- [x] Extend `SimulationState` and the N-API bridge with typed entity/block
+- [ ] Add the player source `maybeBackOffFromEdge` collision branch for
+      sneaking movement, including 0.05 stepping and max-down-step checks. [parity: deviates, D-012]
+- [ ] Extend `SimulationState` and the N-API bridge with typed entity/block
       bounciness inputs and route the dedicated 26.2 restitution path without
       defaults. `BlockState.bounce_restitution` is now carried by world
       updates and consumed by the 26.2 restitution path; the source
-      bounce-suppression tag is also a typed boundary.
-- [x] Expose the 26.2 downward-clipping block-fall callback as a typed state
+      bounce-suppression tag is also a typed boundary. [parity: partial, D-021]
+- [ ] Expose the 26.2 downward-clipping block-fall callback as a typed state
       event through the native and TypeScript bridges without inventing block
-      side effects.
-- [x] Add explicit native and TypeScript support for the available 26.1,
+      side effects. [parity: partial, D-026]
+- [ ] Add explicit native and TypeScript support for the available 26.1,
       26.1.1, and 26.2 source-backed entries, with the modern floor-damage
-      and split-fluid handling aligned to the current source evidence.
+      and split-fluid handling aligned to the current source evidence. [parity: partial, D-001]
 - [x] Add dedicated 26.1.2 native and TypeScript dispatch after confirming its
       core movement source is byte-identical to 26.1.1; retain the broader
       parity work as an open task.
@@ -201,23 +201,23 @@
 - [x] Give locally available 1.20.1, 1.20.4, and 1.20.6 their own engine
       modules and explicit dispatch arms; no 1.20 release uses the generated
       version wrapper.
-- [x] Add the complete locally available 1.20.2 and 1.20.3 snapshots as
-      dedicated native and TypeScript versions.
-- [x] Add the complete locally available 1.20 release as a dedicated native
-      and TypeScript version.
-- [x] Make landing-damage rounding an explicit version-policy operation with
-      direct ceil/floor tests instead of embedding one universal rounding rule.
-- [x] Give all currently registered 1.21 releases dedicated native modules;
+- [ ] Add the complete locally available 1.20.2 and 1.20.3 snapshots as
+      dedicated native and TypeScript versions. [parity: non-physics-false]
+- [ ] Add the complete locally available 1.20 release as a dedicated native
+      and TypeScript version. [parity: non-physics-false]
+- [ ] Make landing-damage rounding an explicit version-policy operation with
+      direct ceil/floor tests instead of embedding one universal rounding rule. [parity: partial, D-004]
+- [ ] Give all currently registered 1.21 releases dedicated native modules;
       1.21.8, 1.21.10, and 1.21.11 explicitly select the source-observed
-      floor landing-damage policy.
+      floor landing-damage policy. [parity: partial, D-004]
 - [x] Remove the generated native version-wrapper dispatch path; every
       currently registered version now dispatches to an explicit module.
 - [x] Remove the generated native rules table and package command; version
       behavior is now owned by concrete version modules.
 - [x] Require every concrete profile to declare its landing-damage policy;
       no version profile inherits a rounding default.
-- [x] Validate each registered profile's landing policy against the
-      corresponding decompiled `LivingEntity` source before accepting coverage.
+- [ ] Validate each registered profile's landing policy against the
+      corresponding decompiled `LivingEntity` source before accepting coverage. [parity: deviates]
 - [x] Validate that every registered source snapshot contains the concrete
       `Entity.move`, `LivingEntity.travel`, and `Player.travel` methods before
       treating the version as physics-covered.
@@ -233,11 +233,11 @@
 
 ## Version and source matrix
 
-- [x] Enumerate every release from 1.15 through 1.21.x and 26.x from Mojang
-      version metadata.
+- [ ] Enumerate every release from 1.15 through 1.21.x and 26.x from Mojang
+      version metadata. [parity: non-physics-false]
 - [ ] Include release candidates and snapshots only when explicitly supported.
-- [x] Identify physics-relevant patch breakpoints by diffing vanilla source,
-      mappings, registries, data packs, and protocol behavior.
+- [ ] Identify physics-relevant patch breakpoints by diffing vanilla source,
+      mappings, registries, data packs, and protocol behavior. [parity: non-physics-false]
 - [x] Add the missing source-backed 1.20.5 and 1.21 patch entries to the
       native runtime and TypeScript registry while keeping 26.x explicitly
       blocked until its required source artifacts are complete.
@@ -246,12 +246,12 @@
       fingerprints for all locally available source snapshots. Protocol,
       mapping, and data revisions remain pending until their authoritative
       metadata sources are integrated.
-- [x] Maintain one public engine class per concrete supported version.
+- [ ] Maintain one public engine class per concrete supported version. [parity: non-physics-false]
 - [x] Maintain one Rust version module per currently source-backed concrete
       supported version, with explicit dispatch arms.
-- [x] Verify every locally available 1.15-1.19 source release has required
+- [ ] Verify every locally available 1.15-1.19 source release has required
       Entity/LivingEntity/Player sources, a dedicated native module, and a
-      synchronized TypeScript registry entry.
+      synchronized TypeScript registry entry. [parity: non-physics-false]
 - [ ] Maintain explicit aliases only when a verified source/data diff proves the
       behavior is identical.
 - [ ] Generate the version registry and TypeScript exports from the manifest.
@@ -278,13 +278,13 @@
       1.21.5, 1.21.8, 1.21.10, and 1.21.11.
 - [x] Register each newly available snapshot in native and TypeScript version
       dispatch without falling back to an unrelated version.
-- [x] Keep source-backed TypeScript version declarations and factory dispatch
-      synchronized through an explicit, compile-time-checked registry.
-- [x] Validate generated gravity, step-height, and air-drag constants and
-      reject extraction results that match unrelated fallback values.
-- [x] Extract the vanilla water fluid-falling gravity divisor from each
-      snapshot instead of using a shared hardcoded divisor.
-- [x] Validate extracted fluid gravity divisors before generating Rust rules.
+- [ ] Keep source-backed TypeScript version declarations and factory dispatch
+      synchronized through an explicit, compile-time-checked registry. [parity: non-physics-false]
+- [ ] Validate generated gravity, step-height, and air-drag constants and
+      reject extraction results that match unrelated fallback values. [parity: non-physics-false, D-158]
+- [ ] Extract the vanilla water fluid-falling gravity divisor from each
+      snapshot instead of using a shared hardcoded divisor. [parity: deviates, D-158]
+- [ ] Validate extracted fluid gravity divisors before generating Rust rules. [parity: non-physics-false]
 - [x] Extract and validate version-specific water and lava input speeds from
       each snapshot's `LivingEntity.travel` implementation, including the
       split `travelInFluid` helper used by newer snapshots.
@@ -298,16 +298,16 @@
       water and lava movement.
 - [x] Add source-owned fluid-travel split handler flags for the 1.21.4+
       `travelInFluid` breakpoint and validate them against the source audit.
-- [x] Route legacy fluid travel and `travelInFluid` through separate executable
-      native handlers selected by each concrete version profile.
+- [ ] Route legacy fluid travel and `travelInFluid` through separate executable
+      native handlers selected by each concrete version profile. [parity: partial]
 - [x] Preserve binary32 rounding at fluid vertical-drag boundaries where
       vanilla uses float literals.
 - [x] Extract version-specific water and baseline lava fluid-current scales
       from `Entity` and consume them through native version rules.
 - [x] Remove the non-vanilla fluid-current cutoff; nonzero source flow now
       contributes to movement.
-- [x] Add explicit ultra-warm dimension state to the native snapshot and apply
-      vanilla's `0.007` lava-current scale when enabled.
+- [ ] Add explicit ultra-warm dimension state to the native snapshot and apply
+      vanilla's `0.007` lava-current scale when enabled. [parity: partial, D-027]
 - [x] Own the ultra-warm lava-current scale in every concrete release profile;
       the shared simulation core no longer contains that behavior constant.
 - [x] Regression-test fast lava currents in ultra-warm dimensions.
@@ -327,39 +327,39 @@
       presence and shallow-lava movement branches.
 - [x] Derive the fluid-jump threshold from entity eye height (`0.0` below
       `0.4`, otherwise `0.4`) as vanilla does.
-- [x] Keep decompiled source and proprietary artifacts out of the published
-      package.
+- [ ] Keep decompiled source and proprietary artifacts out of the published
+      package. [parity: non-physics-false]
 
 ## Source extraction and code generation
 
 - [x] Generate deterministic per-release source method inventories and hashes
       for the tracked movement methods in `generated/physics-methods.json`.
-- [x] Generate a source breakpoint report for tracked method changes in
-      `generated/physics-breakpoints.json`.
-- [x] Validate that every registered release has audited `Entity.move`,
-      `LivingEntity.travel`, and `Player.travel` methods.
+- [ ] Generate a source breakpoint report for tracked method changes in
+      `generated/physics-breakpoints.json`. [parity: non-physics-false, D-159]
+- [ ] Validate that every registered release has audited `Entity.move`,
+      `LivingEntity.travel`, and `Player.travel` methods. [parity: non-physics-false]
 - [x] Build a source inventory generator for `Entity` movement and collision
       methods.
 - [x] Inventory `LivingEntity.travel`, fluid-travel, and tracked movement
       helper methods.
 - [x] Inventory `Player` and `LocalPlayer` movement and prediction methods.
-- [x] Inventory tracked vehicle movement overrides.
-- [x] Extract the generic projectile tick slice from
+- [ ] Inventory tracked vehicle movement overrides. [parity: non-physics-false]
+- [ ] Extract the generic projectile tick slice from
       `ThrowableProjectile.tick`: gravity, air inertia, swept block hit, and
       move-vector position update are now source-backed in native Rust,
-      including the source-specific water inertia branch.
+      including the source-specific water inertia branch. [parity: deviates, D-133, D-138]
 - [x] Expose the generic projectile tick through the safe N-API/TypeScript
       boundary and cover hit detection and invalid input in the native smoke
       test.
 - [ ] Extract projectile motion and collision methods.
 - [ ] Extract entity dimensions, poses, eye heights, and passenger offsets.
-  - [x] Add source-backed player crouching, swimming, fall-flying, spin attack,
+  - [ ] Add source-backed player crouching, swimming, fall-flying, spin attack,
         long-jumping, dying, and sleeping dimensions plus pose-specific eye
-        heights.
-  - [x] Match the source pose ordinal table, including spin attack, and reject
+        heights. [parity: deviates, D-058, D-153]
+  - [ ] Match the source pose ordinal table, including spin attack, and reject
         out-of-range pose ordinals instead of assigning unsupported dimensions;
         preserve historical `DYING` ordinals through explicit version context
-        (`6` in 1.14–1.15 and `7` from 1.16 onward).
+        (`6` in 1.14–1.15 and `7` from 1.16 onward). [parity: deviates, D-153]
 - [ ] Extract block collision, outline, interaction, support, friction,
       slipperiness, fluid, and movement-effect behavior.
 - [ ] Extract voxel-shape composition, axis clipping, and collision iteration.
@@ -385,17 +385,17 @@
 
 ## Core simulation model
 
-- [x] Define a complete immutable input snapshot for each tick.
-- [x] Define a complete mutable output snapshot for each tick.
+- [ ] Define a complete immutable input snapshot for each tick. [parity: partial]
+- [ ] Define a complete mutable output snapshot for each tick. [parity: partial]
 - [ ] Represent all vanilla entity flags and tracked state that affects motion.
 - [x] Carry per-entity gravity and step-height attribute overrides through the
       native state bridge.
-- [x] Preserve per-entity gravity, step-height, and no-gravity state across
-      EntityState and PlayerState prediction clones and merges.
-- [x] Import the Mineflayer entity no-gravity flag when constructing native
-      entity state snapshots.
-- [x] Reject non-finite or out-of-range per-entity gravity and step-height
-      values at the native API boundary.
+- [ ] Preserve per-entity gravity, step-height, and no-gravity state across
+      EntityState and PlayerState prediction clones and merges. [parity: partial]
+- [ ] Import the Mineflayer entity no-gravity flag when constructing native
+      entity state snapshots. [parity: non-physics-false, D-057]
+- [ ] Reject non-finite or out-of-range per-entity gravity and step-height
+      values at the native API boundary. [parity: non-physics-false, D-069]
 - [x] Apply runtime gravity, drag, and step-height configuration with explicit
       precedence below per-entity attribute overrides.
 - [ ] Represent exact numeric types and conversion boundaries used by each
@@ -407,9 +407,9 @@
       post-movement, effects, fall distance, and event phases.
 - [ ] Implement deterministic random state where random values affect physics.
 - [ ] Implement entity age, tick counters, and cooldowns that affect movement.
-- [x] Implement source-backed passenger/vehicle update ordering and rotated
+- [ ] Implement source-backed passenger/vehicle update ordering and rotated
       passenger offsets for the native boat path (`Entity.positionRider` and
-      the vehicle riding-position hook are applied after vehicle movement).
+      the vehicle riding-position hook are applied after vehicle movement). [parity: deviates, D-121]
 - [ ] Implement loaded/unloaded chunk behavior and client prediction behavior.
 - [ ] Implement world-border and dimension boundary behavior.
 - [ ] Implement portal and teleport state where it affects movement.
@@ -420,49 +420,49 @@
 - [ ] Implement Java-compatible vector arithmetic.
   - [x] Add vector subtraction alongside existing addition and scalar
         operations for exact AABB geometry composition.
-  - [x] Add vanilla vector-to, reverse, component multiplication, horizontal,
-        distance, interpolation, and axis-rotation operations.
-  - [x] Add vanilla pitch/yaw direction-vector construction using the
-        quantized trigonometric lookup path.
-  - [x] Add vanilla clockwise quarter-turn, projection, and finite-value
-        vector operations.
-  - [x] Add vanilla scalar/component offsets, proximity checks, and vector
-        rotation extraction.
+  - [ ] Add vanilla vector-to, reverse, component multiplication, horizontal,
+        distance, interpolation, and axis-rotation operations. [parity: partial, D-152]
+  - [ ] Add vanilla pitch/yaw direction-vector construction using the
+        quantized trigonometric lookup path. [parity: deviates, D-150]
+  - [ ] Add vanilla clockwise quarter-turn, projection, and finite-value
+        vector operations. [parity: partial, D-152]
+  - [ ] Add vanilla scalar/component offsets, proximity checks, and vector
+        rotation extraction. [parity: partial, D-152]
 - [ ] Implement Java-compatible trigonometric functions and angle conversion.
-  - [x] Implement vanilla `Mth` sine/cosine lookup quantization and float
+  - [ ] Implement vanilla `Mth` sine/cosine lookup quantization and float
         degree-to-radian conversion, and consume the shared direction-vector
-        implementation for player look vectors.
+        implementation for player look vectors. [parity: partial, D-145]
 - [ ] Implement normalization, length, horizontal length, dot products, and
       cross products.
   - [x] Implement vector length, horizontal-length, dot, cross, and squared
         length primitives with regression coverage.
-  - [x] Match vanilla normalization's `1.0E-5` zero-vector threshold.
+  - [ ] Match vanilla normalization's `1.0E-5` zero-vector threshold. [parity: deviates, D-034]
 - [ ] Implement exact floor, ceil, round, clamp, and epsilon semantics.
   - [x] Implement vanilla double floor/ceil, clamp, and degree wrapping
         helpers with negative and boundary regression coverage.
-  - [x] Add long floor/ceil, integer and long clamps, positive modulo,
-        fractional extraction, and degree-difference helpers.
-  - [x] Implement vanilla clamped linear interpolation, epsilon equality,
-        and half-up integer rounding helpers.
+  - [ ] Add long floor/ceil, integer and long clamps, positive modulo,
+        fractional extraction, and degree-difference helpers. [parity: partial, D-151]
+  - [ ] Implement vanilla clamped linear interpolation, epsilon equality,
+        and half-up integer rounding helpers. [parity: partial, D-151]
   - [x] Add vanilla linear interpolation, inverse interpolation, and
         absolute-maximum numeric helpers.
-  - [x] Add vanilla angle approach/rotation and power-of-two/logarithm
-        helpers used by movement and indexed geometry code.
-  - [x] Add vanilla chessboard distance, floor division, divisibility, and
-        packed-degree helpers for grid and network-facing calculations.
-  - [x] Add vanilla square/cube, mapped interpolation, component length,
-        positive ceiling division, round-toward, and quantization helpers.
-  - [x] Add vanilla bilinear/trilinear interpolation, Catmull-Rom,
-        smoothstep, sign, rotational interpolation, and triangle-wave helpers.
-  - [x] Add vanilla integer/discrete interpolation, smallest-square sizing,
-        absolute angle differences, and deterministic block seed helpers.
-  - [x] Add vanilla binary-search and MurmurHash3 mixer utilities.
+  - [ ] Add vanilla angle approach/rotation and power-of-two/logarithm
+        helpers used by movement and indexed geometry code. [parity: partial, D-151, D-152]
+  - [ ] Add vanilla chessboard distance, floor division, divisibility, and
+        packed-degree helpers for grid and network-facing calculations. [parity: partial, D-151]
+  - [ ] Add vanilla square/cube, mapped interpolation, component length,
+        positive ceiling division, round-toward, and quantization helpers. [parity: partial, D-151]
+  - [ ] Add vanilla bilinear/trilinear interpolation, Catmull-Rom,
+        smoothstep, sign, rotational interpolation, and triangle-wave helpers. [parity: partial, D-152]
+  - [ ] Add vanilla integer/discrete interpolation, smallest-square sizing,
+        absolute angle differences, and deterministic block seed helpers. [parity: deviates, D-147]
+  - [ ] Add vanilla binary-search and MurmurHash3 mixer utilities. [parity: deviates, D-147]
   - [x] Add vanilla bounded `outFromOrigin` traversal with explicit invalid
         range and step validation.
   - [x] Add fraction multiplication/truncation with Java integer overflow and
         division semantics.
-  - [x] Add vanilla reciprocal-square-root and inverse-cube-root helpers,
-        including the deprecated bit-level inverse-square-root approximation.
+  - [ ] Add vanilla reciprocal-square-root and inverse-cube-root helpers,
+        including the deprecated bit-level inverse-square-root approximation. [parity: partial]
   - [x] Add vanilla lookup-table `atan2` with the same normalization,
         approximation correction, quadrant handling, and NaN behavior.
   - [x] Add vanilla HSV-to-RGB/ARGB conversion with truncation and channel
@@ -471,8 +471,8 @@
         binary32 fractional and NaN-preserving clamp behavior.
   - [x] Add source-backed absolute-maximum overloads for float and integer
         numeric paths.
-  - [x] Add vanilla binary32 square-root, absolute-value, and 2D/3D length
-        overloads.
+  - [ ] Add vanilla binary32 square-root, absolute-value, and 2D/3D length
+        overloads. [parity: partial]
 - [ ] Implement axis-aligned bounding boxes with exact inclusive/exclusive
       boundary behavior.
 - [ ] Implement box inflation, deflation, expansion, contraction, movement,
@@ -487,18 +487,18 @@
       calculations with regression coverage.
 - [x] Implement vanilla epsilon-aware AABB segment clipping for ray
       intersections with regression coverage.
-- [x] Implement vanilla ray-versus-AABB broad-phase intersection tests with
-      axis-separation and cross-product regression coverage.
+- [ ] Implement vanilla ray-versus-AABB broad-phase intersection tests with
+      axis-separation and cross-product regression coverage. [parity: deviates, D-146]
 - [x] Implement a source-aligned voxel-shape container as deterministic unions
       of indexed boxes without unauthorized simplification.
 - [x] Add vanilla-style empty and aggregate-bounds queries for voxel shapes.
-- [x] Add indexed-box `VoxelShape.collide` axis resolution with vanilla
-      sub-`1.0E-7` handling and empty-shape passthrough.
+- [ ] Add indexed-box `VoxelShape.collide` axis resolution with vanilla
+      sub-`1.0E-7` handling and empty-shape passthrough. [parity: partial, D-149]
 - [x] Wire indexed voxel shapes into world block collision queries.
 - [x] Preserve vanilla empty-shape semantics by removing collision geometry
       when an empty voxel shape is assigned.
-- [x] Filter degenerate AABBs from lower-level multi-box collision queries so
-      empty shape entries never become colliders.
+- [ ] Filter degenerate AABBs from lower-level multi-box collision queries so
+      empty shape entries never become colliders. [parity: partial]
 - [x] Implement block-centered quarter-turn coordinate transformations around
       the X, Y, and Z axes for indexed voxel boxes.
 - [ ] Implement shape simplification only when vanilla performs it.
@@ -506,8 +506,8 @@
 - [x] Make native collision-shape query ordering deterministic across chunk
       hash-map iteration.
 - [ ] Implement collision epsilon and contact behavior.
-- [x] Apply vanilla `VoxelShape.collide` sub-`1.0E-7` motion cutoff in
-      axis resolution, with positive and negative regression coverage.
+- [ ] Apply vanilla `VoxelShape.collide` sub-`1.0E-7` motion cutoff in
+      axis resolution, with positive and negative regression coverage. [parity: partial, D-074, D-075]
 - [x] Keep collision-state reporting exact after epsilon clipping, matching
       vanilla requested-vs-resolved component comparisons.
 - [ ] Add exhaustive geometry tests for touching, overlapping, negative, and
@@ -517,8 +517,8 @@
 
 - [x] Define and transport a version-qualified block-state identifier model,
       rejecting non-concrete versions and clearing identity on block removal.
-- [x] Fail closed when a block-state identity names a release outside the
-      source-backed version registry.
+- [ ] Fail closed when a block-state identity names a release outside the
+      source-backed version registry. [parity: partial]
 - [x] Expose validated multi-box block shapes through the native world and
       TypeScript boundary.
 - [x] Transport typed block properties alongside state IDs, tags, collision
@@ -534,10 +534,10 @@
       native world boundary.
 - [x] Preserve multiple collision boxes per block state through the native
       world snapshot and N-API block-update path.
-- [x] Preserve separate single- and multi-box outline shapes through the native
-      world snapshot and N-API `setBlockShapes`/block-update paths.
-- [x] Preserve interaction geometry separately from collision and outline
-      geometry through the native world and block-state boundary.
+- [ ] Preserve separate single- and multi-box outline shapes through the native
+      world snapshot and N-API `setBlockShapes`/block-update paths. [parity: partial, D-085]
+- [ ] Preserve interaction geometry separately from collision and outline
+      geometry through the native world and block-state boundary. [parity: partial, D-085]
 - [x] Preserve repeated batched updates for one block as independent
       collision, outline, and interaction geometry channels.
 - [x] Add native smoke coverage for the TypeScript `setBlockShapes` multi-box
@@ -554,20 +554,20 @@
       updates do not silently erase existing entity metadata.
 - [ ] Implement chunk sections, height limits, min build height, and world
       border per version.
-- [x] Implement explicit loaded/unloaded chunk semantics and expose chunk
-      loading state through the native world boundary.
+- [ ] Implement explicit loaded/unloaded chunk semantics and expose chunk
+      loading state through the native world boundary. [parity: partial, D-083]
 - [x] Preserve explicit empty chunk-section presence and expose section
       membership/count readback through the native world boundary.
 - [x] Store explicit world height limits and world-border geometry in the
       native world snapshot boundary.
 - [x] Expose exact configured world-height and border state for snapshot
       readback and validation.
-- [x] Expose source-shaped world-border containment and clamping operations
-      through the native world boundary.
+- [ ] Expose source-shaped world-border containment and clamping operations
+      through the native world boundary. [parity: deviates, D-087]
 - [x] Preserve explicit absent-versus-air state through `NativeBlockState`
       instead of treating every missing block as a stored air block.
-- [x] Implement incremental block updates and batch updates with deterministic
-      grouping, repeated geometry preservation, and metadata-only merge semantics.
+- [ ] Implement incremental block updates and batch updates with deterministic
+      grouping, repeated geometry preservation, and metadata-only merge semantics. [parity: deviates, D-084]
 - [x] Batch versioned boat ticks inside Rust to avoid per-tick N-API conversion
       overhead.
 - [x] Batch versioned horse ticks inside Rust to avoid per-tick N-API conversion
@@ -584,23 +584,23 @@
 - [x] Emit the validated block registry and block-property data as Rust-owned
       generated tables consumed by native version support; JSON remains an
       internal audit/generation input rather than a runtime data source.
-- [x] Emit source-derived water and lava fluid identities and baseline
-      tick/drop-off policies as Rust-owned generated tables for every release.
+- [ ] Emit source-derived water and lava fluid identities and baseline
+      tick/drop-off policies as Rust-owned generated tables for every release. [parity: partial]
 - [x] Generate source-proven fluid-state properties, cardinalities, and
       vanilla sorted-property state indices for source and flowing water/lava.
 - [x] Expose generated fluid-state cardinality and state-index lookups through
       the native N-API boundary with invalid-tuple rejection.
-- [x] Emit source-fingerprinted fluid tag keys, including legacy and modern
-      tag declaration forms, as Rust-owned generated tables for every release.
-- [x] Emit source-fingerprinted block tag keys, including legacy and modern
-      declaration forms, as Rust-owned generated tables for every release.
+- [ ] Emit source-fingerprinted fluid tag keys, including legacy and modern
+      tag declaration forms, as Rust-owned generated tables for every release. [parity: partial]
+- [ ] Emit source-fingerprinted block tag keys, including legacy and modern
+      declaration forms, as Rust-owned generated tables for every release. [parity: partial]
 - [x] Emit source-derived direct block members and nested tag references for
       every generated block tag.
 - [x] Emit exact block-state cardinalities when all property domains are
       source-proven; preserve `None` for unresolved domains.
-- [x] Resolve all supported-release block property domains, including shared
+- [ ] Resolve all supported-release block property domains, including shared
       direction restrictions, rotation-segment bounds, enum declarations, and
-      aliased shared properties; no unresolved domains remain.
+      aliased shared properties; no unresolved domains remain. [parity: non-physics-false]
 - [x] Fingerprint the tag-provider source used to derive each generated block
       tag membership table.
 - [x] Generate per-block source-derived collision, outline, and interaction
@@ -645,9 +645,9 @@
       reject incomplete or unknown tuples.
 - [x] Implement negative coordinates and chunk-boundary indexing.
 - [ ] Implement collision queries without lossy conversion through JavaScript.
-- [x] Generate complete source-proven block-state and core water/lava fluid
+- [ ] Generate complete source-proven block-state and core water/lava fluid
       state tables for every supported version; preserve unresolved cases only
-      where the decompiler does not provide the referenced enum declaration.
+      where the decompiler does not provide the referenced enum declaration. [parity: partial]
 - [ ] Generate complete block tags used by movement and collision.
 - [ ] Generate version-specific shape tables from vanilla registries.
   - [ ] Resolve state-dependent shape branches into exact per-state geometry;
@@ -661,8 +661,8 @@
 - [ ] Port movement type semantics.
 - [x] Add explicit no-physics movement state and bypass collision resolution
       while clearing movement collision flags.
-- [x] Preserve vanilla vertical collision and on-ground state when requested
-      vertical movement is zero.
+- [ ] Preserve vanilla vertical collision and on-ground state when requested
+      vertical movement is zero. [parity: deviates, D-072]
 - [x] Carry vanilla `verticalCollisionBelow` through native and TypeScript
       prediction snapshots.
 - [x] Update depth-strider regressions for vanilla's preserved on-ground state
@@ -672,43 +672,43 @@
 - [x] Derive step-up candidates from voxel collision-shape top surfaces and
       evaluate them in ascending vanilla order.
 - [ ] Port suffocation, inside-wall, and border checks where movement-visible.
-  - [x] Expose source-shaped eye-box inside-wall detection, gated by
-        no-physics and driven by collision-shape intersection.
+  - [ ] Expose source-shaped eye-box inside-wall detection, gated by
+        no-physics and driven by collision-shape intersection. [parity: deviates, D-082]
 - [ ] Port piston movement and entity displacement.
 - [ ] Port entity push and collision with other entities.
-  - [x] Expose a concrete-version N-API entity-push operation with explicit
-        no-physics, vehicle, pushability, passenger, and pushthrough inputs.
-  - [x] Select legacy `pushthrough` behavior from the audited concrete release;
-        modern releases explicitly ignore the removed source field.
-  - [x] Integrate pairwise entity push into a concrete versioned multi-entity
+  - [ ] Expose a concrete-version N-API entity-push operation with explicit
+        no-physics, vehicle, pushability, passenger, and pushthrough inputs. [parity: partial, D-097]
+  - [ ] Select legacy `pushthrough` behavior from the audited concrete release;
+        modern releases explicitly ignore the removed source field. [parity: deviates, D-097]
+  - [ ] Integrate pairwise entity push into a concrete versioned multi-entity
         tick pipeline, including same-vehicle passenger exclusion and explicit
-        pushthrough ownership.
+        pushthrough ownership. [parity: deviates, D-094, D-098]
   - [x] Gate pairwise pushes on actual three-dimensional bounding-box overlap,
         matching the collision candidate boundary instead of pushing arbitrary
         nearby entities.
-  - [x] Match `Entity.push(Entity)`'s double-precision normalization and
-        float impulse constant without introducing extra binary32 rounding.
-  - [x] Add source-backed horizontal `Entity.push(Entity)` impulse calculation
-        with threshold, binary32 scaling, and physics/vehicle/pushability gates.
+  - [ ] Match `Entity.push(Entity)`'s double-precision normalization and
+        float impulse constant without introducing extra binary32 rounding. [parity: partial, D-097]
+  - [ ] Add source-backed horizontal `Entity.push(Entity)` impulse calculation
+        with threshold, binary32 scaling, and physics/vehicle/pushability gates. [parity: partial, D-097]
   - [x] Skip pushes between passengers of the same vehicle, matching the
         1.21.11 `Entity.push(Entity)` relationship guard.
 - [ ] Port riding, passenger offsets, dismount checks, and vehicle attachment.
 - [ ] Port teleport, interpolation, and synchronization state where exposed.
 - [ ] Port fire, freezing, powder snow, and environmental movement effects.
 - [ ] Port fall-distance accumulation and landing reset.
-  - [x] Preserve vanilla `checkFallDistanceAccumulation`'s strict `>-0.5`
-        and `>1.0` thresholds during fall-flying updates.
-  - [x] Reset fall distance when Slow Falling or Levitation is active before
-        movement, matching `LivingEntity.travel` ordering.
+  - [ ] Preserve vanilla `checkFallDistanceAccumulation`'s strict `>-0.5`
+        and `>1.0` thresholds during fall-flying updates. [parity: deviates, D-006]
+  - [ ] Reset fall distance when Slow Falling or Levitation is active before
+        movement, matching `LivingEntity.travel` ordering. [parity: deviates, D-007]
 - [ ] Port safe-fall-distance and fall-damage calculations.
-  - [x] Preserve safe-fall-distance through native simulation/N-API state and
-        subtract it from landing damage thresholds.
-  - [x] Round native landing damage upward with the source `ceil` behavior.
+  - [ ] Preserve safe-fall-distance through native simulation/N-API state and
+        subtract it from landing damage thresholds. [parity: deviates, D-004]
+  - [ ] Round native landing damage upward with the source `ceil` behavior. [parity: deviates, D-004]
 - [ ] Port entity dimensions and pose refresh transitions.
-  - [x] Add a concrete versioned pose-refresh operation with source-ordered
-        requested/sneaking/swimming fallback and collision-box validation.
-  - [x] Preserve no-physics and spectator bypasses while rejecting unavailable
-        poses for the selected source release.
+  - [ ] Add a concrete versioned pose-refresh operation with source-ordered
+        requested/sneaking/swimming fallback and collision-box validation. [parity: deviates, D-153]
+  - [ ] Preserve no-physics and spectator bypasses while rejecting unavailable
+        poses for the selected source release. [parity: deviates, D-153]
 
 ## Living entities and players
 
@@ -717,7 +717,7 @@
 - [ ] Port `LocalPlayer` input and prediction-specific movement.
 - [ ] Port base movement speed and all attribute modifiers.
 - [ ] Port sprinting requirements, sprint transitions, and sprint multiplier.
-  - [x] Disable effective sprint acceleration while sneaking or using an item.
+  - [ ] Disable effective sprint acceleration while sneaking or using an item. [parity: partial, D-045, D-048]
 - [ ] Port sneaking movement and edge-safe movement.
 - [ ] Port jumping, jump delay, jump cooldown, and jump cancellation.
   - [x] Implement water/lava jump impulse and climbable jump-up behavior.
@@ -727,7 +727,7 @@
   - [x] Apply sprint-jump forward impulse using the entity yaw.
   - [x] Keep player base jump strength at `0.42` and apply Jump Boost as
         the separate source-derived amplifier bonus.
-  - [x] Avoid narrowing/overflow when applying the N-API amplifier byte.
+  - [ ] Avoid narrowing/overflow when applying the N-API amplifier byte. [parity: deviates, D-063]
 - [ ] Port air, ground, water, lava, and climbable movement.
   - [x] Apply the source `getFrictionInfluencedSpeed` ground-input formula
         before collision movement on high-slipperiness blocks.
@@ -741,15 +741,15 @@
   - [x] Encode the audited 1.21.1+ water-movement-efficiency interpolation
         divisor (`1.0`) separately from the 1.14-1.20.6 divisor (`3.0`) in
         every concrete version profile.
-- [x] Port versioned pose transition collision checks and integrate the
-      requested/fallback pose refresh into the native player tick path.
+- [ ] Port versioned pose transition collision checks and integrate the
+      requested/fallback pose refresh into the native player tick path. [parity: partial, D-040]
 - [ ] Port crawling-specific pose selection and swimming acceleration.
   - [x] Match the modern `updatePlayerPose` swimming-fit guard and preserve
         the current pose when the reduced swimming box cannot fit.
-  - [x] Allow passenger pose selection to bypass the requested-pose fit test,
-        while retaining the initial swimming-fit guard.
-  - [x] Preserve the source desired-pose priority for sleeping, swimming,
-        fall-flying, spin attack, crouching, and standing.
+  - [ ] Allow passenger pose selection to bypass the requested-pose fit test,
+        while retaining the initial swimming-fit guard. [parity: partial, D-044]
+  - [ ] Preserve the source desired-pose priority for sleeping, swimming,
+        fall-flying, spin attack, crouching, and standing. [parity: deviates, D-044]
 - [ ] Port flying, creative flight, spectator flight, and ability flags.
   - [x] Add explicit flying state, vanilla vertical carry factor, and
         fall-distance reset to the native simulation/N-API snapshot.
@@ -758,29 +758,29 @@
 - [ ] Port no-gravity and custom-gravity behavior.
   - [x] Add native/N-API no-gravity state and preserve the explicit descriptor
         value through simulation.
-  - [x] Source the optional Mineflayer entity-state flag without breaking
-        existing state implementations.
+  - [ ] Source the optional Mineflayer entity-state flag without breaking
+        existing state implementations. [parity: non-physics-false, D-057]
 - [ ] Port knockback, velocity impulses, and velocity damping.
   - [x] Zero sub-threshold velocity components before native movement using
         the configurable Mineflayer-compatible threshold.
-  - [x] Reject non-finite velocity inputs at the native movement boundary,
-        matching Entity.setDeltaMovement's finite-value guard.
-  - [x] Preserve existing velocity when a non-finite delta impulse is supplied,
-        matching Entity.addDeltaMovement's finite-value guard.
+  - [ ] Reject non-finite velocity inputs at the native movement boundary,
+        matching Entity.setDeltaMovement's finite-value guard. [parity: partial]
+  - [ ] Preserve existing velocity when a non-finite delta impulse is supplied,
+        matching Entity.addDeltaMovement's finite-value guard. [parity: partial]
 - [ ] Port movement input normalization and yaw/pitch transforms.
   - [x] Bound horizontal input magnitude before applying movement speed and
         preserve yaw rotation ordering.
 - [ ] Port movement statistics only when they affect exhaustion or state.
-  - [x] Preserve native fall-distance and computed fall-damage outputs in the
-        Mineflayer-facing state bridge.
+  - [ ] Preserve native fall-distance and computed fall-damage outputs in the
+        Mineflayer-facing state bridge. [parity: partial]
   - [x] Copy fall metrics through player and entity prediction clones.
 - [ ] Port food/exhaustion movement effects where applicable.
 - [ ] Port shield-use, item-use, and attack movement penalties.
   - [x] Preserve item-use state through N-API and apply the vanilla 0.2 input
         speed multiplier.
 - [ ] Port eye height, camera height, and fluid-eye checks.
-  - [x] Compute eye-in-water and eye-in-lava from fluid surface height and
-        return the predicates through the native bridge.
+  - [ ] Compute eye-in-water and eye-in-lava from fluid surface height and
+        return the predicates through the native bridge. [parity: deviates, D-037]
 - [ ] Port world-border collision and unloaded-world fallback behavior.
 
 ## Status effects and attributes
@@ -788,24 +788,24 @@
 - [ ] Implement the complete movement-relevant attribute system.
 - [ ] Implement base values, additive modifiers, multiplicative modifiers, and
       operation order.
-  - [x] Resolve Mineflayer attribute objects using Java's operation order:
+  - [ ] Resolve Mineflayer attribute objects using Java's operation order:
         additive base, additive-base multipliers, then multiplicative-total
-        modifiers.
-  - [x] Forward the server-provided movement-speed attribute instead of
-        confusing the Speed effect amplifier with the base attribute.
+        modifiers. [parity: partial, D-066]
+  - [ ] Forward the server-provided movement-speed attribute instead of
+        confusing the Speed effect amplifier with the base attribute. [parity: partial, D-064]
 - [ ] Implement version-specific attribute names and defaults.
 - [ ] Implement movement speed, gravity, step height, safe fall distance, scale,
       jump strength, water movement efficiency, and attack-related movement
       attributes where present.
-  - [x] Forward a finite player `jump_strength` attribute with the vanilla
-        `0.42` fallback when the attribute is unavailable.
+  - [ ] Forward a finite player `jump_strength` attribute with the vanilla
+        `0.42` fallback when the attribute is unavailable. [parity: partial, D-064]
   - [x] Resolve a finite `step_height` attribute before using the state/config
         fallback for collision stepping.
-  - [x] Forward `safe_fall_distance` when present and use the source `3.0`
-        default for releases introducing the modern safe-fall attribute.
-  - [x] Add the modern `movement_efficiency` attribute to the typed native
+  - [ ] Forward `safe_fall_distance` when present and use the source `3.0`
+        default for releases introducing the modern safe-fall attribute. [parity: deviates, D-004]
+  - [ ] Add the modern `movement_efficiency` attribute to the typed native
         boundary and apply its Soul Speed block-friction behavior from the
-        1.21.4/26.x source breakpoint.
+        1.21.4/26.x source breakpoint. [parity: partial, D-018]
   - [x] Carry modern `air_drag_modifier` and `friction_modifier` attributes
         through the native boundary, including their source defaults and
         modified-friction formula.
@@ -813,20 +813,20 @@
       grace, conduit power, blindness, darkness, and movement-relevant effects.
   - [x] Keep the Speed/Slowness amplifier levels separate from the base
         movement-speed attribute at the TypeScript/native boundary.
-  - [x] Apply source-derived Levitation amplifier targets and easing in native
-        movement.
-  - [x] Apply the source-derived Slow Falling gravity cap (`min(gravity, 0.01)`)
-        rather than a default-gravity-only multiplier.
-  - [x] Preserve the Levitation amplifier through the native N-API and
-        Mineflayer adapter boundary.
+  - [ ] Apply source-derived Levitation amplifier targets and easing in native
+        movement. [parity: partial, D-007, D-063]
+  - [ ] Apply the source-derived Slow Falling gravity cap (`min(gravity, 0.01)`)
+        rather than a default-gravity-only multiplier. [parity: partial, D-065]
+  - [ ] Preserve the Levitation amplifier through the native N-API and
+        Mineflayer adapter boundary. [parity: partial, D-063]
 - [ ] Implement effect amplifier and duration semantics.
 - [ ] Implement effect tick ordering and expiration.
 - [ ] Implement equipment and enchantment modifiers.
 - [ ] Implement Depth Strider, Soul Speed, Swift Sneak, Frost Walker, and all
       movement-relevant enchantments per version.
-  - [x] Preserve Soul Speed through the typed state boundary; retain the
+  - [ ] Preserve Soul Speed through the typed state boundary; retain the
         legacy block-speed override and apply the modern movement-efficiency
-        plus level-based movement-speed effects at their source breakpoint.
+        plus level-based movement-speed effects at their source breakpoint. [parity: partial, D-018, D-025]
   - [x] Apply the typed `sneaking_speed` attribute for sneaking movement,
         retaining the vanilla `0.3` default when absent.
 - [ ] Implement effect interactions with fluids, blocks, poses, and vehicles.
@@ -840,8 +840,8 @@
         update bridge, with source height semantics and validation.
   - [x] Encode omitted non-empty fluid levels as canonical source states
         (`fluid_source=true`, `fluid_level=0`) at the N-API boundary.
-  - [x] Smoke-test source/flowing round-trips and reject source flags on empty
-        fluid states.
+  - [ ] Smoke-test source/flowing round-trips and reject source flags on empty
+        fluid states. [parity: non-physics-false]
   - [x] Reject the impossible vanilla combination of source and falling fluid
         flags at the N-API boundary.
   - [x] Preserve the distinct own height of falling level-eight fluid states.
@@ -857,7 +857,7 @@
   - [x] Expose per-block fluid height and flow through the native world model.
   - [x] Return full fluid height when the same fluid state continues above,
         matching `FlowingFluid.getHeight`.
-  - [x] Use fluid surface height for body and swimming-head immersion checks.
+  - [ ] Use fluid surface height for body and swimming-head immersion checks. [parity: partial, D-037]
   - [x] Ignore fluid surfaces below the queried entity bounds.
   - [x] Reset fall distance on water contact.
 - [ ] Implement fluid flow vectors and current acceleration.
@@ -871,8 +871,8 @@
   - [x] Apply water fluid gravity adjustment after movement using the
         source-derived gravity/16 operation.
 - [ ] Implement lava drag and input speed per version.
-  - [x] Preserve source no-gravity and sprinting bypass conditions in fluid
-        vertical adjustment.
+  - [ ] Preserve source no-gravity and sprinting bypass conditions in fluid
+        vertical adjustment. [parity: partial, D-029]
   - [x] Apply lava horizontal drag, fluid-height threshold, and vertical
         scaling branches.
 - [x] Apply swimming vertical steering only in the player travel path; vanilla
@@ -882,38 +882,38 @@
       swimming in air does not introduce an additional `0.9` multiplier.
 - [x] Own the sprinting water slowdown (`0.9F`) in every concrete release
       profile rather than hardcoding it in shared simulation logic.
-- [x] Use the source `Player.travel` swimming head-block lookup at `Y + 0.9`
-      instead of reusing the generic eye-fluid predicate.
+- [ ] Use the source `Player.travel` swimming head-block lookup at `Y + 0.9`
+      instead of reusing the generic eye-fluid predicate. [parity: deviates, D-030]
 - [x] Keep the lava `-gravity / 4` term active while sprinting; only the
       fluid-falling adjustment is sprint-suppressed by vanilla.
 - [x] Route lava gravity through each concrete profile's declared divisor
       rather than embedding a shared `/ 4.0` constant.
-- [x] Preserve the source breakpoint for fluid-falling adjustment: 1.19-1.20.6
+- [ ] Preserve the source breakpoint for fluid-falling adjustment: 1.19-1.20.6
       checks the gravity argument, while older and 1.21 profiles check the
-      entity no-gravity flag.
-- [x] Add a runtime differential fixture for the 1.18.2/1.19 fluid-falling
-      gravity-condition transition.
+      entity no-gravity flag. [parity: deviates, D-029]
+- [ ] Add a runtime differential fixture for the 1.18.2/1.19 fluid-falling
+      gravity-condition transition. [parity: non-physics-false]
 - [x] Preserve fluid climbable branch ordering: horizontal-collision adjustment
       occurs before fluid drag, and land jump handling is not reused in fluid.
 - [x] Transport explicit passenger state through entity state, TypeScript, and
       native simulation so `Player.travel` can skip swimming steering while
       riding.
-  - [x] Apply the source-derived look-angle coefficients and submerged-head
-        condition for the current player movement slice.
+  - [ ] Apply the source-derived look-angle coefficients and submerged-head
+        condition for the current player movement slice. [parity: partial, D-030]
 - [ ] Implement fluid jump thresholds.
   - [x] Derive the jump threshold from the entity eye height and cover the
         short-entity zero-threshold case with regression tests.
 - [ ] Implement bubble columns, direction, drag, and entity effects.
   - [x] Apply surface versus enclosed bubble-column acceleration and velocity
-  - [x] Determine bubble-column surface state from actual air occupancy rather
-        than the absence of a block effect.
+  - [ ] Determine bubble-column surface state from actual air occupancy rather
+        than the absence of a block effect. [parity: partial, D-033]
   - [x] Reset fall distance when an entity is inside a bubble column.
         caps for upward and downward columns.
   - [x] Preserve the source `DRAG_DOWN` block-state property when adapting
         prismarine block metadata into native bubble-column effects.
 - [ ] Implement fluid interactions with ladders, vines, scaffolding, and webs.
-  - [x] Add explicit no-gravity state and source-derived fluid falling
-        adjustment conditions for water and lava movement.
+  - [ ] Add explicit no-gravity state and source-derived fluid falling
+        adjustment conditions for water and lava movement. [parity: partial, D-029]
   - [x] Reset fall distance when cobweb movement applies stuck-in-block
         velocity scaling.
   - [x] Preserve the player-only ladder sliding suppression and keep
@@ -930,14 +930,14 @@
 - [ ] Generate every block-state outline/support shape used by movement.
 - [ ] Generate friction and slipperiness exactly.
 - [ ] Implement ice, packed ice, blue ice, and version-specific slipperiness.
-- [x] Distinguish source-backed soul sand speed-factor ordering from soul soil,
-      which has no movement speed factor.
+- [ ] Distinguish source-backed soul sand speed-factor ordering from soul soil,
+      which has no movement speed factor. [parity: partial, D-018]
 - [ ] Implement honey block movement and side adhesion.
   - [x] Implement source-backed edge-slide detection across adjacent honey
         blocks, horizontal throttling, vertical slide velocity, and fall reset.
 - [ ] Implement slime block bounce and sneaking behavior.
-  - [x] Implement source-backed sneaking suppression, living/non-living bounce
-        scaling, and step-on horizontal damping for the supported movement path.
+  - [ ] Implement source-backed sneaking suppression, living/non-living bounce
+        scaling, and step-on horizontal damping for the supported movement path. [parity: partial, D-021]
   - [x] Expose the source `isSteppingCarefully` gate so slime step-on damping
         is independently suppressible from generic sneaking state.
   - [x] Use the post-collision support block and suppress fall distance/damage
@@ -948,41 +948,41 @@
   - [x] Skip stuck-block multipliers only for flying players, matching the
         source `Player.makeStuckInBlock` guard while preserving base entity
         behavior for other flying entities.
-  - [x] Expose the modern Weaving effect and apply its source
-        `(0.5, 0.25, 0.5)` multiplier.
+  - [ ] Expose the modern Weaving effect and apply its source
+        `(0.5, 0.25, 0.5)` multiplier. [parity: partial, D-022]
 - [x] Expose sweet-berry-bush immunity for source entities such as foxes and
       bees while preserving the vanilla multiplier for affected living entities.
   - [x] Return world-derived cobweb occupancy through native state updates.
-- [x] Implement ladders, vines, scaffolding, and climbable blocks.
-- [x] Implement source-backed powder-snow stuck movement multiplier
-      (`0.9, 1.5, 0.9`) and fall-distance reset.
-- [x] Implement source-backed sweet-berry-bush stuck movement multiplier
-      (`0.8, 0.75, 0.8`) and fall-distance reset.
+- [ ] Implement ladders, vines, scaffolding, and climbable blocks. [parity: deviates, D-019]
+- [ ] Implement source-backed powder-snow stuck movement multiplier
+      (`0.9, 1.5, 0.9`) and fall-distance reset. [parity: partial, D-020]
+- [ ] Implement source-backed sweet-berry-bush stuck movement multiplier
+      (`0.8, 0.75, 0.8`) and fall-distance reset. [parity: partial, D-020]
 - [ ] Implement powder snow freezing damage and immunity behavior.
-  - [x] Expose powder-snow contact and immunity state and suppress the source
-        stuck multiplier for immune entities.
+  - [ ] Expose powder-snow contact and immunity state and suppress the source
+        stuck multiplier for immune entities. [parity: partial]
   - [x] Preserve source walkability for leather-boot entities and walkable
         entity types through the native collision path.
-  - [x] Track source-compatible freeze-tick accumulation, clamping, and
-        two-tick decay when no longer freezing.
+  - [ ] Track source-compatible freeze-tick accumulation, clamping, and
+        two-tick decay when no longer freezing. [parity: partial, D-024]
   - [x] Expose periodic fully-frozen damage as an accumulated native state
         signal at the vanilla 40-tick cadence; server damage application remains
         outside the movement-only adapter boundary.
 - [ ] Implement berry bush, cactus, magma, campfire, and damage surfaces where
       movement state is affected.
-  - [x] Expose source-specific cactus/campfire/magma contact damage as a
+  - [ ] Expose source-specific cactus/campfire/magma contact damage as a
         deterministic native damage signal, including lit-campfire gating and
-        sneaking magma immunity.
+        sneaking magma immunity. [parity: partial, D-023]
   - [x] Preserve the vanilla soul-campfire fire-damage value of `2.0`, distinct
         from the normal campfire/cactus value of `1.0`.
-  - [x] Model fire and soul-fire contact damage (`1.0`/`2.0`) and clear
-        freeze ticks when fire contact applies the vanilla clear-freeze effect.
+  - [ ] Model fire and soul-fire contact damage (`1.0`/`2.0`) and clear
+        freeze ticks when fire contact applies the vanilla clear-freeze effect. [parity: partial, D-024]
   - [x] Expose contact damage as a per-tick signal while retaining cumulative
         freeze-damage signaling.
-  - [x] Query inside-block effects across the complete entity bounds, matching
-        vanilla `Entity.checkInsideBlocks` coverage rather than one body cell.
-  - [x] Apply vanilla's `1.0E-5` bounding-box deflation so touching a block
-        face does not incorrectly count as inside-block contact.
+  - [ ] Query inside-block effects across the complete entity bounds, matching
+        vanilla `Entity.checkInsideBlocks` coverage rather than one body cell. [parity: partial, D-024]
+  - [ ] Apply vanilla's `1.0E-5` bounding-box deflation so touching a block
+        face does not incorrectly count as inside-block contact. [parity: partial, D-024]
 - [ ] Implement carpets, snow layers, slabs, stairs, fences, walls, gates,
       trapdoors, doors, beds, signs, rails, and all partial shapes.
 - [ ] Implement piston movement and moving-block collision.
@@ -1031,20 +1031,20 @@
 - [x] Separate native boat control acceleration from status physics so the
       world-aware path applies vanilla drag exactly once per tick.
 - [ ] Port boat bubble columns, waves, fall, and collision behavior.
-- [x] Route boat water status, buoyancy, and block clipping through the native
+- [ ] Route boat water status, buoyancy, and block clipping through the native
       world snapshot; source-specific bubble/wave and full status handling
-      remains open.
-- [x] Preserve native boat bubble-column state across ticks and apply the
-      source-derived 60-tick activation and directional launch impulse.
-- [x] Forward player-passenger state to native boat bubble handling and apply
-      the source 2.7 upward launch impulse for player passengers.
+      remains open. [parity: partial, D-111, D-119]
+- [ ] Preserve native boat bubble-column state across ticks and apply the
+      source-derived 60-tick activation and directional launch impulse. [parity: not-implemented, D-118]
+- [ ] Forward player-passenger state to native boat bubble handling and apply
+      the source 2.7 upward launch impulse for player passengers. [parity: not-implemented, D-118]
 - [x] Apply native boat horizontal and vertical collision results back through
       the N-API state boundary.
 - [x] Return native boat ground-contact state and apply it to Mineflayer.
 - [x] Return native horse ground-contact state and apply it to Mineflayer.
 - [x] Clear stale native vehicle ground contact before each movement tick;
       only downward collision restores `onGround`.
-- [x] Derive native horse water state from the world snapshot before movement.
+- [ ] Derive native horse water state from the world snapshot before movement. [parity: partial, D-111, D-115]
 - [x] Return the source-derived boat water surface level through the native
       boundary and preserve it in `BoatState.waterLevel`.
 - [x] Preserve boat status transitions across ticks and perform the
@@ -1052,10 +1052,10 @@
 - [x] Classify native boat water status as `IN_WATER`, `UNDER_WATER`,
       `UNDER_FLOWING_WATER`, `ON_LAND`, or `IN_AIR`, and apply status-specific
       buoyancy/drag behavior through the native boundary.
-- [x] Regression-test source and flowing-water status classification.
+- [ ] Regression-test source and flowing-water status classification. [parity: non-physics-false]
 - [x] Regression-test native boat horizontal collision against a full block.
-- [x] Port source-backed boat passenger positioning and yaw-aware offset
-      rotation.
+- [ ] Port source-backed boat passenger positioning and yaw-aware offset
+      rotation. [parity: deviates, D-121]
 - [ ] Port horse, donkey, mule, skeleton horse, and zombie horse travel.
 - [x] Route horse movement through native world collision resolution and return
       native collision flags through the state boundary.
@@ -1075,20 +1075,20 @@
       where movement differs.
 - [ ] Port post-1.21.2 experimental/reworked minecart behavior when supported.
 - [ ] Port mount/flying behavior introduced in later versions.
-- [x] Port source-backed vehicle passenger update ordering: move the vehicle
-      before attaching the passenger position.
+- [ ] Port source-backed vehicle passenger update ordering: move the vehicle
+      before attaching the passenger position. [parity: partial, D-121]
 
 ## Projectiles and moving entities
 
 - [ ] Port arrow, spectral arrow, tipped arrow, trident, snowball, egg, pearl,
       potion, firework, fishing hook, and other projectile motion.
-- [x] Preserve the 26.2 `ThrowableProjectile` first-tick bubble-column
+- [ ] Preserve the 26.2 `ThrowableProjectile` first-tick bubble-column
       interaction before gravity/inertia, including above-column and inside-
-      column vertical limits.
-- [x] Gate first-tick bubble-column handling to the source-backed 26.1+
-      projectile implementation; legacy releases use the pre-26.1 tick order.
-- [x] Match `Mth.clamp(double, ...)` NaN propagation in the shared native math
-      layer and cover the boundary with a regression.
+      column vertical limits. [parity: partial, D-138]
+- [ ] Gate first-tick bubble-column handling to the source-backed 26.1+
+      projectile implementation; legacy releases use the pre-26.1 tick order. [parity: deviates, D-133, D-138]
+- [ ] Match `Mth.clamp(double, ...)` NaN propagation in the shared native math
+      layer and cover the boundary with a regression. [parity: partial]
 - [x] Match `AABB.clip` strict face-coordinate bounds and source tolerance in
       native segment clipping.
 - [x] Carry persistent boat `deltaRotation` and backward input through the
@@ -1103,29 +1103,29 @@
       smoke integration path.
 - [x] Exercise native boat `deltaRotation` propagation through the smoke
       integration path.
-- [x] Add a source-specialized arrow tick path with in-ground state and the
-      26.2 water/air/gravity ordering.
+- [ ] Add a source-specialized arrow tick path with in-ground state and the
+      26.2 water/air/gravity ordering. [parity: deviates, D-136, D-139, D-142]
 - [x] Use the 26.2 `AbstractArrow` `WATER_INERTIA = 0.6F` constant for the
       specialized arrow default, independently of living-entity water drag.
-- [x] Carry the arrow `life` counter and 1200-tick in-ground despawn boundary.
-- [x] Carry arrow `inGroundTime` and `shakeTime` lifecycle state through the
-      native boundary.
+- [ ] Carry the arrow `life` counter and 1200-tick in-ground despawn boundary. [parity: partial]
+- [ ] Carry arrow `inGroundTime` and `shakeTime` lifecycle state through the
+      native boundary. [parity: deviates, D-141]
 - [x] Initialize the source seven-tick arrow shake window when a block impact
       transitions the arrow into the ground.
-- [x] Implement the source arrow `startFalling` transition when the embedded
+- [ ] Implement the source arrow `startFalling` transition when the embedded
       collision shape disappears, with an explicit deterministic impulse
-      boundary.
-- [x] Carry the supporting block-state identity so replacement collision
-      shapes trigger the source `lastState` change branch.
-- [x] Add a source-specialized trident motion path with the 26.1.2/modern
-      water inertia (`0.99F`), gravity, drag, and block-trace ordering.
+      boundary. [parity: deviates, D-140]
+- [ ] Carry the supporting block-state identity so replacement collision
+      shapes trigger the source `lastState` change branch. [parity: deviates, D-140]
+- [ ] Add a source-specialized trident motion path with the 26.1.2/modern
+      water inertia (`0.99F`), gravity, drag, and block-trace ordering. [parity: deviates, D-137]
 - [x] Repair the native N-API trident export nesting bug and revalidate the
       native suite after the fix.
-- [x] Add explicit projectile-family dispatch tags for common thrown-item
+- [ ] Add explicit projectile-family dispatch tags for common thrown-item
       families (snowball, egg, ender pearl, potion, firework, fishing hook,
-      etc.) while preserving the shared `ThrowableProjectile` ordering.
-- [x] Port the 26.2 firework rocket acceleration rule: horizontal boost
-      scaling and the upward `+0.04` impulse before gravity/inertia.
+      etc.) while preserving the shared `ThrowableProjectile` ordering. [parity: deviates, D-135]
+- [ ] Port the 26.2 firework rocket acceleration rule: horizontal boost
+      scaling and the upward `+0.04` impulse before gravity/inertia. [parity: partial, D-135]
 - [ ] Port projectile gravity, drag, water drag, and collision.
 - [ ] Port projectile target tolerance and version-specific changes.
 - [ ] Port entity hitboxes and block hitboxes for projectile ray tracing.
@@ -1146,8 +1146,8 @@
         speed through the Rust and TypeScript boundaries.
 - [ ] Expose complete output state, including all flags and derived values.
 - [ ] Expose bulk tick and multi-entity tick operations.
-  - [x] Expose concrete-version `simulateVersionedTicks` for bulk state
-        ticking with per-state version dispatch and collision flag propagation.
+  - [ ] Expose concrete-version `simulateVersionedTicks` for bulk state
+        ticking with per-state version dispatch and collision flag propagation. [parity: partial, D-154]
 - [ ] Avoid JavaScript callbacks in the inner simulation loop.
 - [ ] Validate all inputs and report errors with actionable messages.
   - [x] Reject out-of-range fluid levels at the N-API block-update boundary.
@@ -1155,9 +1155,9 @@
 - [ ] Generate declarations from the Rust bindings and verify them in TypeScript.
 - [ ] Remove obsolete generic version gates once version-specific engines cover
       the same behavior.
-- [x] Keep unsupported versions unavailable instead of silently falling back;
+- [ ] Keep unsupported versions unavailable instead of silently falling back;
       TypeScript now validates against the explicit source-backed registry
-      before constructing an engine.
+      before constructing an engine. [parity: non-physics-false, D-160]
 - [ ] Provide migration adapters only outside the core 1:1 engine.
 - [ ] Wire Mineflayer entity snapshots and world updates into the engine.
 - [ ] Wire engine outputs back to Mineflayer entities without mutating unrelated
