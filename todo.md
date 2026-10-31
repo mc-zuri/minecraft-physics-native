@@ -144,7 +144,7 @@
       expanded-box lift, horizontal motion, and final vertical correction.
 - [ ] Match source fluid escape-jump gating with an explicit `is_free` world
       query, including collision and liquid occupancy checks, instead of
-      treating every horizontal collision while climbing as a jump. [parity: partial, D-013, D-014, D-015]
+      treating every horizontal collision while climbing as a jump. [parity: partial, D-013, D-014]
 - [x] Add an explicit `controlled_by_local_instance` boundary instead of
       conflating player identity with Java local-control semantics.
 - [x] Preserve the typed `controlledByLocalInstance` and `blockFallCallback`
@@ -166,8 +166,8 @@
       accumulating downward fall distance. [parity: deviates, D-001]
 - [x] Replace center-cell support-effect lookup with a source-shaped underside
       support query over the entity footprint, including multi-shape blocks.
-- [ ] Add the player source `maybeBackOffFromEdge` collision branch for
-      sneaking movement, including 0.05 stepping and max-down-step checks. [parity: deviates, D-012]
+- [x] Add the player source `maybeBackOffFromEdge` collision branch for
+      sneaking movement, including 0.05 stepping and max-down-step checks.
 - [ ] Extend `SimulationState` and the N-API bridge with typed entity/block
       bounciness inputs and route the dedicated 26.2 restitution path without
       defaults. `BlockState.bounce_restitution` is now carried by world
