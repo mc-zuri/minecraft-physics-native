@@ -136,17 +136,17 @@
 - [ ] Wire the fall-damage-immunity boundary through `IEntityState`,
       `EntityState`, `PlayerState`, and the native TypeScript adapter so the
       source-derived native calculation is reachable from runtime state. [parity: non-physics-false]
-- [ ] Refresh vertical collision flags on zero-Y local movement requests,
+- [x] Refresh vertical collision flags on zero-Y local movement requests,
       matching the source `Entity.move` rest-state assignment instead of
-      preserving stale collision/on-ground flags. [parity: deviates, D-072]
+      preserving stale collision/on-ground flags.
 - [x] Replace shape-height enumeration in step-up resolution with the
       source-ordered two-candidate `Entity.collide` algorithm: raised motion,
       expanded-box lift, horizontal motion, and final vertical correction.
 - [ ] Match source fluid escape-jump gating with an explicit `is_free` world
       query, including collision and liquid occupancy checks, instead of
       treating every horizontal collision while climbing as a jump. [parity: partial, D-013, D-014, D-015]
-- [ ] Add an explicit `controlled_by_local_instance` boundary instead of
-      conflating player identity with Java local-control semantics. [parity: partial, D-072]
+- [x] Add an explicit `controlled_by_local_instance` boundary instead of
+      conflating player identity with Java local-control semantics.
 - [x] Preserve the typed `controlledByLocalInstance` and `blockFallCallback`
       values across the native bridge rather than overwriting them with the
       player default or a static false value.
@@ -534,10 +534,10 @@
       native world boundary.
 - [x] Preserve multiple collision boxes per block state through the native
       world snapshot and N-API block-update path.
-- [ ] Preserve separate single- and multi-box outline shapes through the native
-      world snapshot and N-API `setBlockShapes`/block-update paths. [parity: partial, D-085]
-- [ ] Preserve interaction geometry separately from collision and outline
-      geometry through the native world and block-state boundary. [parity: partial, D-085]
+- [x] Preserve separate single- and multi-box outline shapes through the native
+      world snapshot and N-API `setBlockShapes`/block-update paths.
+- [x] Preserve interaction geometry separately from collision and outline
+      geometry through the native world and block-state boundary.
 - [x] Preserve repeated batched updates for one block as independent
       collision, outline, and interaction geometry channels.
 - [x] Add native smoke coverage for the TypeScript `setBlockShapes` multi-box
@@ -562,12 +562,12 @@
       native world snapshot boundary.
 - [x] Expose exact configured world-height and border state for snapshot
       readback and validation.
-- [ ] Expose source-shaped world-border containment and clamping operations
-      through the native world boundary. [parity: deviates, D-087]
+- [x] Expose source-shaped world-border containment and clamping operations
+      through the native world boundary.
 - [x] Preserve explicit absent-versus-air state through `NativeBlockState`
       instead of treating every missing block as a stored air block.
-- [ ] Implement incremental block updates and batch updates with deterministic
-      grouping, repeated geometry preservation, and metadata-only merge semantics. [parity: deviates, D-084]
+- [x] Implement incremental block updates and batch updates with deterministic
+      grouping, repeated geometry preservation, and metadata-only merge semantics.
 - [x] Batch versioned boat ticks inside Rust to avoid per-tick N-API conversion
       overhead.
 - [x] Batch versioned horse ticks inside Rust to avoid per-tick N-API conversion
@@ -661,8 +661,8 @@
 - [ ] Port movement type semantics.
 - [x] Add explicit no-physics movement state and bypass collision resolution
       while clearing movement collision flags.
-- [ ] Preserve vanilla vertical collision and on-ground state when requested
-      vertical movement is zero. [parity: deviates, D-072]
+- [x] Preserve vanilla vertical collision and on-ground state when requested
+      vertical movement is zero.
 - [x] Carry vanilla `verticalCollisionBelow` through native and TypeScript
       prediction snapshots.
 - [x] Update depth-strider regressions for vanilla's preserved on-ground state
