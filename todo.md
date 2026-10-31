@@ -306,8 +306,8 @@
       from `Entity` and consume them through native version rules.
 - [x] Remove the non-vanilla fluid-current cutoff; nonzero source flow now
       contributes to movement.
-- [ ] Add explicit ultra-warm dimension state to the native snapshot and apply
-      vanilla's `0.007` lava-current scale when enabled. [parity: partial, D-027]
+- [x] Add explicit ultra-warm dimension state to the native snapshot and apply
+      vanilla's `0.007` lava-current scale when enabled.
 - [x] Own the ultra-warm lava-current scale in every concrete release profile;
       the shared simulation core no longer contains that behavior constant.
 - [x] Regression-test fast lava currents in ultra-warm dimensions.
@@ -436,7 +436,7 @@
       cross products.
   - [x] Implement vector length, horizontal-length, dot, cross, and squared
         length primitives with regression coverage.
-  - [ ] Match vanilla normalization's `1.0E-5` zero-vector threshold. [parity: deviates, D-034]
+  - [x] Match vanilla normalization's `1.0E-5` zero-vector threshold.
 - [ ] Implement exact floor, ceil, round, clamp, and epsilon semantics.
   - [x] Implement vanilla double floor/ceil, clamp, and degree wrapping
         helpers with negative and boundary regression coverage.
@@ -779,8 +779,8 @@
   - [x] Preserve item-use state through N-API and apply the vanilla 0.2 input
         speed multiplier.
 - [ ] Port eye height, camera height, and fluid-eye checks.
-  - [ ] Compute eye-in-water and eye-in-lava from fluid surface height and
-        return the predicates through the native bridge. [parity: deviates, D-037]
+  - [x] Compute eye-in-water and eye-in-lava from fluid surface height and
+        return the predicates through the native bridge.
 - [ ] Port world-border collision and unloaded-world fallback behavior.
 
 ## Status effects and attributes
@@ -857,7 +857,7 @@
   - [x] Expose per-block fluid height and flow through the native world model.
   - [x] Return full fluid height when the same fluid state continues above,
         matching `FlowingFluid.getHeight`.
-  - [ ] Use fluid surface height for body and swimming-head immersion checks. [parity: partial, D-037]
+  - [x] Use fluid surface height for body and swimming-head immersion checks.
   - [x] Ignore fluid surfaces below the queried entity bounds.
   - [x] Reset fall distance on water contact.
 - [ ] Implement fluid flow vectors and current acceleration.
@@ -871,8 +871,8 @@
   - [x] Apply water fluid gravity adjustment after movement using the
         source-derived gravity/16 operation.
 - [ ] Implement lava drag and input speed per version.
-  - [ ] Preserve source no-gravity and sprinting bypass conditions in fluid
-        vertical adjustment. [parity: partial, D-029]
+  - [x] Preserve source no-gravity and sprinting bypass conditions in fluid
+        vertical adjustment.
   - [x] Apply lava horizontal drag, fluid-height threshold, and vertical
         scaling branches.
 - [x] Apply swimming vertical steering only in the player travel path; vanilla
@@ -882,15 +882,15 @@
       swimming in air does not introduce an additional `0.9` multiplier.
 - [x] Own the sprinting water slowdown (`0.9F`) in every concrete release
       profile rather than hardcoding it in shared simulation logic.
-- [ ] Use the source `Player.travel` swimming head-block lookup at `Y + 0.9`
-      instead of reusing the generic eye-fluid predicate. [parity: deviates, D-030]
+- [x] Use the source `Player.travel` swimming head-block lookup at `Y + 0.9`
+      instead of reusing the generic eye-fluid predicate.
 - [x] Keep the lava `-gravity / 4` term active while sprinting; only the
       fluid-falling adjustment is sprint-suppressed by vanilla.
 - [x] Route lava gravity through each concrete profile's declared divisor
       rather than embedding a shared `/ 4.0` constant.
-- [ ] Preserve the source breakpoint for fluid-falling adjustment: 1.19-1.20.6
+- [x] Preserve the source breakpoint for fluid-falling adjustment: 1.19-1.20.6
       checks the gravity argument, while older and 1.21 profiles check the
-      entity no-gravity flag. [parity: deviates, D-029]
+      entity no-gravity flag.
 - [ ] Add a runtime differential fixture for the 1.18.2/1.19 fluid-falling
       gravity-condition transition. [parity: non-physics-false]
 - [x] Preserve fluid climbable branch ordering: horizontal-collision adjustment
@@ -898,22 +898,22 @@
 - [x] Transport explicit passenger state through entity state, TypeScript, and
       native simulation so `Player.travel` can skip swimming steering while
       riding.
-  - [ ] Apply the source-derived look-angle coefficients and submerged-head
-        condition for the current player movement slice. [parity: partial, D-030]
+  - [x] Apply the source-derived look-angle coefficients and submerged-head
+        condition for the current player movement slice.
 - [ ] Implement fluid jump thresholds.
   - [x] Derive the jump threshold from the entity eye height and cover the
         short-entity zero-threshold case with regression tests.
 - [ ] Implement bubble columns, direction, drag, and entity effects.
   - [x] Apply surface versus enclosed bubble-column acceleration and velocity
-  - [ ] Determine bubble-column surface state from actual air occupancy rather
-        than the absence of a block effect. [parity: partial, D-033]
+  - [x] Determine bubble-column surface state from actual air occupancy rather
+        than the absence of a block effect.
   - [x] Reset fall distance when an entity is inside a bubble column.
         caps for upward and downward columns.
   - [x] Preserve the source `DRAG_DOWN` block-state property when adapting
         prismarine block metadata into native bubble-column effects.
 - [ ] Implement fluid interactions with ladders, vines, scaffolding, and webs.
-  - [ ] Add explicit no-gravity state and source-derived fluid falling
-        adjustment conditions for water and lava movement. [parity: partial, D-029]
+  - [x] Add explicit no-gravity state and source-derived fluid falling
+        adjustment conditions for water and lava movement.
   - [x] Reset fall distance when cobweb movement applies stuck-in-block
         velocity scaling.
   - [x] Preserve the player-only ladder sliding suppression and keep
