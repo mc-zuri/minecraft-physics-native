@@ -117,11 +117,11 @@
 - [x] Harden the projectile-family resolver for `entity:` prefixes, dotted IDs,
       and common legacy alias forms like `big_fireball`, `dragon_fireball`, and
       namespaced modern firework IDs before source fallback is considered.
-- [ ] Correct `Entity.push` to apply independent `pushthrough` scaling on each
+- [x] Correct `Entity.push` to apply independent `pushthrough` scaling on each
       side instead of treating the pair as if only one entity had a source-owned
       pushthrough value. The native helper continues to preserve the zero-value
       compatibility wrapper while matching the version-owned per-entity impulse
-      boundary. [parity: deviates, D-097]
+      boundary.
 - [x] Match the modern water travel climbable branch: horizontal collision
       raises the post-move vertical component before water drag/falling
       adjustment; lava retains its separate shallow/deep path.
@@ -676,20 +676,20 @@
         no-physics and driven by collision-shape intersection. [parity: deviates, D-082]
 - [ ] Port piston movement and entity displacement.
 - [ ] Port entity push and collision with other entities.
-  - [ ] Expose a concrete-version N-API entity-push operation with explicit
-        no-physics, vehicle, pushability, passenger, and pushthrough inputs. [parity: partial, D-097]
-  - [ ] Select legacy `pushthrough` behavior from the audited concrete release;
-        modern releases explicitly ignore the removed source field. [parity: deviates, D-097]
-  - [ ] Integrate pairwise entity push into a concrete versioned multi-entity
+  - [x] Expose a concrete-version N-API entity-push operation with explicit
+        no-physics, vehicle, pushability, passenger, and pushthrough inputs.
+  - [x] Select legacy `pushthrough` behavior from the audited concrete release;
+        modern releases explicitly ignore the removed source field.
+  - [x] Integrate pairwise entity push into a concrete versioned multi-entity
         tick pipeline, including same-vehicle passenger exclusion and explicit
-        pushthrough ownership. [parity: deviates, D-094, D-098]
+        pushthrough ownership.
   - [x] Gate pairwise pushes on actual three-dimensional bounding-box overlap,
         matching the collision candidate boundary instead of pushing arbitrary
         nearby entities.
-  - [ ] Match `Entity.push(Entity)`'s double-precision normalization and
-        float impulse constant without introducing extra binary32 rounding. [parity: partial, D-097]
-  - [ ] Add source-backed horizontal `Entity.push(Entity)` impulse calculation
-        with threshold, binary32 scaling, and physics/vehicle/pushability gates. [parity: partial, D-097]
+  - [x] Match `Entity.push(Entity)`'s double-precision normalization and
+        float impulse constant without introducing extra binary32 rounding.
+  - [x] Add source-backed horizontal `Entity.push(Entity)` impulse calculation
+        with threshold, binary32 scaling, and physics/vehicle/pushability gates.
   - [x] Skip pushes between passengers of the same vehicle, matching the
         1.21.11 `Entity.push(Entity)` relationship guard.
 - [ ] Port riding, passenger offsets, dismount checks, and vehicle attachment.
