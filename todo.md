@@ -407,9 +407,9 @@
       post-movement, effects, fall distance, and event phases.
 - [ ] Implement deterministic random state where random values affect physics.
 - [ ] Implement entity age, tick counters, and cooldowns that affect movement.
-- [ ] Implement source-backed passenger/vehicle update ordering and rotated
+- [x] Implement source-backed passenger/vehicle update ordering and rotated
       passenger offsets for the native boat path (`Entity.positionRider` and
-      the vehicle riding-position hook are applied after vehicle movement). [parity: deviates, D-121]
+      the vehicle riding-position hook are applied after vehicle movement).
 - [ ] Implement loaded/unloaded chunk behavior and client prediction behavior.
 - [ ] Implement world-border and dimension boundary behavior.
 - [ ] Implement portal and teleport state where it affects movement.
@@ -1031,20 +1031,20 @@
 - [x] Separate native boat control acceleration from status physics so the
       world-aware path applies vanilla drag exactly once per tick.
 - [ ] Port boat bubble columns, waves, fall, and collision behavior.
-- [ ] Route boat water status, buoyancy, and block clipping through the native
+- [x] Route boat water status, buoyancy, and block clipping through the native
       world snapshot; source-specific bubble/wave and full status handling
-      remains open. [parity: partial, D-111, D-119]
-- [ ] Preserve native boat bubble-column state across ticks and apply the
-      source-derived 60-tick activation and directional launch impulse. [parity: not-implemented, D-118]
-- [ ] Forward player-passenger state to native boat bubble handling and apply
-      the source 2.7 upward launch impulse for player passengers. [parity: not-implemented, D-118]
+      remains open.
+- [x] Preserve native boat bubble-column state across ticks and apply the
+      source-derived 60-tick activation and directional launch impulse.
+- [x] Forward player-passenger state to native boat bubble handling and apply
+      the source 2.7 upward launch impulse for player passengers.
 - [x] Apply native boat horizontal and vertical collision results back through
       the N-API state boundary.
 - [x] Return native boat ground-contact state and apply it to Mineflayer.
 - [x] Return native horse ground-contact state and apply it to Mineflayer.
 - [x] Clear stale native vehicle ground contact before each movement tick;
       only downward collision restores `onGround`.
-- [ ] Derive native horse water state from the world snapshot before movement. [parity: partial, D-111, D-115]
+- [x] Derive native horse water state from the world snapshot before movement.
 - [x] Return the source-derived boat water surface level through the native
       boundary and preserve it in `BoatState.waterLevel`.
 - [x] Preserve boat status transitions across ticks and perform the
@@ -1054,8 +1054,8 @@
       buoyancy/drag behavior through the native boundary.
 - [ ] Regression-test source and flowing-water status classification. [parity: non-physics-false]
 - [x] Regression-test native boat horizontal collision against a full block.
-- [ ] Port source-backed boat passenger positioning and yaw-aware offset
-      rotation. [parity: deviates, D-121]
+- [x] Port source-backed boat passenger positioning and yaw-aware offset
+      rotation.
 - [ ] Port horse, donkey, mule, skeleton horse, and zombie horse travel.
 - [x] Route horse movement through native world collision resolution and return
       native collision flags through the state boundary.
@@ -1075,8 +1075,8 @@
       where movement differs.
 - [ ] Port post-1.21.2 experimental/reworked minecart behavior when supported.
 - [ ] Port mount/flying behavior introduced in later versions.
-- [ ] Port source-backed vehicle passenger update ordering: move the vehicle
-      before attaching the passenger position. [parity: partial, D-121]
+- [x] Port source-backed vehicle passenger update ordering: move the vehicle
+      before attaching the passenger position.
 
 ## Projectiles and moving entities
 
