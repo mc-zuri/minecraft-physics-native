@@ -90,33 +90,33 @@
       validate the native-only distribution.
 - [ ] Re-run targeted validation after every substantive physics behavioral fix;
       do not claim parity completion while the behavior test matrix remains red.
-- [ ] Specialize the modern firework rocket tick path to the Java source
+- [x] Specialize the modern firework rocket tick path to the Java source
       ordering: skip the boost when `shotAtAngle` is set, use the 1.15/1.0
       horizontal scaling unless the entity is already horizontally colliding,
-      and add the source `+0.04` upward acceleration before gravity/inertia. [parity: deviates, D-135]
+      and add the source `+0.04` upward acceleration before gravity/inertia.
 - [x] Expand the explicit projectile family registry to cover the common
       source-derived thrown and fireball families used across the supported
       versions (`small_fireball`, `wither_skull`, `experience_bottle`,
       `llama_spit`, and aliases from modern decompiled names).
-- [ ] Ensure family-specific projectile defaults are resolved from the source
+- [x] Ensure family-specific projectile defaults are resolved from the source
       registry before fallbacks, so `llama_spit`, `shulker_bullet`, and other
       modern families use their Java-backed gravity/drag values instead of the
-      generic projectile defaults when the caller omits explicit overrides. [parity: partial, D-135]
-- [ ] Correct source gravity defaults for thrown potions, experience bottles,
-      and firework rockets from the authoritative projectile classes. [parity: partial, D-133]
-- [ ] Correct source gravity defaults for fishing hooks and fireball-family
-      projectiles, which inherit zero gravity or apply their own hook gravity. [parity: deviates, D-135]
-- [ ] Correct source inertia defaults for firework, fireball-family, and
-      fishing-hook projectile classes. [parity: deviates, D-134]
-- [ ] Preserve `AbstractHurtingProjectile` power acceleration and apply it
-      after movement using the source inertia ordering. [parity: deviates, D-134]
-- [ ] Normalize namespaced and alias-style modern projectile IDs before family
+      generic projectile defaults when the caller omits explicit overrides.
+- [x] Correct source gravity defaults for thrown potions, experience bottles,
+      and firework rockets from the authoritative projectile classes.
+- [x] Correct source gravity defaults for fishing hooks and fireball-family
+      projectiles, which inherit zero gravity or apply their own hook gravity.
+- [x] Correct source inertia defaults for firework, fireball-family, and
+      fishing-hook projectile classes.
+- [x] Preserve `AbstractHurtingProjectile` power acceleration and apply it
+      after movement using the source inertia ordering.
+- [x] Normalize namespaced and alias-style modern projectile IDs before family
       dispatch, so `minecraft:small_fireball`, `minecraft:firework_rocket`,
       `fire_charge`, and `large_fireball` resolve to their intended Java
-      projectile families without drifting to `Generic`. [parity: partial, D-143]
-- [ ] Harden the projectile-family resolver for `entity:` prefixes, dotted IDs,
+      projectile families without drifting to `Generic`.
+- [x] Harden the projectile-family resolver for `entity:` prefixes, dotted IDs,
       and common legacy alias forms like `big_fireball`, `dragon_fireball`, and
-      namespaced modern firework IDs before source fallback is considered. [parity: partial, D-143]
+      namespaced modern firework IDs before source fallback is considered.
 - [ ] Correct `Entity.push` to apply independent `pushthrough` scaling on each
       side instead of treating the pair as if only one entity had a source-owned
       pushthrough value. The native helper continues to preserve the zero-value
@@ -344,10 +344,10 @@
       helper methods.
 - [x] Inventory `Player` and `LocalPlayer` movement and prediction methods.
 - [ ] Inventory tracked vehicle movement overrides. [parity: non-physics-false]
-- [ ] Extract the generic projectile tick slice from
+- [x] Extract the generic projectile tick slice from
       `ThrowableProjectile.tick`: gravity, air inertia, swept block hit, and
       move-vector position update are now source-backed in native Rust,
-      including the source-specific water inertia branch. [parity: deviates, D-133, D-138]
+      including the source-specific water inertia branch.
 - [x] Expose the generic projectile tick through the safe N-API/TypeScript
       boundary and cover hit detection and invalid input in the native smoke
       test.
@@ -1082,11 +1082,11 @@
 
 - [ ] Port arrow, spectral arrow, tipped arrow, trident, snowball, egg, pearl,
       potion, firework, fishing hook, and other projectile motion.
-- [ ] Preserve the 26.2 `ThrowableProjectile` first-tick bubble-column
+- [x] Preserve the 26.2 `ThrowableProjectile` first-tick bubble-column
       interaction before gravity/inertia, including above-column and inside-
-      column vertical limits. [parity: partial, D-138]
-- [ ] Gate first-tick bubble-column handling to the source-backed 26.1+
-      projectile implementation; legacy releases use the pre-26.1 tick order. [parity: deviates, D-133, D-138]
+      column vertical limits.
+- [x] Gate first-tick bubble-column handling to the source-backed 26.1+
+      projectile implementation; legacy releases use the pre-26.1 tick order.
 - [ ] Match `Mth.clamp(double, ...)` NaN propagation in the shared native math
       layer and cover the boundary with a regression. [parity: partial]
 - [x] Match `AABB.clip` strict face-coordinate bounds and source tolerance in
@@ -1103,29 +1103,29 @@
       smoke integration path.
 - [x] Exercise native boat `deltaRotation` propagation through the smoke
       integration path.
-- [ ] Add a source-specialized arrow tick path with in-ground state and the
-      26.2 water/air/gravity ordering. [parity: deviates, D-136, D-139, D-142]
+- [x] Add a source-specialized arrow tick path with in-ground state and the
+      26.2 water/air/gravity ordering.
 - [x] Use the 26.2 `AbstractArrow` `WATER_INERTIA = 0.6F` constant for the
       specialized arrow default, independently of living-entity water drag.
 - [ ] Carry the arrow `life` counter and 1200-tick in-ground despawn boundary. [parity: partial]
-- [ ] Carry arrow `inGroundTime` and `shakeTime` lifecycle state through the
-      native boundary. [parity: deviates, D-141]
+- [x] Carry arrow `inGroundTime` and `shakeTime` lifecycle state through the
+      native boundary.
 - [x] Initialize the source seven-tick arrow shake window when a block impact
       transitions the arrow into the ground.
-- [ ] Implement the source arrow `startFalling` transition when the embedded
+- [x] Implement the source arrow `startFalling` transition when the embedded
       collision shape disappears, with an explicit deterministic impulse
-      boundary. [parity: deviates, D-140]
-- [ ] Carry the supporting block-state identity so replacement collision
-      shapes trigger the source `lastState` change branch. [parity: deviates, D-140]
-- [ ] Add a source-specialized trident motion path with the 26.1.2/modern
-      water inertia (`0.99F`), gravity, drag, and block-trace ordering. [parity: deviates, D-137]
+      boundary.
+- [x] Carry the supporting block-state identity so replacement collision
+      shapes trigger the source `lastState` change branch.
+- [x] Add a source-specialized trident motion path with the 26.1.2/modern
+      water inertia (`0.99F`), gravity, drag, and block-trace ordering.
 - [x] Repair the native N-API trident export nesting bug and revalidate the
       native suite after the fix.
-- [ ] Add explicit projectile-family dispatch tags for common thrown-item
+- [x] Add explicit projectile-family dispatch tags for common thrown-item
       families (snowball, egg, ender pearl, potion, firework, fishing hook,
-      etc.) while preserving the shared `ThrowableProjectile` ordering. [parity: deviates, D-135]
-- [ ] Port the 26.2 firework rocket acceleration rule: horizontal boost
-      scaling and the upward `+0.04` impulse before gravity/inertia. [parity: partial, D-135]
+      etc.) while preserving the shared `ThrowableProjectile` ordering.
+- [x] Port the 26.2 firework rocket acceleration rule: horizontal boost
+      scaling and the upward `+0.04` impulse before gravity/inertia.
 - [ ] Port projectile gravity, drag, water drag, and collision.
 - [ ] Port projectile target tolerance and version-specific changes.
 - [ ] Port entity hitboxes and block hitboxes for projectile ray tracing.
