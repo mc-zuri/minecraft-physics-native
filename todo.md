@@ -128,11 +128,11 @@
 - [x] Carry the source `FALL_DAMAGE_IMMUNE` entity boundary into the native
       state bridge and short-circuit fall-damage calculation before applying
       safe-distance or multiplier arithmetic.
-- [ ] Route the source modern safe-fall-distance/fall-power calculation through
+- [x] Route the source modern safe-fall-distance/fall-power calculation through
       the dedicated 26.1, 26.1.1, 26.1.2, and 26.2 profiles; legacy releases
-      retain their source-specific three-block and jump-boost formula. [parity: deviates, D-004]
-- [ ] Apply the legacy Jump Boost amplifier to pre-modern fall-damage power
-      before the profile-owned rounding operation. [parity: partial, D-004]
+      retain their source-specific three-block and jump-boost formula.
+- [x] Apply the legacy Jump Boost amplifier to pre-modern fall-damage power
+      before the profile-owned rounding operation.
 - [ ] Wire the fall-damage-immunity boundary through `IEntityState`,
       `EntityState`, `PlayerState`, and the native TypeScript adapter so the
       source-derived native calculation is reachable from runtime state. [parity: non-physics-false]
@@ -157,13 +157,13 @@
 - [ ] Gate the block fall callback event on the explicit local-control
       boundary, matching `Entity.move` rather than emitting it for remote
       entities. [parity: partial, D-026]
-- [ ] Add the source `Entity.move` fall-damage-resetting ray boundary:
+- [x] Add the source `Entity.move` fall-damage-resetting ray boundary:
       typed block state, deterministic world sweep, movement-length threshold,
-      and reset-before-accumulation ordering. [parity: deviates, D-003]
-- [ ] Expose fall-damage-resetting membership on shape-based N-API world
-      updates so the typed source boundary is reachable from runtime callers. [parity: partial, D-003]
-- [ ] Apply the post-movement water guard from `Entity.checkFallDamage` before
-      accumulating downward fall distance. [parity: deviates, D-001]
+      and reset-before-accumulation ordering.
+- [x] Expose fall-damage-resetting membership on shape-based N-API world
+      updates so the typed source boundary is reachable from runtime callers.
+- [x] Apply the post-movement water guard from `Entity.checkFallDamage` before
+      accumulating downward fall distance.
 - [x] Replace center-cell support-effect lookup with a source-shaped underside
       support query over the entity footprint, including multi-shape blocks.
 - [x] Add the player source `maybeBackOffFromEdge` collision branch for
@@ -176,9 +176,9 @@
 - [ ] Expose the 26.2 downward-clipping block-fall callback as a typed state
       event through the native and TypeScript bridges without inventing block
       side effects. [parity: partial, D-026]
-- [ ] Add explicit native and TypeScript support for the available 26.1,
+- [x] Add explicit native and TypeScript support for the available 26.1,
       26.1.1, and 26.2 source-backed entries, with the modern floor-damage
-      and split-fluid handling aligned to the current source evidence. [parity: partial, D-001]
+      and split-fluid handling aligned to the current source evidence.
 - [x] Add dedicated 26.1.2 native and TypeScript dispatch after confirming its
       core movement source is byte-identical to 26.1.1; retain the broader
       parity work as an open task.
@@ -205,11 +205,11 @@
       dedicated native and TypeScript versions. [parity: non-physics-false]
 - [ ] Add the complete locally available 1.20 release as a dedicated native
       and TypeScript version. [parity: non-physics-false]
-- [ ] Make landing-damage rounding an explicit version-policy operation with
-      direct ceil/floor tests instead of embedding one universal rounding rule. [parity: partial, D-004]
-- [ ] Give all currently registered 1.21 releases dedicated native modules;
+- [x] Make landing-damage rounding an explicit version-policy operation with
+      direct ceil/floor tests instead of embedding one universal rounding rule.
+- [x] Give all currently registered 1.21 releases dedicated native modules;
       1.21.8, 1.21.10, and 1.21.11 explicitly select the source-observed
-      floor landing-damage policy. [parity: partial, D-004]
+      floor landing-damage policy.
 - [x] Remove the generated native version-wrapper dispatch path; every
       currently registered version now dispatches to an explicit module.
 - [x] Remove the generated native rules table and package command; version
@@ -696,14 +696,14 @@
 - [ ] Port teleport, interpolation, and synchronization state where exposed.
 - [ ] Port fire, freezing, powder snow, and environmental movement effects.
 - [ ] Port fall-distance accumulation and landing reset.
-  - [ ] Preserve vanilla `checkFallDistanceAccumulation`'s strict `>-0.5`
-        and `>1.0` thresholds during fall-flying updates. [parity: deviates, D-006]
-  - [ ] Reset fall distance when Slow Falling or Levitation is active before
-        movement, matching `LivingEntity.travel` ordering. [parity: deviates, D-007]
+  - [x] Preserve vanilla `checkFallDistanceAccumulation`'s strict `>-0.5`
+        and `>1.0` thresholds during fall-flying updates.
+  - [x] Reset fall distance when Slow Falling or Levitation is active before
+        movement, matching `LivingEntity.travel` ordering.
 - [ ] Port safe-fall-distance and fall-damage calculations.
-  - [ ] Preserve safe-fall-distance through native simulation/N-API state and
-        subtract it from landing damage thresholds. [parity: deviates, D-004]
-  - [ ] Round native landing damage upward with the source `ceil` behavior. [parity: deviates, D-004]
+  - [x] Preserve safe-fall-distance through native simulation/N-API state and
+        subtract it from landing damage thresholds.
+  - [x] Round native landing damage upward with the source `ceil` behavior.
 - [ ] Port entity dimensions and pose refresh transitions.
   - [ ] Add a concrete versioned pose-refresh operation with source-ordered
         requested/sneaking/swimming fallback and collision-box validation. [parity: deviates, D-153]
@@ -801,8 +801,8 @@
         `0.42` fallback when the attribute is unavailable. [parity: partial, D-064]
   - [x] Resolve a finite `step_height` attribute before using the state/config
         fallback for collision stepping.
-  - [ ] Forward `safe_fall_distance` when present and use the source `3.0`
-        default for releases introducing the modern safe-fall attribute. [parity: deviates, D-004]
+  - [x] Forward `safe_fall_distance` when present and use the source `3.0`
+        default for releases introducing the modern safe-fall attribute.
   - [ ] Add the modern `movement_efficiency` attribute to the typed native
         boundary and apply its Soul Speed block-friction behavior from the
         1.21.4/26.x source breakpoint. [parity: partial, D-018]
@@ -814,7 +814,7 @@
   - [x] Keep the Speed/Slowness amplifier levels separate from the base
         movement-speed attribute at the TypeScript/native boundary.
   - [ ] Apply source-derived Levitation amplifier targets and easing in native
-        movement. [parity: partial, D-007, D-063]
+        movement. [parity: partial, D-063]
   - [ ] Apply the source-derived Slow Falling gravity cap (`min(gravity, 0.01)`)
         rather than a default-gravity-only multiplier. [parity: partial, D-065]
   - [ ] Preserve the Levitation amplifier through the native N-API and
