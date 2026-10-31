@@ -154,9 +154,9 @@
       `fallDamageImmune`, `fallDamageMultiplier`, `entityBounciness`,
       `blockBounciness`, and `controlledByLocalInstance`) when writing state
       back to bot/entity instances, rather than dropping those runtime fields. [parity: non-physics-false]
-- [ ] Gate the block fall callback event on the explicit local-control
+- [x] Gate the block fall callback event on the explicit local-control
       boundary, matching `Entity.move` rather than emitting it for remote
-      entities. [parity: partial, D-026]
+      entities.
 - [x] Add the source `Entity.move` fall-damage-resetting ray boundary:
       typed block state, deterministic world sweep, movement-length threshold,
       and reset-before-accumulation ordering.
@@ -168,14 +168,14 @@
       support query over the entity footprint, including multi-shape blocks.
 - [x] Add the player source `maybeBackOffFromEdge` collision branch for
       sneaking movement, including 0.05 stepping and max-down-step checks.
-- [ ] Extend `SimulationState` and the N-API bridge with typed entity/block
+- [x] Extend `SimulationState` and the N-API bridge with typed entity/block
       bounciness inputs and route the dedicated 26.2 restitution path without
       defaults. `BlockState.bounce_restitution` is now carried by world
       updates and consumed by the 26.2 restitution path; the source
-      bounce-suppression tag is also a typed boundary. [parity: partial, D-021]
-- [ ] Expose the 26.2 downward-clipping block-fall callback as a typed state
+      bounce-suppression tag is also a typed boundary.
+- [x] Expose the 26.2 downward-clipping block-fall callback as a typed state
       event through the native and TypeScript bridges without inventing block
-      side effects. [parity: partial, D-026]
+      side effects.
 - [x] Add explicit native and TypeScript support for the available 26.1,
       26.1.1, and 26.2 source-backed entries, with the modern floor-damage
       and split-fluid handling aligned to the current source evidence.
@@ -803,9 +803,9 @@
         fallback for collision stepping.
   - [x] Forward `safe_fall_distance` when present and use the source `3.0`
         default for releases introducing the modern safe-fall attribute.
-  - [ ] Add the modern `movement_efficiency` attribute to the typed native
+  - [x] Add the modern `movement_efficiency` attribute to the typed native
         boundary and apply its Soul Speed block-friction behavior from the
-        1.21.4/26.x source breakpoint. [parity: partial, D-018]
+        1.21.4/26.x source breakpoint.
   - [x] Carry modern `air_drag_modifier` and `friction_modifier` attributes
         through the native boundary, including their source defaults and
         modified-friction formula.
@@ -824,9 +824,9 @@
 - [ ] Implement equipment and enchantment modifiers.
 - [ ] Implement Depth Strider, Soul Speed, Swift Sneak, Frost Walker, and all
       movement-relevant enchantments per version.
-  - [ ] Preserve Soul Speed through the typed state boundary; retain the
+  - [x] Preserve Soul Speed through the typed state boundary; retain the
         legacy block-speed override and apply the modern movement-efficiency
-        plus level-based movement-speed effects at their source breakpoint. [parity: partial, D-018, D-025]
+        plus level-based movement-speed effects at their source breakpoint.
   - [x] Apply the typed `sneaking_speed` attribute for sneaking movement,
         retaining the vanilla `0.3` default when absent.
 - [ ] Implement effect interactions with fluids, blocks, poses, and vehicles.
@@ -930,14 +930,14 @@
 - [ ] Generate every block-state outline/support shape used by movement.
 - [ ] Generate friction and slipperiness exactly.
 - [ ] Implement ice, packed ice, blue ice, and version-specific slipperiness.
-- [ ] Distinguish source-backed soul sand speed-factor ordering from soul soil,
-      which has no movement speed factor. [parity: partial, D-018]
+- [x] Distinguish source-backed soul sand speed-factor ordering from soul soil,
+      which has no movement speed factor.
 - [ ] Implement honey block movement and side adhesion.
   - [x] Implement source-backed edge-slide detection across adjacent honey
         blocks, horizontal throttling, vertical slide velocity, and fall reset.
 - [ ] Implement slime block bounce and sneaking behavior.
-  - [ ] Implement source-backed sneaking suppression, living/non-living bounce
-        scaling, and step-on horizontal damping for the supported movement path. [parity: partial, D-021]
+  - [x] Implement source-backed sneaking suppression, living/non-living bounce
+        scaling, and step-on horizontal damping for the supported movement path.
   - [x] Expose the source `isSteppingCarefully` gate so slime step-on damping
         is independently suppressible from generic sneaking state.
   - [x] Use the post-collision support block and suppress fall distance/damage
@@ -948,12 +948,12 @@
   - [x] Skip stuck-block multipliers only for flying players, matching the
         source `Player.makeStuckInBlock` guard while preserving base entity
         behavior for other flying entities.
-  - [ ] Expose the modern Weaving effect and apply its source
-        `(0.5, 0.25, 0.5)` multiplier. [parity: partial, D-022]
+  - [x] Expose the modern Weaving effect and apply its source
+        `(0.5, 0.25, 0.5)` multiplier.
 - [x] Expose sweet-berry-bush immunity for source entities such as foxes and
       bees while preserving the vanilla multiplier for affected living entities.
   - [x] Return world-derived cobweb occupancy through native state updates.
-- [ ] Implement ladders, vines, scaffolding, and climbable blocks. [parity: deviates, D-019]
+- [x] Implement ladders, vines, scaffolding, and climbable blocks.
 - [ ] Implement source-backed powder-snow stuck movement multiplier
       (`0.9, 1.5, 0.9`) and fall-distance reset. [parity: partial, D-020]
 - [ ] Implement source-backed sweet-berry-bush stuck movement multiplier
@@ -970,9 +970,9 @@
         outside the movement-only adapter boundary.
 - [ ] Implement berry bush, cactus, magma, campfire, and damage surfaces where
       movement state is affected.
-  - [ ] Expose source-specific cactus/campfire/magma contact damage as a
+  - [x] Expose source-specific cactus/campfire/magma contact damage as a
         deterministic native damage signal, including lit-campfire gating and
-        sneaking magma immunity. [parity: partial, D-023]
+        sneaking magma immunity.
   - [x] Preserve the vanilla soul-campfire fire-damage value of `2.0`, distinct
         from the normal campfire/cactus value of `1.0`.
   - [ ] Model fire and soul-fire contact damage (`1.0`/`2.0`) and clear
