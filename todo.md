@@ -420,18 +420,18 @@
 - [ ] Implement Java-compatible vector arithmetic.
   - [x] Add vector subtraction alongside existing addition and scalar
         operations for exact AABB geometry composition.
-  - [ ] Add vanilla vector-to, reverse, component multiplication, horizontal,
-        distance, interpolation, and axis-rotation operations. [parity: partial, D-152]
-  - [ ] Add vanilla pitch/yaw direction-vector construction using the
-        quantized trigonometric lookup path. [parity: deviates, D-150]
-  - [ ] Add vanilla clockwise quarter-turn, projection, and finite-value
-        vector operations. [parity: partial, D-152]
-  - [ ] Add vanilla scalar/component offsets, proximity checks, and vector
-        rotation extraction. [parity: partial, D-152]
+  - [x] Add vanilla vector-to, reverse, component multiplication, horizontal,
+        distance, interpolation, and axis-rotation operations.
+  - [x] Add vanilla pitch/yaw direction-vector construction using the
+        quantized trigonometric lookup path.
+  - [x] Add vanilla clockwise quarter-turn, projection, and finite-value
+        vector operations.
+  - [x] Add vanilla scalar/component offsets, proximity checks, and vector
+        rotation extraction.
 - [ ] Implement Java-compatible trigonometric functions and angle conversion.
-  - [ ] Implement vanilla `Mth` sine/cosine lookup quantization and float
+  - [x] Implement vanilla `Mth` sine/cosine lookup quantization and float
         degree-to-radian conversion, and consume the shared direction-vector
-        implementation for player look vectors. [parity: partial, D-145]
+        implementation for player look vectors.
 - [ ] Implement normalization, length, horizontal length, dot products, and
       cross products.
   - [x] Implement vector length, horizontal-length, dot, cross, and squared
@@ -440,23 +440,23 @@
 - [ ] Implement exact floor, ceil, round, clamp, and epsilon semantics.
   - [x] Implement vanilla double floor/ceil, clamp, and degree wrapping
         helpers with negative and boundary regression coverage.
-  - [ ] Add long floor/ceil, integer and long clamps, positive modulo,
-        fractional extraction, and degree-difference helpers. [parity: partial, D-151]
-  - [ ] Implement vanilla clamped linear interpolation, epsilon equality,
-        and half-up integer rounding helpers. [parity: partial, D-151]
+  - [x] Add long floor/ceil, integer and long clamps, positive modulo,
+        fractional extraction, and degree-difference helpers.
+  - [x] Implement vanilla clamped linear interpolation, epsilon equality,
+        and half-up integer rounding helpers.
   - [x] Add vanilla linear interpolation, inverse interpolation, and
         absolute-maximum numeric helpers.
-  - [ ] Add vanilla angle approach/rotation and power-of-two/logarithm
-        helpers used by movement and indexed geometry code. [parity: partial, D-151, D-152]
-  - [ ] Add vanilla chessboard distance, floor division, divisibility, and
-        packed-degree helpers for grid and network-facing calculations. [parity: partial, D-151]
-  - [ ] Add vanilla square/cube, mapped interpolation, component length,
-        positive ceiling division, round-toward, and quantization helpers. [parity: partial, D-151]
-  - [ ] Add vanilla bilinear/trilinear interpolation, Catmull-Rom,
-        smoothstep, sign, rotational interpolation, and triangle-wave helpers. [parity: partial, D-152]
-  - [ ] Add vanilla integer/discrete interpolation, smallest-square sizing,
-        absolute angle differences, and deterministic block seed helpers. [parity: deviates, D-147]
-  - [ ] Add vanilla binary-search and MurmurHash3 mixer utilities. [parity: deviates, D-147]
+  - [x] Add vanilla angle approach/rotation and power-of-two/logarithm
+        helpers used by movement and indexed geometry code.
+  - [x] Add vanilla chessboard distance, floor division, divisibility, and
+        packed-degree helpers for grid and network-facing calculations.
+  - [x] Add vanilla square/cube, mapped interpolation, component length,
+        positive ceiling division, round-toward, and quantization helpers.
+  - [x] Add vanilla bilinear/trilinear interpolation, Catmull-Rom,
+        smoothstep, sign, rotational interpolation, and triangle-wave helpers.
+  - [x] Add vanilla integer/discrete interpolation, smallest-square sizing,
+        absolute angle differences, and deterministic block seed helpers.
+  - [x] Add vanilla binary-search and MurmurHash3 mixer utilities.
   - [x] Add vanilla bounded `outFromOrigin` traversal with explicit invalid
         range and step validation.
   - [x] Add fraction multiplication/truncation with Java integer overflow and
@@ -487,13 +487,13 @@
       calculations with regression coverage.
 - [x] Implement vanilla epsilon-aware AABB segment clipping for ray
       intersections with regression coverage.
-- [ ] Implement vanilla ray-versus-AABB broad-phase intersection tests with
-      axis-separation and cross-product regression coverage. [parity: deviates, D-146]
+- [x] Implement vanilla ray-versus-AABB broad-phase intersection tests with
+      axis-separation and cross-product regression coverage.
 - [x] Implement a source-aligned voxel-shape container as deterministic unions
       of indexed boxes without unauthorized simplification.
 - [x] Add vanilla-style empty and aggregate-bounds queries for voxel shapes.
-- [ ] Add indexed-box `VoxelShape.collide` axis resolution with vanilla
-      sub-`1.0E-7` handling and empty-shape passthrough. [parity: partial, D-149]
+- [x] Add indexed-box `VoxelShape.collide` axis resolution with vanilla
+      sub-`1.0E-7` handling and empty-shape passthrough.
 - [x] Wire indexed voxel shapes into world block collision queries.
 - [x] Preserve vanilla empty-shape semantics by removing collision geometry
       when an empty voxel shape is assigned.
