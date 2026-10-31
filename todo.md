@@ -355,7 +355,7 @@
 - [ ] Extract entity dimensions, poses, eye heights, and passenger offsets.
   - [ ] Add source-backed player crouching, swimming, fall-flying, spin attack,
         long-jumping, dying, and sleeping dimensions plus pose-specific eye
-        heights. [parity: deviates, D-058, D-153]
+        heights. [parity: deviates, D-153]
   - [ ] Match the source pose ordinal table, including spin attack, and reject
         out-of-range pose ordinals instead of assigning unsupported dimensions;
         preserve historical `DYING` ordinals through explicit version context
@@ -717,7 +717,7 @@
 - [ ] Port `LocalPlayer` input and prediction-specific movement.
 - [ ] Port base movement speed and all attribute modifiers.
 - [ ] Port sprinting requirements, sprint transitions, and sprint multiplier.
-  - [ ] Disable effective sprint acceleration while sneaking or using an item. [parity: partial, D-045, D-048]
+  - [x] Disable effective sprint acceleration while sneaking or using an item.
 - [ ] Port sneaking movement and edge-safe movement.
 - [ ] Port jumping, jump delay, jump cooldown, and jump cancellation.
   - [x] Implement water/lava jump impulse and climbable jump-up behavior.
@@ -741,8 +741,8 @@
   - [x] Encode the audited 1.21.1+ water-movement-efficiency interpolation
         divisor (`1.0`) separately from the 1.14-1.20.6 divisor (`3.0`) in
         every concrete version profile.
-- [ ] Port versioned pose transition collision checks and integrate the
-      requested/fallback pose refresh into the native player tick path. [parity: partial, D-040]
+- [x] Port versioned pose transition collision checks and integrate the
+      requested/fallback pose refresh into the native player tick path.
 - [ ] Port crawling-specific pose selection and swimming acceleration.
   - [x] Match the modern `updatePlayerPose` swimming-fit guard and preserve
         the current pose when the reduced swimming box cannot fit.
