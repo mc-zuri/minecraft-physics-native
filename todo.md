@@ -23,16 +23,16 @@
       adapter-side attribute extraction. [parity: partial, D-156]
 - [ ] Add differential runtime fixtures proving legacy Depth Strider and modern
       water-efficiency behavior independently for every supported release. [parity: non-physics-false]
-- [ ] Populate modern movement-efficiency, air-drag, and friction attributes
+- [x] Populate modern movement-efficiency, air-drag, and friction attributes
       at the PlayerState boundary using explicit normalized aliases, preserving
-      modifier resolution rather than relying on suffix matches. [parity: partial, D-064, D-066]
-- [ ] Apply the same explicit attribute forwarding to generic EntityState
+      modifier resolution rather than relying on suffix matches.
+- [x] Apply the same explicit attribute forwarding to generic EntityState
       updates; do not let an initialized empty attribute map mask Mineflayer
-      entity attributes. [parity: deviates, D-068]
+      entity attributes.
 - [x] Forward modern water-movement-efficiency attributes for generic living
       entities as well as players.
-- [ ] Accept compact Mineflayer attribute objects without an empty modifier
-      array while retaining vanilla modifier operation ordering. [parity: deviates, D-066, D-067]
+- [x] Accept compact Mineflayer attribute objects without an empty modifier
+      array while retaining vanilla modifier operation ordering.
 - [x] Add native regressions for modern air-drag interpolation and ground
       friction-modifier behavior.
 - [x] Preserve explicit zero-valued modern drag/friction modifiers across the
@@ -394,8 +394,8 @@
       EntityState and PlayerState prediction clones and merges. [parity: partial]
 - [ ] Import the Mineflayer entity no-gravity flag when constructing native
       entity state snapshots. [parity: non-physics-false, D-057]
-- [ ] Reject non-finite or out-of-range per-entity gravity and step-height
-      values at the native API boundary. [parity: non-physics-false, D-069]
+- [x] Reject non-finite or out-of-range per-entity gravity and step-height
+      values at the native API boundary.
 - [x] Apply runtime gravity, drag, and step-height configuration with explicit
       precedence below per-entity attribute overrides.
 - [ ] Represent exact numeric types and conversion boundaries used by each
@@ -727,7 +727,7 @@
   - [x] Apply sprint-jump forward impulse using the entity yaw.
   - [x] Keep player base jump strength at `0.42` and apply Jump Boost as
         the separate source-derived amplifier bonus.
-  - [ ] Avoid narrowing/overflow when applying the N-API amplifier byte. [parity: deviates, D-063]
+  - [x] Avoid narrowing/overflow when applying the N-API amplifier byte.
 - [ ] Port air, ground, water, lava, and climbable movement.
   - [x] Apply the source `getFrictionInfluencedSpeed` ground-input formula
         before collision movement on high-slipperiness blocks.
@@ -788,17 +788,17 @@
 - [ ] Implement the complete movement-relevant attribute system.
 - [ ] Implement base values, additive modifiers, multiplicative modifiers, and
       operation order.
-  - [ ] Resolve Mineflayer attribute objects using Java's operation order:
+  - [x] Resolve Mineflayer attribute objects using Java's operation order:
         additive base, additive-base multipliers, then multiplicative-total
-        modifiers. [parity: partial, D-066]
-  - [ ] Forward the server-provided movement-speed attribute instead of
-        confusing the Speed effect amplifier with the base attribute. [parity: partial, D-064]
+        modifiers.
+  - [x] Forward the server-provided movement-speed attribute instead of
+        confusing the Speed effect amplifier with the base attribute.
 - [ ] Implement version-specific attribute names and defaults.
 - [ ] Implement movement speed, gravity, step height, safe fall distance, scale,
       jump strength, water movement efficiency, and attack-related movement
       attributes where present.
-  - [ ] Forward a finite player `jump_strength` attribute with the vanilla
-        `0.42` fallback when the attribute is unavailable. [parity: partial, D-064]
+  - [x] Forward a finite player `jump_strength` attribute with the vanilla
+        `0.42` fallback when the attribute is unavailable.
   - [x] Resolve a finite `step_height` attribute before using the state/config
         fallback for collision stepping.
   - [x] Forward `safe_fall_distance` when present and use the source `3.0`
@@ -813,12 +813,12 @@
       grace, conduit power, blindness, darkness, and movement-relevant effects.
   - [x] Keep the Speed/Slowness amplifier levels separate from the base
         movement-speed attribute at the TypeScript/native boundary.
-  - [ ] Apply source-derived Levitation amplifier targets and easing in native
-        movement. [parity: partial, D-063]
-  - [ ] Apply the source-derived Slow Falling gravity cap (`min(gravity, 0.01)`)
-        rather than a default-gravity-only multiplier. [parity: partial, D-065]
-  - [ ] Preserve the Levitation amplifier through the native N-API and
-        Mineflayer adapter boundary. [parity: partial, D-063]
+  - [x] Apply source-derived Levitation amplifier targets and easing in native
+        movement.
+  - [x] Apply the source-derived Slow Falling gravity cap (`min(gravity, 0.01)`)
+        rather than a default-gravity-only multiplier.
+  - [x] Preserve the Levitation amplifier through the native N-API and
+        Mineflayer adapter boundary.
 - [ ] Implement effect amplifier and duration semantics.
 - [ ] Implement effect tick ordering and expiration.
 - [ ] Implement equipment and enchantment modifiers.
