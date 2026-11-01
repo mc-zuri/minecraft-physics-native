@@ -51,12 +51,12 @@
 - [x] Distinguish directly overridden shape methods from inherited base methods
       while retaining inherited source traversal for literal/provenance analysis;
       absent overrides now return `null` at the native API boundary.
-- [x] Rebuild and smoke-test the corrected direct/inherited shape dispatch for
+- [ ] Rebuild and smoke-test the corrected direct/inherited shape dispatch for
       the generated 43-release data set; package declarations and native
-      artifacts validate successfully.
-- [x] Validate the regenerated native package and focused shape smoke suite
+      artifacts validate successfully. [parity: non-physics-false]
+- [ ] Validate the regenerated native package and focused shape smoke suite
       after the optimized release rebuild; inherited methods return `null`
-      instead of being exposed as direct overrides.
+      instead of being exposed as direct overrides. [parity: non-physics-false]
 - [x] Expose atomic per-method shape provenance containing the source hash,
       override presence, state-dependence flag, property dependencies, and
       extracted candidate count.
@@ -85,9 +85,9 @@
 - [x] Reduce generator memory retention by caching parsed method bodies per
       source string and method name rather than materializing duplicate
       source-sized cache keys.
-- [x] Keep the repo’s active runtime imports and path naming consistent with
+- [ ] Keep the repo’s active runtime imports and path naming consistent with
       the actual on-disk files; remove retired simulator/engine artifacts and
-      validate the native-only distribution.
+      validate the native-only distribution. [parity: non-physics-false]
 - [ ] Re-run targeted validation after every substantive physics behavioral fix;
       do not claim parity completion while the behavior test matrix remains red.
 - [x] Specialize the modern firework rocket tick path to the Java source
@@ -256,7 +256,7 @@
       behavior is identical.
 - [ ] Generate the version registry and TypeScript exports from the manifest.
 - [ ] Add 1.14.4, 1.15.2, and 1.16.5 as the first fully verified snapshots.
-- [ ] Add every missing release between 1.15 and 1.21.11.
+- [x] Add every missing release between 1.15 and 1.21.11.
 - [ ] Add 1.21.2 minecart/vehicle changes as a separate implementation when
       source behavior differs.
 - [ ] Add 1.21.5, 1.21.6, 1.21.9, and 1.21.11 breakpoints independently when
@@ -992,16 +992,16 @@
 ## Collision and stepping
 
 - [ ] Port vanilla swept movement against voxel shapes.
-- [ ] Port exact axis clipping order.
-- [ ] Port horizontal collision and vertical collision flags.
+- [x] Port exact axis clipping order.
+- [x] Port horizontal collision and vertical collision flags.
   - [x] Bridge version-gated local-player minor horizontal collision state
         through native Rust, N-API-RS, and TypeScript.
   - [x] Centralize the 1.18+ minor-collision version capability and concrete
         version parsing in the native version model.
   - [x] Preserve `verticalCollisionBelow` independently during native state
         conversion.
-- [ ] Port step-up candidate generation and selection.
-- [ ] Port step-down and landing behavior.
+- [x] Port step-up candidate generation and selection.
+- [x] Port step-down and landing behavior.
 - [ ] Port sneaking edge prevention.
 - [ ] Port collision behavior at exact block boundaries.
 - [ ] Port entity collision and push resolution.
@@ -1017,7 +1017,7 @@
   - [x] Port source-ordered fall-flying look steering, dive correction,
         velocity redirect, and version-neutral glide drag.
 - [ ] Port pitch/look-vector glide equations per version.
-- [ ] Port horizontal steering, lift, drag, and descent limits.
+- [x] Port horizontal steering, lift, drag, and descent limits.
 - [ ] Port collision damage and wall impact handling.
 - [ ] Port landing, fall-distance, and flag reset behavior.
 - [ ] Port firework propulsion, duration, and vector semantics.
@@ -1107,7 +1107,7 @@
       26.2 water/air/gravity ordering.
 - [x] Use the 26.2 `AbstractArrow` `WATER_INERTIA = 0.6F` constant for the
       specialized arrow default, independently of living-entity water drag.
-- [ ] Carry the arrow `life` counter and 1200-tick in-ground despawn boundary. [parity: partial]
+- [x] Carry the arrow `life` counter and 1200-tick in-ground despawn boundary.
 - [x] Carry arrow `inGroundTime` and `shakeTime` lifecycle state through the
       native boundary.
 - [x] Initialize the source seven-tick arrow shake window when a block impact
@@ -1148,7 +1148,7 @@
 - [ ] Expose bulk tick and multi-entity tick operations.
   - [ ] Expose concrete-version `simulateVersionedTicks` for bulk state
         ticking with per-state version dispatch and collision flag propagation. [parity: partial, D-154]
-- [ ] Avoid JavaScript callbacks in the inner simulation loop.
+- [x] Avoid JavaScript callbacks in the inner simulation loop.
 - [ ] Validate all inputs and report errors with actionable messages.
   - [x] Reject out-of-range fluid levels at the N-API block-update boundary.
 - [ ] Preserve ownership and lifetime guarantees across N-API boundaries.
