@@ -18,9 +18,9 @@
 
 ## Current next work priorities
 
-- [ ] Model the modern `WATER_MOVEMENT_EFFICIENCY` attribute separately from
+- [x] Model the modern `WATER_MOVEMENT_EFFICIENCY` attribute separately from
       legacy Depth Strider interpolation, including the native state bridge and
-      adapter-side attribute extraction. [parity: partial, D-156]
+      adapter-side attribute extraction.
 - [ ] Add differential runtime fixtures proving legacy Depth Strider and modern
       water-efficiency behavior independently for every supported release. [parity: non-physics-false]
 - [x] Populate modern movement-efficiency, air-drag, and friction attributes
@@ -38,9 +38,9 @@
 - [x] Preserve explicit zero-valued modern drag/friction modifiers across the
       N-API boundary; missing values use the source default without conflating
       absence with a supplied zero.
-- [ ] Add an explicit per-version behavior contract registry so each concrete
+- [x] Add an explicit per-version behavior contract registry so each concrete
       release must declare the exact source-owned fluid and water-efficiency
-      breakpoint policy before dispatch is accepted. [parity: partial, D-157]
+      breakpoint policy before dispatch is accepted.
 - [ ] Continue source-specialized travel, collision, entity, vehicle, effect,
       and prediction conformance work.
 - [x] Parallelize independent per-release source indexing and memoize resolved
@@ -280,10 +280,10 @@
       dispatch without falling back to an unrelated version.
 - [ ] Keep source-backed TypeScript version declarations and factory dispatch
       synchronized through an explicit, compile-time-checked registry. [parity: non-physics-false]
-- [ ] Validate generated gravity, step-height, and air-drag constants and
-      reject extraction results that match unrelated fallback values. [parity: non-physics-false, D-158]
-- [ ] Extract the vanilla water fluid-falling gravity divisor from each
-      snapshot instead of using a shared hardcoded divisor. [parity: deviates, D-158]
+- [x] Validate generated gravity, step-height, and air-drag constants and
+      reject extraction results that match unrelated fallback values.
+- [x] Extract the vanilla water fluid-falling gravity divisor from each
+      snapshot instead of using a shared hardcoded divisor.
 - [ ] Validate extracted fluid gravity divisors before generating Rust rules. [parity: non-physics-false]
 - [x] Extract and validate version-specific water and lava input speeds from
       each snapshot's `LivingEntity.travel` implementation, including the
@@ -334,8 +334,8 @@
 
 - [x] Generate deterministic per-release source method inventories and hashes
       for the tracked movement methods in `generated/physics-methods.json`.
-- [ ] Generate a source breakpoint report for tracked method changes in
-      `generated/physics-breakpoints.json`. [parity: non-physics-false, D-159]
+- [x] Generate a source breakpoint report for tracked method changes in
+      `generated/physics-breakpoints.json`.
 - [ ] Validate that every registered release has audited `Entity.move`,
       `LivingEntity.travel`, and `Player.travel` methods. [parity: non-physics-false]
 - [x] Build a source inventory generator for `Entity` movement and collision
@@ -353,13 +353,13 @@
       test.
 - [ ] Extract projectile motion and collision methods.
 - [ ] Extract entity dimensions, poses, eye heights, and passenger offsets.
-  - [ ] Add source-backed player crouching, swimming, fall-flying, spin attack,
+  - [x] Add source-backed player crouching, swimming, fall-flying, spin attack,
         long-jumping, dying, and sleeping dimensions plus pose-specific eye
-        heights. [parity: deviates, D-153]
-  - [ ] Match the source pose ordinal table, including spin attack, and reject
+        heights.
+  - [x] Match the source pose ordinal table, including spin attack, and reject
         out-of-range pose ordinals instead of assigning unsupported dimensions;
         preserve historical `DYING` ordinals through explicit version context
-        (`6` in 1.14–1.15 and `7` from 1.16 onward). [parity: deviates, D-153]
+        (`6` in 1.14–1.15 and `7` from 1.16 onward).
 - [ ] Extract block collision, outline, interaction, support, friction,
       slipperiness, fluid, and movement-effect behavior.
 - [ ] Extract voxel-shape composition, axis clipping, and collision iteration.
@@ -705,10 +705,10 @@
         subtract it from landing damage thresholds.
   - [x] Round native landing damage upward with the source `ceil` behavior.
 - [ ] Port entity dimensions and pose refresh transitions.
-  - [ ] Add a concrete versioned pose-refresh operation with source-ordered
-        requested/sneaking/swimming fallback and collision-box validation. [parity: deviates, D-153]
-  - [ ] Preserve no-physics and spectator bypasses while rejecting unavailable
-        poses for the selected source release. [parity: deviates, D-153]
+  - [x] Add a concrete versioned pose-refresh operation with source-ordered
+        requested/sneaking/swimming fallback and collision-box validation.
+  - [x] Preserve no-physics and spectator bypasses while rejecting unavailable
+        poses for the selected source release.
 
 ## Living entities and players
 
@@ -1155,9 +1155,9 @@
 - [ ] Generate declarations from the Rust bindings and verify them in TypeScript.
 - [ ] Remove obsolete generic version gates once version-specific engines cover
       the same behavior.
-- [ ] Keep unsupported versions unavailable instead of silently falling back;
+- [x] Keep unsupported versions unavailable instead of silently falling back;
       TypeScript now validates against the explicit source-backed registry
-      before constructing an engine. [parity: non-physics-false, D-160]
+      before constructing an engine.
 - [ ] Provide migration adapters only outside the core 1:1 engine.
 - [ ] Wire Mineflayer entity snapshots and world updates into the engine.
 - [ ] Wire engine outputs back to Mineflayer entities without mutating unrelated
