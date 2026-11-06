@@ -1,0 +1,13 @@
+{
+  "id": "E-002",
+  "release": "26.3",
+  "scope": "client, local player, simulateVersionedTick",
+  "summary": "The fall reset of Slow Falling, Levitation and flight ran before the base tick; vanilla's is in LivingEntity.aiStep, just before travel. No later step read it, so the tick's end agreed, and only the phase comparison showed it.",
+  "kind": "executed-vanilla",
+  "fixture": { "path": "fixtures/gr_-2_slow_falling.jsonl.gz", "sha256": "a33aee92468c0ce9625e32503b4de2943a14826d8d3dee694f6ac2ba154eee07" },
+  "firstDifference": { "tick": 1, "phase": "afterBaseTick", "field": "fallDistance", "expected": 0.009800000116229057, "actual": 0 },
+  "source": ["net/minecraft/world/entity/LivingEntity.java:3040-3048 (26.3)", "net/minecraft/world/entity/LivingEntity.java:2566-2567 (1.20)"],
+  "fix": { "subject": "feat(replay): the engine's phase trace and a continuous replay", "code": "native/src/simulation.rs" },
+  "regression": { "test": "native/src/phase.rs#the_fall_reset_of_slow_falling_comes_after_the_base_tick" },
+  "reproduce": { "phases": true, "command": "npx napi build --manifest-path native/Cargo.toml --release --platform --output-dir native/artifacts --js native.js --dts native.d.ts && npx tsc && node recorder/replay/evidence.ts --record E-002" }
+}

@@ -1,0 +1,32 @@
+import xyz.wagyourtail.unimined.internal.minecraft.MinecraftProvider
+
+plugins {
+    id 'rec-mc-conventions'
+}
+
+unimined.minecraft {
+    version '1.12.2'
+
+    mappings {
+        legacyIntermediary()
+        // Mojang's names of 1.14.4, by Calamus ids (legacy-mappings.py): no Mojang mappings exist before 1.14.4
+        mapping(files(rootProject.file('mappings/1.12.2.tiny')), 'mojang-1.12.2') {
+            sourceNamespace('intermediary')
+            dependsOn('intermediary')
+            onlyExistingSrc()
+            outputs('named', true) { ['intermediary'] }
+        }
+        devNamespace 'named'
+        devFallbackNamespace 'intermediary'
+    }
+
+    customPatcher(new CustomLegacyFabricMinecraftTransformer(project, delegate as MinecraftProvider)) {
+        it.loader libs.versions.fabric.loader.get()
+    }
+
+    runs.config('client') {
+        javaVersion = JavaVersion.VERSION_21
+    }
+
+    defaultRemapJar = true
+}

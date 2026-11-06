@@ -1,0 +1,5 @@
+1.12.2
+="1.12.2" "1.11.2"
+=340; 316;
+=piston.getProgress(1.0F) piston.getAmountExtended(1.0F)
+=net.minecraft.world.item.EnchantedBookItem.addEnchantment ((net.minecraft.world.item.EnchantedBookItem) net.minecraft.world.item.Items.ENCHANTED_BOOK).addEnchantment

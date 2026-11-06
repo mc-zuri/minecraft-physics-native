@@ -1,0 +1,10 @@
+out/
+runs/
+mod/.gradle/
+mod/build/
+mod/**/build/
+mod/run/
+mod/**/run/
+mod/**/.gradle/
+mod/**/.kotlin/
+.claude

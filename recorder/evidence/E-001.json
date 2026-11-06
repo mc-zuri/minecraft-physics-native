@@ -1,0 +1,13 @@
+{
+  "id": "E-001",
+  "release": "26.3",
+  "scope": "client, local player, simulateVersionedTick",
+  "summary": "A tick with no rocket added a zero boost, which turned a motion of -0.0 into 0.0 at the tick's start. The tick's end agreed, so only the phase comparison showed it.",
+  "kind": "executed-vanilla",
+  "fixture": { "path": "fixtures/f_elytra_wall_near_9.jsonl.gz", "sha256": "9920f2f459f3b00b0bdab40158d1bba48f940bd00d06194ff73576352eb0d4af" },
+  "firstDifference": { "tick": 28, "phase": "tickStart", "field": "vel", "expected": { "x": 0, "y": -0.1679509353325101, "z": "-0.0" }, "actual": { "x": 0, "y": -0.1679509353325101, "z": 0 } },
+  "source": ["net/minecraft/world/entity/projectile/FireworkRocketEntity.java:123-128 (26.3): a boost is the rocket's own tick, and no rocket runs none"],
+  "fix": { "subject": "feat(replay): the engine's phase trace and a continuous replay", "code": "native/src/simulation.rs" },
+  "regression": { "test": "native/src/numeric_tests.rs#a_signed_zero_reaches_the_tick_with_its_sign_and_the_cut_clears_it" },
+  "reproduce": { "phases": true, "command": "npx napi build --manifest-path native/Cargo.toml --release --platform --output-dir native/artifacts --js native.js --dts native.d.ts && npx tsc && node recorder/replay/evidence.ts --record E-001" }
+}

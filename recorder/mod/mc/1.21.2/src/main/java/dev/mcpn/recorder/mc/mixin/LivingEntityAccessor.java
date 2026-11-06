@@ -1,0 +1,29 @@
+package dev.mcpn.recorder.mc.mixin;
+
+import net.minecraft.world.entity.LivingEntity;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.gen.Accessor;
+
+@Mixin(LivingEntity.class)
+public interface LivingEntityAccessor {
+    @Accessor("noJumpDelay")
+    int recorder$noJumpDelay();
+
+    @Accessor("jumping")
+    boolean recorder$jumping();
+
+    @Accessor("autoSpinAttackTicks")
+    int recorder$autoSpinAttackTicks();
+
+    @Accessor("lerpSteps")
+    int recorder$lerpSteps();
+
+    @Accessor("lerpX")
+    double recorder$lerpX();
+
+    @Accessor("lerpY")
+    double recorder$lerpY();
+
+    @Accessor("lerpZ")
+    double recorder$lerpZ();
+}

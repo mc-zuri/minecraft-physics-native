@@ -3,13 +3,14 @@
 // (1.8.8 - 1.13.2), extracted by scripts/legacy-release-data.cjs from the Yarn-named decompiled
 // trees under MC_DECOMPILED_ROOT (default ../../pr/mc-decompiled from the package).
 //
-// A release whose tree is absent keeps its previous entry, so the manifest (and the Rust data
-// generated from it) stays as the sources last proved it. A release is refused when any of its
-// block properties does not resolve to a source-declared domain.
+// A release whose tree is absent fails the run. With --cached it keeps its previous entry, which is what
+// such a run must say it is doing: a fresh run cannot pass on what the sources last proved. A release
+// is refused when any of its block properties does not resolve to a source-declared domain.
 
 const fs = require("node:fs");
 const path = require("node:path");
 const { LEGACY_RELEASES, extractLegacyRelease } = require("./legacy-release-data.cjs");
+const { serializePath } = require("./portable-paths.cjs");
 
 const repositoryRoot = path.resolve(__dirname, "..");
 const outputPath = path.resolve(
@@ -18,14 +19,15 @@ const outputPath = path.resolve(
 const decompiledRoot = process.env.MC_DECOMPILED_ROOT
   ?? path.join(repositoryRoot, "..", "..", "pr", "mc-decompiled");
 
-const relative = (filePath) => path.relative(path.dirname(outputPath), filePath).replaceAll(path.sep, "/");
+// relative to the source root, so a checkout at another depth records the same paths
+const relative = (filePath) => serializePath(decompiledRoot, filePath);
 const previous = fs.existsSync(outputPath) ? JSON.parse(fs.readFileSync(outputPath, "utf8")).releases ?? {} : {};
 
 const releases = {};
 for (const release of LEGACY_RELEASES) {
   const data = extractLegacyRelease(release, decompiledRoot);
   if (!data) {
-    if (!previous[release.version]) {
+    if (!process.argv.includes("--cached") || !previous[release.version]) {
       throw new Error(`Missing legacy source tree for ${release.version} (${release.source}) under ${decompiledRoot}`);
     }
     releases[release.version] = previous[release.version];

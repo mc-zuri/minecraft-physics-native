@@ -1,0 +1,21 @@
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
+rootProject.name = 'recorder'
+
+dependencyResolutionManagement {
+    versionCatalogs {
+        libs {
+            version('fabric-loader', '0.18.4')
+        }
+    }
+}
+
+include 'common'
+
+// every mc/<version> directory with a build.gradle is a version adapter
+new File(rootProject.projectDir, 'mc').listFiles()
+        .findAll { new File(it, 'build.gradle').exists() }
+        .sort { it.name }
+        .each { include ":mc:${it.name}" }

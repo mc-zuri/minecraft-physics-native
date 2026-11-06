@@ -1,0 +1,20 @@
+{
+    "compilerOptions": {
+        "target": "es2023",
+        "module": "nodenext",
+        "moduleResolution": "nodenext",
+        "lib": ["es2023"],
+        "types": ["node"],
+        "strict": true,
+        "noEmit": true,
+        "allowImportingTsExtensions": true,
+        "erasableSyntaxOnly": true,
+        "verbatimModuleSyntax": true,
+        "resolveJsonModule": true,
+        "skipLibCheck": true,
+        "noUncheckedIndexedAccess": false,
+        "exactOptionalPropertyTypes": false,
+        "forceConsistentCasingInFileNames": true
+    },
+    "include": ["schema/**/*.ts", "scenarios/**/*.ts", "runner/**/*.ts", "replay/**/*.ts"]
+}

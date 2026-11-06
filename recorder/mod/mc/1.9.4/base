@@ -1,0 +1,5 @@
+1.10.2
+="1.10.2" "1.9.4"
+=210; 110;
+=net.minecraft.world.level.GameType net.minecraft.world.level.LevelSettings.GameMode
+=GameType GameMode

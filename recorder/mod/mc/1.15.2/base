@@ -1,0 +1,12 @@
+1.16
+=net.minecraft.world.entity.ai.attributes.Attributes net.minecraft.world.entity.monster.SharedMonsterAttributes
+=Attributes SharedMonsterAttributes
+=keySwapOffhand keySwapHands
+=server.overworld() server.getLevel(net.minecraft.world.level.dimension.DimensionType.OVERWORLD)
+=level.getAllEntities() level.getEntities(null, e -> true)
+-java/dev/mcpn/recorder/mc/mixin/ItemBasedSteeringAccessor.java
+-java/dev/mcpn/recorder/mc/mixin/StriderAccessor.java
+="wasEyeInWater" "wasUnderWater"
+="runServer" "run"
+=local.recorder$crouching() p.isCrouching()
+-java/dev/mcpn/recorder/mc/mixin/ServerChunkCacheMixin.java

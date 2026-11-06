@@ -22,6 +22,16 @@ const npm = (args, cwd = root) => execFileSync(process.platform === 'win32' ? 'n
     stdio: ['ignore', 'pipe', 'pipe'],
 });
 
+/** The headers of an x86-64 PE, all the artifact check reads of an addon. */
+function stubAddon() {
+    const bytes = Buffer.alloc(128);
+    bytes.write('MZ', 0, 'latin1');
+    bytes.writeUInt32LE(64, 60);
+    bytes.write('PE\0\0', 64, 'latin1');
+    bytes.writeUInt16LE(0x8664, 68);
+    return bytes;
+}
+
 describe('the published package', () => {
     let packed;
     let scratch;
@@ -98,6 +108,35 @@ describe('the published package', () => {
         fs.rmSync(unpacked, { recursive: true, force: true });
     });
 
+    // the consumer has mineflayer-physics-utils, which the package only names in types: the context is the dependency's
+    it('makes, clones, ticks and applies a real context from the packed copy', () => {
+        const unpacked = path.join(scratch, 'consumer');
+        fs.mkdirSync(unpacked);
+        execFileSync('tar', ['-xzf', packed.filename, '-C', 'consumer'], { cwd: scratch, stdio: 'ignore' });
+        const script = `
+            const physics = require(${JSON.stringify(path.join(unpacked, 'package'))});
+            const { EPhysicsCtx } = require('@nxg-org/mineflayer-physics-util/dist/physics/settings/entityPhysicsCtx');
+            const { botOf } = require(${JSON.stringify(path.join(root, 'test', 'bot-fixture.cjs'))});
+            const out = {};
+            for (const version of ['1.8.8', '1.20.4', '1.20.5', '1.21.11']) {
+                const bot = botOf(version);
+                const setup = physics.createBotPhysics(bot);
+                const ctx = setup.context(EPhysicsCtx);
+                ctx.state = ctx.state.clone();
+                for (let i = 0; i < 5; i += 1) setup.physics.simulate(ctx, bot.world);
+                ctx.state.apply(bot);
+                setup.dispose();
+                out[version] = [setup.physics.version, bot.entity.position.z !== 0.5 || bot.entity.position.x !== 0.5, bot.eventNames().length];
+            }
+            process.stdout.write(JSON.stringify(out));
+        `;
+        const environment = { ...process.env, NODE_PATH: path.join(root, 'node_modules') };
+        delete environment.NAPI_RS_NATIVE_LIBRARY_PATH;
+        const result = JSON.parse(execFileSync(process.execPath, ['-e', script], { cwd: unpacked, encoding: 'utf8', env: environment }));
+        for (const version of ['1.8.8', '1.20.4', '1.20.5', '1.21.11']) assert.deepEqual(result[version], [version, true, 0], version);
+        fs.rmSync(unpacked, { recursive: true, force: true });
+    });
+
     it('names only files that exist', () => {
         for (const file of [manifest.main, manifest.types]) assert.ok(fs.existsSync(path.join(root, file)), file);
         for (const [name, command] of Object.entries(manifest.scripts)) {
@@ -137,7 +176,7 @@ describe('the published package', () => {
         for (const name of outputs) {
             // a loader naming each addon and wasm loader as napi-rs's does ('./<file>')
             const text = name === 'native.js' ? loaded.map(file => `load('./${file}')\n`).join('') : '';
-            fs.writeFileSync(path.join(artifacts, name), text);
+            fs.writeFileSync(path.join(artifacts, name), name.endsWith('.node') ? stubAddon() : text);
         }
         verifyArtifactDirectory(artifacts);
         const files = JSON.parse(npm(['pack', '--dry-run', '--json', '--ignore-scripts'], copy))[0]
@@ -146,6 +185,10 @@ describe('the published package', () => {
         // a retired build is refused
         fs.writeFileSync(path.join(artifacts, 'index.win-32-x-64-msvc.node'), '');
         assert.throws(() => verifyArtifactDirectory(artifacts), /index\.win-32-x-64-msvc\.node/);
+        fs.rmSync(path.join(artifacts, 'index.win-32-x-64-msvc.node'));
+        // and so is an addon that is not what its name says
+        fs.writeFileSync(path.join(artifacts, 'index.win32-x64-msvc.node'), 'not a binary');
+        assert.throws(() => verifyArtifactDirectory(artifacts), /no native binary/);
         fs.rmSync(copy, { recursive: true, force: true });
     });
 

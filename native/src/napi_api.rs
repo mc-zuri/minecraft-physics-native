@@ -1,31 +1,55 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use napi::bindgen_prelude::Result;
 use napi::Error;
 use napi_derive::napi;
 
+use crate::entity_travel::{
+    refuse_for_player_tick, refuse_for_ridden_tick, travel_support, TravelFamily,
+};
 use crate::entity::{
-    entity_push_impulses_with_pushthrough, nearby_entity_colliders, Dimensions, EntityFlags,
+    entity_push_impulses_with_pushthrough, nearby_entity_colliders, vehicle_entity_colliders,
+    Dimensions, EntityFlags,
     EntityPush,
     EntityState, NearbyEntity, NearbyEntityKind,
 };
-use crate::math::{Aabb, Vec3};
-use crate::piston::{push_by_moving_pistons, MovingPiston};
+use crate::math::{Aabb, Vec3, MAX_COORDINATE, MAX_WALKED_CELLS};
+use crate::napi_bulk::{
+    ArrowBatch, BoatBatch, EntityBatch, HorseBatch, PlayerBatch, ProjectileBatch, TridentBatch,
+};
+use crate::piston::{push_by_moving_pistons, set_moving_block, MovingPiston};
 use crate::projectile::{
-    tick_arrow, tick_arrow_in_release, tick_projectile, tick_projectile_in_release, tick_trident,
-    tick_trident_in_release, ArrowState, ProjectileKind, ProjectileState, TridentState,
+    tick_arrow, tick_projectile, tick_trident,
+    ArrowState, ProjectileKind, ProjectileState, TridentState,
 };
 use crate::ridden::{tick_ridden_mob, RiddenMobKind, RiddenMobState, RiderInput};
 use crate::simulation::{
+    AttributeModifier, AttributeOperation, MovementSpeedAttribute,
     collision_query_entity, entity_collision_context, mth_cos, mth_sin,
-    tick_local_player_scene, tick_scene, PhysicsConfig, SimulationState, TickScene,
+    finish_local_player, move_local_player, tick_scene, BoatVehicle, PhysicsConfig, ServerFireDraws,
+    SimulationState, TickScene,
     TickSceneOutcome, VersionPhysicsRules,
 };
 use crate::vehicle::{
-    tick_boat, tick_boat_in_world, tick_horse, BoatSimulationState, BoatStatus,
+    boat_passenger_position, boat_passenger_yaw, tick_boat, tick_boat_in_world, tick_horse, BoatSeat,
+    BoatSimulationState, BoatStatus,
     HorseSimulationState, LegacyBoatState,
 };
 use crate::version::MinecraftVersion;
 use crate::versioned;
-use crate::world::{BlockEffect, BlockShape, BlockState, FluidState, WorldSnapshot};
+use crate::shulker_box::{ShulkerBox, ShulkerBoxStatus};
+use crate::world::{
+    checkpoint_digest,
+    shape_meets_query, BlockEffect, BlockShape, BlockState, EntityCollider, FluidState,
+    WorldSnapshot,
+};
+
+/// A stab's recoil on the attacker: `knockback` is getKnockback, 0 when not given.
+#[napi(object)]
+#[derive(Clone, Copy)]
+pub struct NativeStabHit {
+    pub knockback: Option<f64>,
+}
 
 #[napi(object)]
 #[derive(Clone, Copy)]
@@ -40,6 +64,18 @@ pub struct NativeVec3 {
 pub struct NativeAabb {
     pub min: NativeVec3,
     pub max: NativeVec3,
+}
+
+/// The boat's observed geometry and status at its passenger's fluid-query phase.
+/// This input affects fluid queries only while `passenger` is true. Callers own
+/// updates between ticks; a batch does not predict the boat's movement.
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeBoatVehicle {
+    /// The boat's absolute world-space bounding box, not the passenger's box.
+    pub bounding_box: NativeAabb,
+    /// Boat status UNDER_WATER or UNDER_FLOWING_WATER, not ordinary IN_WATER.
+    pub underwater: bool,
 }
 
 #[napi(object)]
@@ -103,6 +139,16 @@ pub struct NativeEntityDescriptor {
     pub using_item: Option<bool>,
     pub swimming: Option<bool>,
     pub passenger: Option<bool>,
+    pub boat_vehicle: Option<NativeBoatVehicle>,
+    /// Vanilla 26.3 canSimulateMovement result for piston bounce, collision restitution and
+    /// bubble column pushes. This does not redefine general tick authority.
+    /// Ignored before 26.3. Absent: Player uses !clientSide || controlledByLocalInstance;
+    /// generic AUTHORITATIVE_SIDE uses controlledByLocalInstance (isLocalInstanceAuthoritative,
+    /// not the logical side). Other modes, including SERVER_AND_CLIENT, must supply their result explicitly.
+    pub can_simulate_movement: Option<bool>,
+    /// The entity is no LivingEntity: a slime block or bed returns 0.8 of the bounce (from 1.9),
+    /// from 26.2 0.8F of the block's restitution. False when absent.
+    pub non_living: Option<bool>,
     pub flying: Option<bool>,
     pub flying_speed: Option<f64>,
     pub climbing: Option<bool>,
@@ -162,6 +208,209 @@ impl From<Aabb> for NativeAabb {
     }
 }
 
+impl From<NativeBoatVehicle> for BoatVehicle {
+    fn from(value: NativeBoatVehicle) -> Self {
+        Self {
+            bounding_box: value.bounding_box.into(),
+            underwater: value.underwater,
+        }
+    }
+}
+
+impl From<BoatVehicle> for NativeBoatVehicle {
+    fn from(value: BoatVehicle) -> Self {
+        Self {
+            bounding_box: value.bounding_box.into(),
+            underwater: value.underwater,
+        }
+    }
+}
+
+/// A state named for a kind the player's tick does not move is refused (entity_travel).
+pub(crate) fn validate_entity_type(state: &NativeSimulationState) -> Result<()> {
+    state
+        .entity_type
+        .as_deref()
+        .map_or(Ok(()), refuse_for_player_tick)
+        .map_err(Error::from_reason)
+}
+
+/// An exact draw stream must be readable before the infallible state conversion takes it, and
+/// cannot stand beside the fixed value it replaces.
+pub(crate) fn validate_fire_draws(state: &NativeSimulationState) -> Result<()> {
+    let Some(draws) = state.server_fire_increments.as_deref() else {
+        return Ok(());
+    };
+    if state.server_fire_increment.is_some() {
+        return Err(Error::from_reason(
+            "give serverFireIncrements or serverFireIncrement, not both",
+        ));
+    }
+    if ServerFireDraws::new(draws).is_none() {
+        return Err(Error::from_reason(format!(
+            "serverFireIncrements holds at most {} draws, each 1 or 2",
+            ServerFireDraws::CAPACITY
+        )));
+    }
+    Ok(())
+}
+
+/// A tick that needed a draw the stream did not have is not an exact replay: no result of it is
+/// published.
+pub(crate) fn check_fire_draws(state: &SimulationState) -> Result<()> {
+    if state.server_fire_draws_exhausted {
+        return Err(Error::from_reason(
+            "serverFireIncrements ran out: an ignition needed another draw",
+        ));
+    }
+    if state.server_fire_draw_missing {
+        return Err(Error::from_reason(
+            "a burning ServerPlayer needs its fire draw: give serverFireIncrement or serverFireIncrements",
+        ));
+    }
+    if state.move_out_of_range {
+        return Err(Error::from_reason(format!(
+            "the tick's move sweeps more than {MAX_WALKED_CELLS} block cells: velocity {:?}, half width {}, height {}",
+            state.velocity, state.half_width, state.height,
+        )));
+    }
+    Ok(())
+}
+
+/// A tick of an entity that is not the player has no result when a move of it could not run.
+pub(crate) fn check_move(operation: &str, out_of_range: bool) -> Result<()> {
+    if out_of_range {
+        return Err(Error::from_reason(format!(
+            "{operation}: the tick's move sweeps more than {MAX_WALKED_CELLS} block cells"
+        )));
+    }
+    Ok(())
+}
+
+/// What a flight of `reach` from `position` walks, a cell at a time along the ray. Beside the motion,
+/// `reach` holds what the tick adds to it before the ray, and the drag it may take first. The most any of
+/// them can make of the motion is what counts: a release's own order of them changes no real flight.
+pub(crate) fn validate_flight(operation: &str, position: Vec3, reach: Vec3) -> Result<()> {
+    let cells = reach.x.abs() + reach.y.abs() + reach.z.abs();
+    let end = position + reach;
+    if !(cells <= MAX_WALKED_CELLS) || [end.x, end.y, end.z].into_iter().any(out_of_range) {
+        return Err(Error::from_reason(format!(
+            "{operation}: the flight from {position:?} by {reach:?} walks more than {MAX_WALKED_CELLS} block cells or leaves the coordinates"
+        )));
+    }
+    Ok(())
+}
+
+/// The most attached rockets a tick counts, each a boost it runs in turn.
+pub(crate) const MAX_ATTACHED_ROCKETS: u32 = 1 << 16;
+
+fn out_of_range(value: f64) -> bool {
+    value.abs() > MAX_COORDINATE
+}
+
+/// A position a tick can run from: NaN stays what the engine makes of it (a motion that is not
+/// finite leaves one before 1.21.11), and an infinite one, or one past the i32 cells, has no cell.
+pub(crate) fn validate_position(operation: &str, position: Vec3) -> Result<()> {
+    for (axis, value) in [("x", position.x), ("y", position.y), ("z", position.z)] {
+        if out_of_range(value) {
+            return Err(Error::from_reason(format!(
+                "{operation}: position.{axis} is {value}, past the {MAX_COORDINATE} a block cell has"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The size of a box a tick can walk: finite, not negative (zero is legal) and within the cells a
+/// call may walk.
+pub(crate) fn validate_size(operation: &str, half_width: f64, height: f64) -> Result<()> {
+    for (name, value) in [("halfWidth", half_width), ("height", height)] {
+        if !value.is_finite() || value < 0.0 {
+            return Err(Error::from_reason(format!(
+                "{operation}: {name} is {value}, it must be finite and not negative"
+            )));
+        }
+    }
+    let cells = (2.0 * half_width + 2.0) * (2.0 * half_width + 2.0) * (height + 2.0);
+    if cells > MAX_WALKED_CELLS {
+        return Err(Error::from_reason(format!(
+            "{operation}: a box {half_width} half wide and {height} tall reaches more than {MAX_WALKED_CELLS} block cells"
+        )));
+    }
+    Ok(())
+}
+
+/// The box kept before 1.17: ordered and within reach. NaN stays, as in validate_position.
+pub(crate) fn validate_kept_box(operation: &str, kept: Option<Aabb>) -> Result<()> {
+    let Some(kept) = kept else {
+        return Ok(());
+    };
+    let (min, max) = (kept.min, kept.max);
+    if min.x > max.x || min.y > max.y || min.z > max.z {
+        return Err(Error::from_reason(format!(
+            "{operation}: boundingBox has its minimum above its maximum: {min:?}, {max:?}"
+        )));
+    }
+    validate_position(operation, min)?;
+    validate_position(operation, max)?;
+    if kept.cell_count() > MAX_WALKED_CELLS {
+        return Err(Error::from_reason(format!(
+            "{operation}: boundingBox reaches more than {MAX_WALKED_CELLS} block cells: {min:?}, {max:?}"
+        )));
+    }
+    Ok(())
+}
+
+/// All a tick reads of a state before the infallible conversion takes it: nothing has changed when
+/// this fails.
+pub(crate) fn validate_tick_state(operation: &str, state: &NativeSimulationState) -> Result<()> {
+    validate_boat_vehicle(state.boat_vehicle.as_ref())?;
+    validate_fire_draws(state)?;
+    validate_entity_type(state)?;
+    validate_position(operation, state.position.into())?;
+    validate_size(operation, state.half_width, state.height)?;
+    validate_kept_box(operation, state.bounding_box.clone().map(Into::into))
+}
+
+/// A world query the walks of `collect_collision_shapes` and the outline and interaction queries can
+/// answer: finite, ordered and within the cells a call may walk.
+fn validate_query(kind: &str, query: Aabb) -> Result<()> {
+    if !valid_bounds(query) {
+        return Err(Error::from_reason(format!(
+            "{kind} query bounds must be finite and ordered: {:?}, {:?}",
+            query.min, query.max
+        )));
+    }
+    validate_position(kind, query.min)?;
+    validate_position(kind, query.max)?;
+    if query.cell_count() > MAX_WALKED_CELLS {
+        return Err(Error::from_reason(format!(
+            "{kind} query reaches more than {MAX_WALKED_CELLS} block cells: {:?}, {:?}",
+            query.min, query.max
+        )));
+    }
+    Ok(())
+}
+
+/// Validate the new external geometry before any caller-owned state is replaced
+/// or a world query runs. The general state conversion deliberately remains
+/// infallible and preserves release-specific handling of other numeric inputs.
+pub(crate) fn validate_boat_vehicle(value: Option<&NativeBoatVehicle>) -> Result<()> {
+    if let Some(value) = value {
+        let bounds = &value.bounding_box;
+        let min = Vec3::from(bounds.min);
+        let max = Vec3::from(bounds.max);
+        if !min.is_finite() || !max.is_finite()
+            || min.x > max.x || min.y > max.y || min.z > max.z
+        {
+            return Err(Error::from_reason(
+                "boatVehicle boundingBox must contain finite, ordered bounds",
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[napi(object)]
 pub struct NativeSimulationConfig {
     pub gravity: Option<f64>,
@@ -192,11 +441,77 @@ impl From<NativeSimulationConfig> for PhysicsConfig {
     }
 }
 
+/// One modifier of an attribute: its amount and operation (add_value, add_multiplied_base or
+/// add_multiplied_total).
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeAttributeModifier {
+    pub amount: f64,
+    pub operation: String,
+}
+
+/// The movement speed attribute: its base, its modifiers but the powder snow one, and that one's
+/// amount if it holds it.
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeMovementSpeedAttribute {
+    pub base: f64,
+    pub modifiers: Vec<NativeAttributeModifier>,
+    pub frost: Option<f64>,
+}
+
+impl TryFrom<NativeMovementSpeedAttribute> for MovementSpeedAttribute {
+    type Error = Error;
+
+    fn try_from(value: NativeMovementSpeedAttribute) -> Result<Self> {
+        let modifiers = value
+            .modifiers
+            .into_iter()
+            .map(|modifier| {
+                let operation = match modifier.operation.as_str() {
+                    "add_value" => AttributeOperation::AddValue,
+                    "add_multiplied_base" => AttributeOperation::AddMultipliedBase,
+                    "add_multiplied_total" => AttributeOperation::AddMultipliedTotal,
+                    other => {
+                        return Err(Error::from_reason(format!(
+                            "unknown attribute operation: {other}"
+                        )))
+                    }
+                };
+                Ok(AttributeModifier { amount: modifier.amount, operation })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self { base: value.base, modifiers, frost: value.frost })
+    }
+}
+
+impl From<&MovementSpeedAttribute> for NativeMovementSpeedAttribute {
+    fn from(value: &MovementSpeedAttribute) -> Self {
+        let modifiers = value
+            .modifiers
+            .iter()
+            .map(|modifier| NativeAttributeModifier {
+                amount: modifier.amount,
+                operation: match modifier.operation {
+                    AttributeOperation::AddValue => "add_value",
+                    AttributeOperation::AddMultipliedBase => "add_multiplied_base",
+                    AttributeOperation::AddMultipliedTotal => "add_multiplied_total",
+                }
+                .to_string(),
+            })
+            .collect();
+        Self { base: value.base, modifiers, frost: value.frost }
+    }
+}
+
 #[napi(object)]
 pub struct NativeSimulationState {
     pub position: NativeVec3,
     pub velocity: NativeVec3,
     pub yaw: Option<f64>,
+    /// The float degrees of the yaw, which moveFlying turns into its own radians before 1.9: `yaw` when
+    /// not given.
+    pub yaw_degrees: Option<f64>,
     pub pitch: Option<f64>,
     pub half_width: f64,
     pub height: f64,
@@ -224,7 +539,20 @@ pub struct NativeSimulationState {
     pub ultra_warm: Option<bool>,
     pub is_player: Option<bool>,
     pub controlled_by_local_instance: Option<bool>,
+    /// Vanilla 26.3 canSimulateMovement result for piston bounce, collision restitution and
+    /// bubble column pushes. This does not redefine general tick authority.
+    /// Ignored before 26.3. Absent: Player uses !clientSide || controlledByLocalInstance;
+    /// generic AUTHORITATIVE_SIDE uses controlledByLocalInstance (isLocalInstanceAuthoritative,
+    /// not the logical side). Other modes, including SERVER_AND_CLIENT, must supply their result explicitly.
+    pub can_simulate_movement: Option<bool>,
+    /// The entity is no LivingEntity: a slime block or bed returns 0.8 of the bounce (from 1.9),
+    /// from 26.2 0.8F of the block's restitution. False when absent.
+    pub non_living: Option<bool>,
+    /// Entity.isPassenger: the tick is Entity.rideTick, never ordinary travel. The motion is zeroed and
+    /// the tick ends on the position handed in, the seat the caller keeps with the vehicle.
     pub passenger: Option<bool>,
+    /// Optional boat geometry/status for passenger fluid queries; omission clears it.
+    pub boat_vehicle: Option<NativeBoatVehicle>,
     pub in_web: Option<bool>,
     pub weaving: Option<bool>,
     pub frost_walker: Option<bool>,
@@ -233,15 +561,23 @@ pub struct NativeSimulationState {
     pub powder_snow_walkable: Option<bool>,
     pub in_powder_snow: Option<bool>,
     pub fire_immune: Option<bool>,
+    pub fire_resistance: Option<bool>,
+    pub on_fire_flag: Option<bool>,
     pub in_rain: Option<bool>,
+    /// A spear's stab that dealt knockback since the last tick (Player.stabAttack): a server's.
+    pub stab_hit: Option<NativeStabHit>,
     pub fire_protection: Option<u32>,
     pub burning_time: Option<f64>,
     pub remaining_fire_ticks: Option<i32>,
+    pub server_fire_increment: Option<i32>,
+    pub server_fire_increments: Option<Vec<i32>>,
     pub ticks_frozen: Option<u32>,
     pub ticks_required_to_freeze: Option<u32>,
     pub tick_count: Option<u32>,
     pub freeze_damage: Option<f64>,
     pub contact_damage: Option<f64>,
+    /// What this tick's flight into a wall hands hurt, the server's alone: 0 on a client state.
+    pub wall_damage: Option<f64>,
     pub inside_wall: Option<bool>,
     pub sleeping: Option<bool>,
     pub eye_height: Option<f64>,
@@ -253,6 +589,14 @@ pub struct NativeSimulationState {
     pub fall_distance: Option<f64>,
     pub safe_fall_distance: Option<f64>,
     pub fall_damage_immune: Option<bool>,
+    pub client_side: Option<bool>,
+    /// The height the pose update leaves at the end of the player's tick (Player.tick): what ticks
+    /// after the player meets that box. Absent: the height the tick ran with.
+    pub height_after_tick: Option<f64>,
+    /// The kind the state is of: a tick refuses any but "player" (entityTravelSupport), so a kind
+    /// with another path or none does not run on the player's equations. Absent: not named.
+    pub entity_type: Option<String>,
+    pub invulnerable: Option<bool>,
     pub fall_damage_multiplier: Option<f64>,
     pub sneaking: Option<bool>,
     pub moving_slowly: Option<bool>,
@@ -287,6 +631,9 @@ pub struct NativeSimulationState {
     pub fall_damage: Option<f64>,
     pub fall_flying: Option<bool>,
     pub look: Option<NativeVec3>,
+    /// One raw rocket impulse, added once at the start of every tick, before the player's tick
+    /// reads its motion (the place FireworkRocketEntity.tick has); between the scene's rockets
+    /// before and after the player. It stays on the state for the next tick: the caller clears it.
     pub firework_boost: Option<NativeVec3>,
     pub stuck_speed_multiplier: Option<NativeVec3>,
     pub previous_position: Option<NativeVec3>,
@@ -300,6 +647,9 @@ pub struct NativeSimulationState {
     /// Entity.isOutsideBorder before 1.14: the last collision found the entity outside the world
     /// border.
     pub outside_border: Option<bool>,
+    /// The movement speed attribute's parts: with them the tick applies its frost modifier and
+    /// movement_speed_value is the value after it. 1.17 to 1.21.4 on a client.
+    pub movement_speed_attribute: Option<NativeMovementSpeedAttribute>,
     pub nearby_entities: Option<Vec<NativeNearbyEntity>>,
     pub firework_rockets: Option<u32>,
     pub firework_rockets_before_player: Option<u32>,
@@ -323,6 +673,8 @@ pub struct NativeMovingPiston {
     /// The collision boxes of the block it moves in its cell: they push from 1.11, and on 1.8
     /// those of a block it pushes.
     pub shapes: Vec<NativeAabb>,
+    /// `shapes` once it has gone on this tick, for the pistons that tick after it (absent: the same).
+    pub next_shapes: Option<Vec<NativeAabb>>,
     /// The outline boxes of a block it pushes in its cell, which push on 1.9 - 1.10 (absent or
     /// empty: the full cube).
     pub outline_shapes: Option<Vec<NativeAabb>>,
@@ -346,6 +698,9 @@ impl TryFrom<NativeMovingPiston> for MovingPiston {
             source: value.source,
             progress: value.progress as f32,
             shapes: value.shapes.into_iter().map(Into::into).collect(),
+            next_shapes: value
+                .next_shapes
+                .map(|shapes| shapes.into_iter().map(Into::into).collect()),
             outline_shapes: value
                 .outline_shapes
                 .unwrap_or_default()
@@ -380,6 +735,24 @@ pub struct NativeTickOutcome {
     pub piston_deltas: NativeVec3,
 }
 
+/// One point of a traced tick: its phase name (recorder/schema/phases.ts), how many times the tick
+/// had passed that point before, and the state there.
+#[napi(object)]
+pub struct NativeTickPhase {
+    pub name: String,
+    pub occurrence: u32,
+    pub state: NativeSimulationState,
+    /// LivingEntity's xxa, yya and zza at beforeTravel.
+    pub travel_vector: Option<NativeVec3>,
+}
+
+/// simulateVersionedTick's state, and the points the tick passed on the way to it.
+#[napi(object)]
+pub struct NativeTracedTick {
+    pub state: NativeSimulationState,
+    pub phases: Vec<NativeTickPhase>,
+}
+
 impl From<MovingPiston> for NativeMovingPiston {
     fn from(value: MovingPiston) -> Self {
         Self {
@@ -391,6 +764,9 @@ impl From<MovingPiston> for NativeMovingPiston {
             source: value.source,
             progress: f64::from(value.progress),
             shapes: value.shapes.into_iter().map(Into::into).collect(),
+            next_shapes: value
+                .next_shapes
+                .map(|shapes| shapes.into_iter().map(Into::into).collect()),
             outline_shapes: (!value.outline_shapes.is_empty())
                 .then(|| value.outline_shapes.into_iter().map(Into::into).collect()),
             bounces: Some(value.bounces),
@@ -508,6 +884,16 @@ pub struct NativeGeneratedShapeBox {
     pub max_z: f64,
 }
 
+/// A channel of a block state as the release's own code answers it (scripts/java-oracle/ShapeDump.java).
+/// `status` is `exact` (the boxes are the answer, none being an answer too), `contextual` (the answer also
+/// needs what `depends_on` lists, so there are no boxes) or `absent` (the release has no such method).
+#[napi(object)]
+pub struct NativeGeneratedStateShape {
+    pub status: String,
+    pub depends_on: Vec<String>,
+    pub boxes: Vec<NativeGeneratedShapeBox>,
+}
+
 #[napi(object)]
 pub struct NativeGeneratedShapeProvenance {
     pub source_sha256: Option<String>,
@@ -555,6 +941,7 @@ pub struct NativeBlockUpdate {
     pub suppresses_bounce: Option<bool>,
     pub suffocating: Option<bool>,
     pub in_wall: Option<bool>,
+    pub bottom_face_sturdy: Option<bool>,
     pub remove: Option<bool>,
 }
 
@@ -569,6 +956,9 @@ pub struct NativeVersionCapabilities {
 
 #[napi(object)]
 pub struct NativeBoatState {
+    /// The entities around the boat, it and those sharing it left out: its move collides with
+    /// those vanilla says (vehicle_entity_colliders).
+    pub nearby_entities: Option<Vec<NativeNearbyEntity>>,
     pub position: NativeVec3,
     pub velocity: NativeVec3,
     pub yaw: f64,
@@ -584,6 +974,8 @@ pub struct NativeBoatState {
     pub bubble_time: Option<i32>,
     pub bubble_column_direction_is_down: Option<bool>,
     pub above_bubble_column: Option<bool>,
+    /// The boat ticks on the server, which runs the column's timer (AbstractBoat.tickBubbleColumn).
+    pub server_side: Option<bool>,
     pub player_passenger: Option<bool>,
     pub collided_horizontally: Option<bool>,
     pub collided_vertically: Option<bool>,
@@ -603,10 +995,17 @@ pub struct NativeBoatState {
     pub ultra_warm: Option<bool>,
     /// The boat's synced NoGravity flag (Entity.isNoGravity, 1.10+): floatBoat takes no gravity.
     pub no_gravity: Option<bool>,
+    /// Boat.paddlePositions (1.9+): the left and right paddles' rowing phases.
+    pub paddle_phases: Option<Vec<f64>>,
+    /// Entity.isSilent: a silent boat plays no paddle sound (which takes its status again).
+    pub silent: Option<bool>,
 }
 
 #[napi(object)]
 pub struct NativeHorseState {
+    /// The entities around the mob, it and those sharing it left out: its move collides with
+    /// those vanilla says (vehicle_entity_colliders).
+    pub nearby_entities: Option<Vec<NativeNearbyEntity>>,
     pub position: NativeVec3,
     pub velocity: NativeVec3,
     pub yaw: f64,
@@ -615,8 +1014,11 @@ pub struct NativeHorseState {
     pub jump_requested: bool,
     pub on_ground: bool,
     pub in_water: bool,
-    pub movement_speed: f64,
-    pub jump_strength: f64,
+    /// The MOVEMENT_SPEED attribute, 0 a legal one; the mob's base when not given.
+    pub movement_speed: Option<f64>,
+    /// The JUMP_STRENGTH attribute, 0 a legal one; the mob's base when not given.
+    pub jump_strength: Option<f64>,
+    /// A ridden mob's measured size in its pose (SCALE, age); its type's when not given.
     pub half_width: Option<f64>,
     pub height: Option<f64>,
     pub collided_horizontally: Option<bool>,
@@ -647,6 +1049,7 @@ pub struct NativeHorseState {
     pub boost_time: Option<i32>,
     pub boost_time_total: Option<i32>,
     pub suffocating: Option<bool>,
+    pub suffocating_speed: Option<f64>,
     pub jump_pending_scale: Option<f64>,
     pub horse_jumping: Option<bool>,
     pub standing: Option<bool>,
@@ -665,6 +1068,20 @@ pub struct NativeHorseState {
     pub jump_boost_amplifier: Option<i32>,
     /// The mob's synced NoGravity flag (Entity.isNoGravity, 1.10+): its travel takes no gravity.
     pub no_gravity: Option<bool>,
+    /// Entity.stuckSpeedMultiplier, for the next move of a ridden mob.
+    pub stuck_speed_multiplier: Option<NativeVec3>,
+    pub slow_falling: Option<bool>,
+    pub levitation_amplifier: Option<i32>,
+    pub dolphins_grace: Option<bool>,
+    /// Weaving (1.20.5+), which changes what a cobweb leaves the ridden mob.
+    pub weaving: Option<bool>,
+    /// The ridden mob's GRAVITY attribute (1.20.5+), STEP_HEIGHT (1.20.5+),
+    /// WATER_MOVEMENT_EFFICIENCY (1.21+), AIR_DRAG_MODIFIER and FRICTION_MODIFIER (26.2+).
+    pub gravity: Option<f64>,
+    pub step_height: Option<f64>,
+    pub water_movement_efficiency: Option<f64>,
+    pub air_drag_modifier: Option<f64>,
+    pub friction_modifier: Option<f64>,
 }
 
 #[napi(object)]
@@ -680,6 +1097,8 @@ pub struct NativeProjectileState {
     /// A dangerous (blue) wither skull, whose air inertia is 0.73F.
     pub dangerous: Option<bool>,
     pub in_water: Option<bool>,
+    /// The dimension is ultrawarm: lava pushes at 0.007.
+    pub ultra_warm: Option<bool>,
     pub first_tick: Option<bool>,
     pub kind: Option<String>,
     pub horizontal_collision: Option<bool>,
@@ -689,6 +1108,10 @@ pub struct NativeProjectileState {
     pub bobbing: Option<bool>,
     /// The bobbing fishing hook's random.nextFloat() for this tick.
     pub bob_random: Option<f64>,
+    /// Entity.noPhysics: Entity.move passes through blocks and a firework rocket acts on no hit.
+    pub no_physics: Option<bool>,
+    /// The box a rocket or hook keeps before 1.17 (absent: from the position).
+    pub bounding_box: Option<NativeAabb>,
 }
 
 #[napi(object)]
@@ -697,11 +1120,15 @@ pub struct NativeProjectileTickResult {
     pub position: NativeVec3,
     pub velocity: NativeVec3,
     pub block_hit: bool,
+    /// Entity.isInWater after the tick (the batch's own, from the world).
+    pub in_water: bool,
     pub first_tick: bool,
     pub horizontal_collision: bool,
     pub on_ground: bool,
     pub bobbing: bool,
     pub discarded: bool,
+    /// The box a rocket or hook keeps before 1.17.
+    pub bounding_box: Option<NativeAabb>,
 }
 
 #[napi(object)]
@@ -722,6 +1149,10 @@ pub struct NativeArrowState {
     pub last_block_id: Option<u32>,
     /// The block the arrow hit, whose state the in-ground test reads until 1.13.2.
     pub last_block_position: Option<NativeBlockPosition>,
+    /// AbstractArrow.isNoPhysics, from 1.13.
+    pub no_physics: Option<bool>,
+    /// The dimension is ultrawarm: lava pushes at 0.007.
+    pub ultra_warm: Option<bool>,
 }
 
 #[napi(object)]
@@ -733,12 +1164,15 @@ pub struct NativeBlockPosition {
 }
 
 #[napi(object)]
+#[derive(Clone)]
 pub struct NativeArrowTickResult {
     pub position: NativeVec3,
     pub velocity: NativeVec3,
     pub block_hit: bool,
+    pub in_water: bool,
     pub in_ground: bool,
     pub discarded: bool,
+    pub life: u16,
     pub in_ground_time: u32,
     pub shake_time: u8,
     pub started_falling: bool,
@@ -756,13 +1190,34 @@ pub struct NativeTridentState {
     pub water_inertia: Option<f64>,
     pub in_water: Option<bool>,
     pub dealt_damage: Option<bool>,
+    /// AbstractArrow's embedded state, as in `NativeArrowState`.
+    pub in_ground: Option<bool>,
+    pub life: Option<u16>,
+    pub in_ground_time: Option<u32>,
+    pub shake_time: Option<u8>,
+    pub fall_impulse: Option<NativeVec3>,
+    pub last_block_id: Option<u32>,
+    pub last_block_position: Option<NativeBlockPosition>,
+    pub no_physics: Option<bool>,
+    pub ultra_warm: Option<bool>,
 }
 
 #[napi(object)]
+#[derive(Clone)]
 pub struct NativeTridentTickResult {
     pub position: NativeVec3,
     pub velocity: NativeVec3,
     pub block_hit: bool,
+    pub in_water: bool,
+    pub in_ground: bool,
+    pub discarded: bool,
+    pub life: u16,
+    pub in_ground_time: u32,
+    pub shake_time: u8,
+    pub started_falling: bool,
+    pub dealt_damage: bool,
+    pub last_block_id: Option<u32>,
+    pub last_block_position: Option<NativeBlockPosition>,
 }
 
 impl From<NativeSimulationState> for SimulationState {
@@ -771,7 +1226,7 @@ impl From<NativeSimulationState> for SimulationState {
             position: value.position.into(),
             velocity: value.velocity.into(),
             yaw: value.yaw.unwrap_or(0.0),
-            yaw_degrees: None,
+            yaw_degrees: value.yaw_degrees.map(|degrees| degrees as f32),
             pitch: value.pitch.unwrap_or(0.0),
             half_width: value.half_width,
             height: value.height,
@@ -799,25 +1254,43 @@ impl From<NativeSimulationState> for SimulationState {
             ultra_warm: value.ultra_warm.unwrap_or(false),
             is_player: value.is_player.unwrap_or(false),
             controlled_by_local_instance: value.controlled_by_local_instance.unwrap_or(false),
+            can_simulate_movement: value.can_simulate_movement,
+            non_living: value.non_living.unwrap_or(false),
             passenger: value.passenger.unwrap_or(false),
+            boat_vehicle: value.boat_vehicle.map(Into::into),
             in_web: value.in_web.unwrap_or(false),
             weaving: value.weaving.unwrap_or(false),
             frost_walker: value.frost_walker.unwrap_or(false),
             sweet_berry_bush_immune: value.sweet_berry_bush_immune.unwrap_or(false),
+            web_immune: false,
+            stuck_immune: false,
             boat: false,
+            above_bubble_column: None,
             powder_snow_immune: value.powder_snow_immune.unwrap_or(false),
             powder_snow_walkable: value.powder_snow_walkable.unwrap_or(false),
             in_powder_snow: value.in_powder_snow.unwrap_or(false),
             fire_immune: value.fire_immune.unwrap_or(false),
+            fire_resistance: value.fire_resistance.unwrap_or(false),
+            on_fire_flag: value.on_fire_flag.unwrap_or(false),
             in_rain: value.in_rain.unwrap_or(false),
+            stab_hit: value.stab_hit.map(|hit| hit.knockback.unwrap_or(0.0) as f32),
             fire_protection: value.fire_protection.unwrap_or(0),
             burning_time: value.burning_time,
             remaining_fire_ticks: value.remaining_fire_ticks,
+            server_fire_increment: value.server_fire_increment,
+            server_fire_draws: value
+                .server_fire_increments
+                .as_deref()
+                .and_then(ServerFireDraws::new),
+            server_fire_draws_exhausted: false,
+            server_fire_draw_missing: false,
+            move_out_of_range: false,
             ticks_frozen: value.ticks_frozen.unwrap_or(0),
             ticks_required_to_freeze: value.ticks_required_to_freeze.unwrap_or(140),
             tick_count: value.tick_count.unwrap_or(0),
             freeze_damage: value.freeze_damage.unwrap_or(0.0),
             contact_damage: value.contact_damage.unwrap_or(0.0),
+            wall_damage: value.wall_damage.unwrap_or(0.0),
             inside_wall: value.inside_wall.unwrap_or(false),
             sleeping: value.sleeping.unwrap_or(false),
             eye_height: value.eye_height,
@@ -830,6 +1303,9 @@ impl From<NativeSimulationState> for SimulationState {
             // the SAFE_FALL_DISTANCE attribute's default, and the 3.0F of the fall damage before it
             safe_fall_distance: value.safe_fall_distance.unwrap_or(3.0),
             fall_damage_immune: value.fall_damage_immune.unwrap_or(false),
+            client_side: value.client_side.unwrap_or(false),
+            height_after_tick: value.height_after_tick,
+            invulnerable: value.invulnerable.unwrap_or(false),
             fall_damage_multiplier: Some(value.fall_damage_multiplier.unwrap_or(1.0)),
             sneaking: value.sneaking.unwrap_or(false),
             moving_slowly: value.moving_slowly,
@@ -893,6 +1369,7 @@ impl From<SimulationState> for NativeSimulationState {
             position: value.position.into(),
             velocity: value.velocity.into(),
             yaw: Some(value.yaw),
+            yaw_degrees: value.yaw_degrees.map(f64::from),
             pitch: Some(value.pitch),
             half_width: value.half_width,
             height: value.height,
@@ -918,7 +1395,10 @@ impl From<SimulationState> for NativeSimulationState {
             ultra_warm: Some(value.ultra_warm),
             is_player: Some(value.is_player),
             controlled_by_local_instance: Some(value.controlled_by_local_instance),
+            can_simulate_movement: value.can_simulate_movement,
+            non_living: Some(value.non_living),
             passenger: Some(value.passenger),
+            boat_vehicle: value.boat_vehicle.map(Into::into),
             in_web: Some(value.in_web),
             weaving: Some(value.weaving),
             frost_walker: Some(value.frost_walker),
@@ -927,15 +1407,23 @@ impl From<SimulationState> for NativeSimulationState {
             powder_snow_walkable: Some(value.powder_snow_walkable),
             in_powder_snow: Some(value.in_powder_snow),
             fire_immune: Some(value.fire_immune),
+            fire_resistance: Some(value.fire_resistance),
+            on_fire_flag: Some(value.on_fire_flag),
             in_rain: Some(value.in_rain),
+            stab_hit: value.stab_hit.map(|knockback| NativeStabHit {
+                knockback: Some(f64::from(knockback)),
+            }),
             fire_protection: Some(value.fire_protection),
             burning_time: value.burning_time,
             remaining_fire_ticks: value.remaining_fire_ticks,
+            server_fire_increment: value.server_fire_increment,
+            server_fire_increments: value.server_fire_draws.map(ServerFireDraws::to_vec),
             ticks_frozen: Some(value.ticks_frozen),
             ticks_required_to_freeze: Some(value.ticks_required_to_freeze),
             tick_count: Some(value.tick_count),
             freeze_damage: Some(value.freeze_damage),
             contact_damage: Some(value.contact_damage),
+            wall_damage: Some(value.wall_damage),
             inside_wall: Some(value.inside_wall),
             sleeping: Some(value.sleeping),
             eye_height: value.eye_height,
@@ -947,6 +1435,10 @@ impl From<SimulationState> for NativeSimulationState {
             fall_distance: Some(value.fall_distance),
             safe_fall_distance: Some(value.safe_fall_distance),
             fall_damage_immune: Some(value.fall_damage_immune),
+            client_side: Some(value.client_side),
+            height_after_tick: None,
+            entity_type: None,
+            invulnerable: Some(value.invulnerable),
             fall_damage_multiplier: value.fall_damage_multiplier,
             sneaking: Some(value.sneaking),
             moving_slowly: value.moving_slowly,
@@ -996,6 +1488,7 @@ impl From<SimulationState> for NativeSimulationState {
             supporting_block_kept: Some(value.supporting_block_kept),
             on_ground_no_blocks: Some(value.on_ground_no_blocks),
             outside_border: Some(value.outside_border),
+            movement_speed_attribute: None,
             nearby_entities: None,
             firework_rockets: None,
             firework_rockets_before_player: None,
@@ -1007,7 +1500,9 @@ impl From<SimulationState> for NativeSimulationState {
 
 #[napi]
 pub struct NativeWorld {
-    inner: WorldSnapshot,
+    pub(crate) inner: WorldSnapshot,
+    /// Which world this is, for what keeps state of the world it last ran in. Never reused.
+    pub(crate) identity: u64,
 }
 
 impl Default for NativeWorld {
@@ -1022,13 +1517,36 @@ impl NativeWorld {
     }
 }
 
+/// A world from the bytes of NativeWorld.checkpoint. It is a new world: a NativePlayer that ticked
+/// in another takes it through setState.
+#[napi]
+pub fn native_world_from_checkpoint(bytes: napi::bindgen_prelude::Buffer) -> Result<NativeWorld> {
+    let mut world = NativeWorld::new();
+    world.inner = WorldSnapshot::decode(&bytes).map_err(Error::from_reason)?;
+    Ok(world)
+}
+
 #[napi]
 impl NativeWorld {
     #[napi(constructor)]
     pub fn new() -> Self {
+        static WORLDS: AtomicU64 = AtomicU64::new(0);
         Self {
             inner: WorldSnapshot::new(),
+            identity: WORLDS.fetch_add(1, Ordering::Relaxed),
         }
+    }
+
+    /// The whole world as bytes, for nativeWorldFromCheckpoint: equal worlds give equal bytes.
+    #[napi]
+    pub fn checkpoint(&self) -> napi::bindgen_prelude::Buffer {
+        self.inner.encode().into()
+    }
+
+    /// What names this world's content in a checkpoint.
+    #[napi]
+    pub fn content_digest(&self) -> String {
+        checkpoint_digest(&self.inner.encode())
     }
 
     #[napi]
@@ -1051,13 +1569,18 @@ impl NativeWorld {
         border_size: f64,
         border_absolute_max_size: Option<i32>,
     ) -> Result<()> {
-        if min_build_height >= max_build_height
-            || !border_center_x.is_finite()
-            || !border_center_z.is_finite()
-            || !border_size.is_finite()
-            || border_size < 0.0
-        {
-            return Err(Error::from_reason("world bounds are invalid"));
+        if min_build_height >= max_build_height {
+            return Err(Error::from_reason(format!(
+                "setWorldBounds: minBuildHeight {min_build_height} must be below maxBuildHeight {max_build_height}"
+            )));
+        }
+        for (name, value) in [("borderCenterX", border_center_x), ("borderCenterZ", border_center_z), ("borderSize", border_size)] {
+            if !value.is_finite() {
+                return Err(Error::from_reason(format!("setWorldBounds: {name} is {value}, it must be finite")));
+            }
+        }
+        if border_size < 0.0 {
+            return Err(Error::from_reason(format!("setWorldBounds: borderSize is {border_size}, it must not be negative")));
         }
         self.inner.set_world_bounds(
             min_build_height,
@@ -1072,12 +1595,57 @@ impl NativeWorld {
         Ok(())
     }
 
+    /// MovingPistonBlock.getCollisionShape: the block at the piston's cell takes the shape its block
+    /// entity gives at its progress, which a move before the block entity's tick meets.
+    /// `base_shapes`: the extended base a source piston leaves as it retracts.
+    #[napi]
+    pub fn set_moving_block(
+        &mut self,
+        version: String,
+        piston: NativeMovingPiston,
+        base_shapes: Option<Vec<NativeAabb>>,
+    ) -> Result<()> {
+        let release = world_border_release(Some(version))?;
+        let piston = MovingPiston::try_from(piston)?;
+        let base: Vec<Aabb> = base_shapes.unwrap_or_default().into_iter().map(Into::into).collect();
+        set_moving_block(&mut self.inner, &piston, &base, release);
+        Ok(())
+    }
+
+    /// The moving block's block entity ended: the block has no shape until it is written anew.
+    #[napi]
+    pub fn clear_moving_block(&mut self, x: i32, y: i32, z: i32) {
+        self.inner.clear_moving_block((x, y, z));
+    }
+
     /// WorldBorder.isWithinBounds(x, z) of the release (the newest one when none is given).
     #[napi]
     pub fn is_inside_world_border(&self, x: f64, z: f64, version: Option<String>) -> Result<bool> {
         Ok(self
             .inner
             .is_inside_world_border(Vec3::new(x, 0.0, z), world_border_release(version)?))
+    }
+
+    /// CollisionGetter.noBorderCollision of the release from 1.14 (the newest one when none is
+    /// given): whether the world border leaves `query` free for an entity at x, z with box
+    /// `bounds`. A release before 1.14 has no such term: its border cells are in the block query.
+    #[napi]
+    pub fn no_border_collision(
+        &self,
+        min: NativeVec3,
+        max: NativeVec3,
+        bounds_min: NativeVec3,
+        bounds_max: NativeVec3,
+        x: f64,
+        z: f64,
+        version: Option<String>,
+    ) -> Result<bool> {
+        Ok(self.inner.no_border_collision_for_entity(
+            Aabb::new(min.into(), max.into()),
+            Vec3::new(x, 0.0, z),
+            Aabb::new(bounds_min.into(), bounds_max.into()),
+            world_border_release(version)?,
+        ))
     }
 
     #[napi]
@@ -1162,8 +1730,7 @@ impl NativeWorld {
         version: String,
         id: u32,
     ) -> Result<()> {
-        let version = MinecraftVersion::parse(&version)
-            .ok_or_else(|| Error::from_reason("block state version must be a release name"))?;
+        let version = registered_release(&version)?;
         let identity =
             crate::world::VersionedBlockStateId::new(version, id).map_err(Error::from_reason)?;
         if !self.inner.contains_block((x, y, z)) {
@@ -1231,7 +1798,7 @@ impl NativeWorld {
             Vec3::new(shape.min_x, shape.min_y, shape.min_z),
             Vec3::new(shape.max_x, shape.max_y, shape.max_z),
         );
-        if !valid_collision_shape(bounds, shape.slipperiness) {
+        if !valid_block_shape(bounds, shape.slipperiness) {
             return Err(Error::from_reason(
                 "block shape bounds must be finite, ordered, and reach at most one block out of their own",
             ));
@@ -1272,6 +1839,7 @@ impl NativeWorld {
                 suppresses_bounce: shape.suppresses_bounce.unwrap_or(false),
                 suffocating: None,
                 in_wall: None,
+                bottom_face_sturdy: None,
             },
         );
         Ok(())
@@ -1289,9 +1857,9 @@ impl NativeWorld {
             Vec3::new(shape.min_x, shape.min_y, shape.min_z),
             Vec3::new(shape.max_x, shape.max_y, shape.max_z),
         );
-        if !valid_shape(bounds, shape.slipperiness) {
+        if !valid_block_shape(bounds, shape.slipperiness) {
             return Err(Error::from_reason(
-                "outline shape bounds must be finite, ordered, and within one block",
+                "outline shape bounds must be finite, ordered, and reach at most one block out of their own",
             ));
         }
         let mut state = self.inner.block((x, y, z));
@@ -1333,7 +1901,7 @@ impl NativeWorld {
                 Vec3::new(shape.min_x, shape.min_y, shape.min_z),
                 Vec3::new(shape.max_x, shape.max_y, shape.max_z),
             );
-            if !valid_collision_shape(bounds, shape.slipperiness) {
+            if !valid_block_shape(bounds, shape.slipperiness) {
                 return Err(Error::from_reason(
                     "block shape bounds must be finite, ordered, and reach at most one block out of their own",
                 ));
@@ -1375,6 +1943,15 @@ impl NativeWorld {
 
     #[napi]
     pub fn apply_block_updates(&mut self, updates: Vec<NativeBlockUpdate>) -> Result<()> {
+        // a batch applies whole or not at all: nothing below fails after this
+        for (index, update) in updates.iter().enumerate() {
+            validate_block_update(update).map_err(|error| {
+                Error::from_reason(format!(
+                    "applyBlockUpdates: update {index} at ({}, {}, {}): {}",
+                    update.x, update.y, update.z, error.reason
+                ))
+            })?;
+        }
         let mut grouped = std::collections::HashMap::new();
         for update in &updates {
             let position = (update.x, update.y, update.z);
@@ -1383,30 +1960,9 @@ impl NativeWorld {
                 self.inner.remove_block(position);
                 continue;
             }
-            if let Some(properties) = update.properties.as_ref() {
-                validate_block_properties(properties)?;
-            }
-            let metadata_only = update.id.is_none()
-                && update.tags.is_none()
-                && update.shape.is_none()
-                && update.outline_shape.is_none()
-                && update.interaction_shape.is_none()
-                && update.fluid.is_none()
-                && update.fluid_tags.is_none()
-                && update.fluid_level.is_none()
-                && update.fluid_source.is_none()
-                && update.fluid_flow.is_none()
-                && update.fluid_falling.is_none()
-                && update.water_block.is_none()
-                && update.fall_damage_resetting.is_none()
-                && update.player_fall_damage_resetting.is_none()
-                && update.bounce_restitution.is_none()
-                && update.suppresses_bounce.is_none()
-                && update.suffocating.is_none()
-                && update.in_wall.is_none();
             // A block's geometry is fixed per state: an update of its metadata alone keeps every
             // box the block (or an earlier update of it in this batch) has.
-            let entry = if metadata_only {
+            let entry = if metadata_only(update) {
                 grouped.entry(position).or_insert_with(|| {
                     let (shapes, outline_shapes, interaction_shapes) =
                         self.inner.block_geometry(position);
@@ -1440,9 +1996,7 @@ impl NativeWorld {
             entry.5 = match update.state_version.as_deref() {
                 Some(value) => Some(
                     crate::world::VersionedBlockStateId::new(
-                        MinecraftVersion::parse(value).ok_or_else(|| {
-                            Error::from_reason("block state version must be a release name")
-                        })?,
+                        registered_release(value)?,
                         update.id.unwrap_or(state.id),
                     )
                     .map_err(Error::from_reason)?,
@@ -1471,9 +2025,6 @@ impl NativeWorld {
                 self.inner.set_block_state_id(position, state_id);
             }
             if let Some(kind) = block_entity {
-                if kind.is_empty() {
-                    return Err(Error::from_reason("block entity kind must not be empty"));
-                }
                 self.inner.set_block_entity(position, kind);
             } else if remove_block_entity {
                 self.inner.remove_block_entity(position);
@@ -1513,6 +2064,7 @@ impl NativeWorld {
                 suppresses_bounce: false,
                 suffocating: None,
                 in_wall: None,
+                bottom_face_sturdy: None,
             },
         );
         Ok(())
@@ -1606,18 +2158,22 @@ impl NativeWorld {
         Ok(())
     }
 
+    /// The collision boxes in the query, its cells by the release's Mth.floor and Mth.ceil (the
+    /// newest release when none is given).
     #[napi]
-    pub fn collision_shapes(&self, min: NativeVec3, max: NativeVec3) -> Result<Vec<NativeAabb>> {
+    pub fn collision_shapes(
+        &self,
+        min: NativeVec3,
+        max: NativeVec3,
+        version: Option<String>,
+    ) -> Result<Vec<NativeAabb>> {
+        let release = world_border_release(version)?;
         let query = crate::math::Aabb::new(min.into(), max.into());
-        if !valid_bounds(query) {
-            return Err(Error::from_reason(
-                "collision query bounds must be finite and ordered",
-            ));
-        }
+        validate_query("collision", query)?;
 
         Ok(self
             .inner
-            .collision_shapes(query)
+            .collision_shapes(query, release)
             .into_iter()
             .map(|bounds| NativeAabb {
                 min: bounds.min.into(),
@@ -1626,32 +2182,38 @@ impl NativeWorld {
             .collect())
     }
 
+    /// The outline boxes in the query, as collision_shapes takes its cells.
     #[napi]
-    pub fn outline_shapes(&self, min: NativeVec3, max: NativeVec3) -> Result<Vec<NativeAabb>> {
+    pub fn outline_shapes(
+        &self,
+        min: NativeVec3,
+        max: NativeVec3,
+        version: Option<String>,
+    ) -> Result<Vec<NativeAabb>> {
+        let release = world_border_release(version)?;
         let query = crate::math::Aabb::new(min.into(), max.into());
-        if !valid_bounds(query) {
-            return Err(Error::from_reason(
-                "outline query bounds must be finite and ordered",
-            ));
-        }
+        validate_query("outline", query)?;
 
-        Ok(self.inner.outline_shapes(query).into_iter().map(|bounds| NativeAabb {
+        Ok(self.inner.outline_shapes(query, release).into_iter().map(|bounds| NativeAabb {
             min: bounds.min.into(),
             max: bounds.max.into(),
         }).collect())
     }
 
+    /// The interaction boxes in the query, as collision_shapes takes its cells.
     #[napi]
-    pub fn interaction_shapes(&self, min: NativeVec3, max: NativeVec3) -> Result<Vec<NativeAabb>> {
+    pub fn interaction_shapes(
+        &self,
+        min: NativeVec3,
+        max: NativeVec3,
+        version: Option<String>,
+    ) -> Result<Vec<NativeAabb>> {
+        let release = world_border_release(version)?;
         let query = crate::math::Aabb::new(min.into(), max.into());
-        if !valid_bounds(query) {
-            return Err(Error::from_reason(
-                "interaction query bounds must be finite and ordered",
-            ));
-        }
+        validate_query("interaction", query)?;
         Ok(self
             .inner
-            .interaction_shapes(query)
+            .interaction_shapes(query, release)
             .into_iter()
             .map(|bounds| NativeAabb {
                 min: bounds.min.into(),
@@ -1747,6 +2309,34 @@ pub fn simulate_tick(
     ))
 }
 
+/// What entityTravelSupport says of a kind.
+#[napi(object)]
+#[derive(Clone, Debug)]
+pub struct NativeEntityTravelSupport {
+    /// "player", "boat", "ridden", "unsupported", which the game has and the engine has no path
+    /// for, or "unknown", outside the inventory.
+    pub family: String,
+    /// The release's registry holds the kind.
+    pub available: bool,
+    /// The first release that has it.
+    pub since: Option<String>,
+}
+
+/// The engine's inventory of the kinds that move through fluids or are steered through them
+/// (entity_travel.rs): which path moves a kind in a release, if any.
+#[napi]
+pub fn entity_travel_support(version: String, entity_type: String) -> Result<NativeEntityTravelSupport> {
+    let release = registered_release(&version)?;
+    let support = travel_support(&entity_type, release);
+    Ok(NativeEntityTravelSupport {
+        family: support.family.map_or("unknown", TravelFamily::name).to_string(),
+        available: support.available,
+        since: support
+            .since
+            .map(|(major, minor, patch)| format!("{major}.{minor}.{patch}")),
+    })
+}
+
 /// One client tick of the local player: the attached rockets and nearby entities the client ticks
 /// before it boost and push it, it ticks (colliding with the entities that are colliders), the
 /// other rockets and entities boost and push it, then the moving pistons push it. The rockets
@@ -1768,6 +2358,38 @@ pub fn simulate_versioned_tick(
     Ok(simulation_state.into())
 }
 
+/// simulateVersionedTick with its phase trace: the same tick, which a trace only reads, and a copy of
+/// the state at each point it passed. A tick that does not travel (a removed entity) passes fewer.
+#[napi]
+pub fn simulate_versioned_tick_traced(
+    version: String,
+    world: &mut NativeWorld,
+    mut state: NativeSimulationState,
+    config: NativeSimulationConfig,
+) -> Result<NativeTracedTick> {
+    let mut scene = LocalPlayerScene::take(&mut state)?;
+    let mut simulation_state: SimulationState = state.into();
+    let minecraft_version = MinecraftVersion::parse(&version)
+        .ok_or_else(|| Error::from_reason(format!("invalid Minecraft version: {version}")))?;
+    let config = validated_simulation_config(config)?;
+    let (outcome, events) = crate::phase::traced(|| {
+        scene.tick(&version, minecraft_version, world, &mut simulation_state, config)
+    });
+    outcome?;
+    Ok(NativeTracedTick {
+        state: simulation_state.into(),
+        phases: events
+            .into_iter()
+            .map(|event| NativeTickPhase {
+                name: event.phase.name().to_string(),
+                occurrence: event.occurrence,
+                state: event.state.into(),
+                travel_vector: event.travel_vector.map(Into::into),
+            })
+            .collect(),
+    })
+}
+
 /// simulateVersionedTick's tick with all it writes (the TickOutputSnapshot of the tick): the state
 /// carrying the scene the next tick reads, so it can be passed back as the next tick's state,
 /// the pushes the nearby entities took back, whether the spin attack ended, and the piston deltas.
@@ -1786,14 +2408,7 @@ pub fn simulate_versioned_tick_outcome(
         .ok_or_else(|| Error::from_reason(format!("invalid Minecraft version: {version}")))?;
     let config = validated_simulation_config(config)?;
     let outcome = scene.tick(&version, minecraft_version, world, &mut simulation_state, config)?;
-    let mut next: NativeSimulationState = simulation_state.into();
-    let scene = scene.scene;
-    next.nearby_entities = nearby_entities;
-    next.firework_rockets = Some(scene.firework_rockets);
-    next.firework_rockets_before_player = Some(scene.firework_rockets_before_player);
-    next.firework_rocket_ticks = scene.rocket_ticks;
-    next.moving_pistons = (had_pistons || !scene.moving_pistons.is_empty())
-        .then(|| scene.moving_pistons.into_iter().map(Into::into).collect());
+    let next = state_with_scene(simulation_state.into(), &scene, nearby_entities, had_pistons);
     let [x, y, z] = outcome.piston_deltas;
     Ok(NativeTickOutcome {
         state: next,
@@ -1813,12 +2428,32 @@ pub fn simulate_versioned_tick_outcome(
 
 /// What a state brings to simulateVersionedTick beside the player: the nearby entities, the
 /// attached rockets and the moving pistons, as the TickScene a TickInputSnapshot also runs.
-struct LocalPlayerScene {
+pub(crate) struct LocalPlayerScene {
     scene: TickScene,
 }
 
+/// The state with the scene it reached, which the next tick reads: `nearby_entities` as they came,
+/// since the scene's are the engine's own form.
+pub(crate) fn state_with_scene(
+    mut next: NativeSimulationState,
+    scene: &LocalPlayerScene,
+    nearby_entities: Option<Vec<NativeNearbyEntity>>,
+    had_pistons: bool,
+) -> NativeSimulationState {
+    let scene = &scene.scene;
+    next.movement_speed_attribute = scene.movement_speed.as_ref().map(Into::into);
+    next.nearby_entities = nearby_entities;
+    next.firework_rockets = Some(scene.firework_rockets);
+    next.firework_rockets_before_player = Some(scene.firework_rockets_before_player);
+    next.firework_rocket_ticks = scene.rocket_ticks.clone();
+    next.moving_pistons = (had_pistons || !scene.moving_pistons.is_empty())
+        .then(|| scene.moving_pistons.iter().cloned().map(Into::into).collect());
+    next
+}
+
 impl LocalPlayerScene {
-    fn take(state: &mut NativeSimulationState) -> Result<Self> {
+    pub(crate) fn take(state: &mut NativeSimulationState) -> Result<Self> {
+        validate_tick_state("simulateVersionedTick", state)?;
         let nearby_entities = state
             .nearby_entities
             .take()
@@ -1843,11 +2478,22 @@ impl LocalPlayerScene {
             (Some(ticks), _) => ticks.len() as u32,
             (None, rockets) => rockets.unwrap_or(0),
         };
+        if rockets > MAX_ATTACHED_ROCKETS {
+            return Err(Error::from_reason(format!(
+                "simulateVersionedTick: fireworkRockets is {rockets}, past the {MAX_ATTACHED_ROCKETS} a tick counts"
+            )));
+        }
         let rockets_before_player = state
             .firework_rockets_before_player
             .unwrap_or(0)
             .min(rockets);
+        let movement_speed = state
+            .movement_speed_attribute
+            .take()
+            .map(MovementSpeedAttribute::try_from)
+            .transpose()?;
         let mut scene = TickScene {
+            movement_speed,
             nearby_entities,
             firework_rockets: rockets,
             firework_rockets_before_player: rockets_before_player,
@@ -1864,7 +2510,7 @@ impl LocalPlayerScene {
     /// One client tick of the local player in this scene (simulateVersionedTick), then the
     /// scene's own: the moving pistons move on and the attached rockets count the tick off
     /// (TickScene::advance).
-    fn tick(
+    pub(crate) fn tick(
         &mut self,
         version: &str,
         release: MinecraftVersion,
@@ -1872,7 +2518,7 @@ impl LocalPlayerScene {
         state: &mut SimulationState,
         config: PhysicsConfig,
     ) -> Result<TickSceneOutcome> {
-        tick_scene(
+        let outcome = tick_scene(
             &mut world.inner,
             state,
             &mut self.scene,
@@ -1880,38 +2526,63 @@ impl LocalPlayerScene {
             release,
             |state, world| versioned::dispatch(version, state, world, config),
         )
-        .map_err(Error::from_reason)
+        .map_err(Error::from_reason)?;
+        check_fire_draws(state)?;
+        Ok(outcome)
     }
 }
 
-/// simulateVersionedTick's tick before the pistons: the rockets and entities the client ticks
-/// before the player, its tick with the colliders among the entities in the world, then the
-/// rockets and entities after it. `rockets` counts all the attached rockets and those before.
-/// Returns the pushes the entities took back from the player.
-pub(crate) fn tick_local_player(
+/// simulateVersionedTick's tick up to Player.tick's pose update: the rockets and entities the
+/// client ticks before the player, and its tick with the colliders among the entities in the
+/// world. `rockets` counts all the attached rockets and those before. Returns the pushes the
+/// entities took back from the player and whether the spin attack ended;
+/// finish_local_player_tick runs the rest.
+pub(crate) fn move_local_player_tick(
     version: &str,
     release: MinecraftVersion,
     world: &mut NativeWorld,
     state: &mut SimulationState,
+    movement_speed: Option<&mut MovementSpeedAttribute>,
     nearby_entities: &[NearbyEntity],
     rockets: (u32, u32),
     auto_spin_attack: bool,
     config: PhysicsConfig,
 ) -> Result<(Vec<EntityPush>, bool)> {
-    let outcome = tick_local_player_scene(
+    let outcome = move_local_player(
         &mut world.inner,
         state,
+        movement_speed,
         nearby_entities,
         rockets,
         auto_spin_attack,
-        &[],
-        &mut [0.0; 3],
-        config,
         release,
         |state, world| versioned::dispatch(version, state, world, config),
     )
     .map_err(Error::from_reason)?;
+    check_fire_draws(state)?;
     Ok((outcome.entity_pushes, outcome.auto_spin_attack_ended))
+}
+
+/// The rockets and entities after the player, in the height the pose update left. Returns the
+/// pushes the entities took back.
+pub(crate) fn finish_local_player_tick(
+    release: MinecraftVersion,
+    world: &mut NativeWorld,
+    state: &mut SimulationState,
+    nearby_entities: &[NearbyEntity],
+    rockets_after_player: u32,
+    config: PhysicsConfig,
+) -> Vec<EntityPush> {
+    finish_local_player(
+        &mut world.inner,
+        state,
+        nearby_entities,
+        rockets_after_player,
+        &[],
+        &mut [0.0; 3],
+        config,
+        release,
+    )
 }
 
 /// The moving pistons' pushes after the player's tick, with the colliders among the entities
@@ -1955,6 +2626,7 @@ pub fn simulate_versioned_piston_push(
             "unsupported decompiled Minecraft version: {version}"
         )));
     }
+    validate_tick_state("simulateVersionedPistonPush", &state)?;
     let nearby_entities: Vec<NearbyEntity> = state
         .nearby_entities
         .take()
@@ -2008,30 +2680,9 @@ pub fn simulate_versioned_ticks(
     ticks: u32,
     config: NativeSimulationConfig,
 ) -> Result<Vec<NativeSimulationState>> {
-    if !versioned::is_supported(&version) {
-        return Err(Error::from_reason(format!(
-            "unsupported decompiled Minecraft version: {version}"
-        )));
-    }
-    let mut simulation_states = states
-        .into_iter()
-        .map(|mut state| {
-            let scene = LocalPlayerScene::take(&mut state)?;
-            Ok((SimulationState::from(state), scene))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let minecraft_version = MinecraftVersion::parse(&version)
-        .ok_or_else(|| Error::from_reason(format!("invalid Minecraft version: {version}")))?;
-    let config = validated_simulation_config(config)?;
-    for _ in 0..ticks {
-        for (state, scene) in &mut simulation_states {
-            scene.tick(&version, minecraft_version, world, state, config)?;
-        }
-    }
-    Ok(simulation_states
-        .into_iter()
-        .map(|(state, _)| state.into())
-        .collect())
+    let mut batch = PlayerBatch::new(version, states, config)?;
+    batch.advance(world, ticks)?;
+    Ok(batch.into_states())
 }
 
 #[napi]
@@ -2042,136 +2693,9 @@ pub fn simulate_versioned_entity_ticks(
     ticks: u32,
     config: NativeSimulationConfig,
 ) -> Result<Vec<NativeVersionedEntityState>> {
-    if !versioned::is_supported(&version) {
-        return Err(Error::from_reason(format!(
-            "unsupported decompiled Minecraft version: {version}"
-        )));
-    }
-    let pushthrough_enabled =
-        versioned::entity_pushthrough_enabled(&version).map_err(Error::from_reason)?;
-    if states
-        .iter()
-        .any(|state| !state.pushthrough.is_finite() || !(0.0..=1.0).contains(&state.pushthrough))
-    {
-        return Err(Error::from_reason(
-            "entity push state contains invalid values",
-        ));
-    }
-    let minecraft_version = MinecraftVersion::parse(&version)
-        .ok_or_else(|| Error::from_reason(format!("invalid Minecraft version: {version}")))?;
-    let config = validated_simulation_config(config)?;
-    let ids: Vec<Option<u32>> = states.iter().map(|state| state.id).collect();
-    let vehicles: Vec<Option<u32>> = states.iter().map(|state| state.vehicle_id).collect();
-    let mut simulations: Vec<SimulationState> = Vec::with_capacity(states.len());
-    let mut rest = Vec::with_capacity(states.len());
-    for state in states {
-        simulations.push(state.simulation.into());
-        rest.push((
-            state.id,
-            state.no_physics,
-            state.vehicle_id,
-            state.pushable,
-            state.pushthrough,
-        ));
-    }
-    // Entity.isVehicle: some entity rides it
-    let has_passengers: Vec<bool> = ids
-        .iter()
-        .map(|id| id.is_some() && vehicles.contains(id))
-        .collect();
-    // Entity.getRootVehicle: the vehicle at the bottom of what it rides (None for one that rides
-    // nothing and has no id: its own root, the root of no other entity)
-    let root = |index: usize| -> Option<u32> {
-        let mut root = ids[index];
-        let mut vehicle = vehicles[index];
-        for _ in 0..ids.len() {
-            let Some(id) = vehicle else { break };
-            root = Some(id);
-            vehicle = ids
-                .iter()
-                .position(|other| *other == Some(id))
-                .and_then(|other| vehicles[other]);
-        }
-        root
-    };
-    let roots: Vec<Option<u32>> = (0..ids.len()).map(root).collect();
-    // Entity.push(Entity) skips: from 1.9 entities of the same root vehicle
-    // (isPassengerOfSameVehicle, 1.9.4 Entity.java:2235, 1.21.4 :3205); in 1.8 the entity and its
-    // rider or vehicle (1.8.9 Entity.java:1030)
-    let connected = |left: usize, right: usize| -> bool {
-        if minecraft_version.at_least(1, 9, 0) {
-            roots[left].is_some() && roots[left] == roots[right]
-        } else {
-            (ids[left].is_some() && vehicles[right] == ids[left])
-                || (ids[right].is_some() && vehicles[left] == ids[right])
-        }
-    };
-
-    // Each entity runs its whole tick in turn: its move (travel), then LivingEntity.pushEntities
-    // from where the move left it: every other pushable entity whose box meets its own (1.8 grown
-    // by 0.2F, 0, 0.2F) runs Entity.push(the ticking entity), which pushes both (1.8.9
-    // LivingEntity.java:1469-1499, 1.9.4 :1737-1777, 1.16.5 :2514-2598). The others are taken in
-    // the order given (the level's entity sections in vanilla).
-    for _ in 0..ticks {
-        for index in 0..simulations.len() {
-            let simulation = &mut simulations[index];
-            simulation.minor_horizontal_collision_supported =
-                minecraft_version.supports_minor_horizontal_collision();
-            let result = versioned::dispatch(&version, simulation, world.snapshot(), config)
-                .map_err(Error::from_reason)?;
-            simulation.collided_horizontally = result.collided_horizontally;
-            simulation.collided_vertically = result.collided_vertically;
-
-            for other in 0..simulations.len() {
-                if other == index || !rest[other].3 {
-                    continue;
-                }
-                let mut reach = simulations[index].bounds();
-                if !minecraft_version.at_least(1, 9, 0) {
-                    reach = reach.inflate(Vec3::new(f64::from(0.2_f32), 0.0, f64::from(0.2_f32)));
-                }
-                if !simulations[other].bounds().intersects(reach) {
-                    continue;
-                }
-                let (other_impulse, impulse) = entity_push_impulses_with_pushthrough(
-                    simulations[other].position,
-                    simulations[index].position,
-                    rest[other].1,
-                    rest[index].1,
-                    connected(other, index),
-                    has_passengers[other],
-                    has_passengers[index],
-                    rest[other].3,
-                    rest[index].3,
-                    if pushthrough_enabled {
-                        rest[other].4
-                    } else {
-                        0.0
-                    },
-                    minecraft_version,
-                );
-                simulations[other].velocity = simulations[other].velocity + other_impulse;
-                simulations[index].velocity = simulations[index].velocity + impulse;
-            }
-        }
-    }
-
-    Ok(simulations
-        .into_iter()
-        .zip(rest)
-        .map(
-            |(simulation, (id, no_physics, vehicle_id, pushable, pushthrough))| {
-                NativeVersionedEntityState {
-                    simulation: simulation.into(),
-                    no_physics,
-                    id,
-                    vehicle_id,
-                    pushable,
-                    pushthrough,
-                }
-            },
-        )
-        .collect())
+    let mut batch = EntityBatch::new(version, states, config)?;
+    batch.advance(world.snapshot(), ticks)?;
+    Ok(batch.states())
 }
 
 #[napi]
@@ -2186,8 +2710,6 @@ pub fn simulate_versioned_entity_push(
             "unsupported decompiled Minecraft version: {version}"
         )));
     }
-    let pushthrough_enabled =
-        versioned::entity_pushthrough_enabled(&version).map_err(Error::from_reason)?;
     let minecraft_version = MinecraftVersion::parse(&version)
         .ok_or_else(|| Error::from_reason(format!("invalid Minecraft version: {version}")))?;
     let left_position: Vec3 = left.position.into();
@@ -2217,17 +2739,34 @@ pub fn simulate_versioned_entity_push(
         right.vehicle,
         left.pushable,
         right.pushable,
-        if pushthrough_enabled {
-            left.pushthrough
-        } else {
-            0.0
-        },
+        left.pushthrough,
         minecraft_version,
     );
     Ok(NativeEntityPushResult {
         left_velocity: (left_velocity + left_impulse).into(),
         right_velocity: (right_velocity + right_impulse).into(),
     })
+}
+
+/// Whether a block's collision box meets a query as vanilla's noCollision takes it
+/// (world::shape_meets_query): `block` when the box is the block's whole shape, a full cube.
+#[napi]
+pub fn collision_box_meets_query(
+    version: String,
+    min: NativeVec3,
+    max: NativeVec3,
+    block: bool,
+    query_min: NativeVec3,
+    query_max: NativeVec3,
+) -> Result<bool> {
+    let release = MinecraftVersion::parse(&version)
+        .ok_or_else(|| Error::from_reason(format!("invalid Minecraft version: {version}")))?;
+    Ok(shape_meets_query(
+        Aabb::new(min.into(), max.into()),
+        block,
+        Aabb::new(query_min.into(), query_max.into()),
+        release,
+    ))
 }
 
 /// Player.updatePlayerPose (updateSize before 1.17): the requested pose when it fits, else
@@ -2263,6 +2802,7 @@ pub fn refresh_versioned_pose(
     let requested_size = player_pose_size(requested_pose, release, scale)?;
     let swimming_size = player_pose_size(POSE_SWIMMING, release, scale)?;
     let crouching_size = player_pose_size(POSE_CROUCHING, release, scale)?;
+    validate_tick_state("refreshVersionedPose", &state)?;
     let nearby_entities: Vec<NearbyEntity> = state
         .nearby_entities
         .take()
@@ -2322,6 +2862,7 @@ pub fn refresh_versioned_pose(
 pub fn create_simulation_state(
     descriptor: NativeEntityDescriptor,
 ) -> Result<NativeSimulationState> {
+    validate_boat_vehicle(descriptor.boat_vehicle.as_ref())?;
     if !descriptor.position.x.is_finite()
         || !descriptor.position.y.is_finite()
         || !descriptor.position.z.is_finite()
@@ -2365,6 +2906,9 @@ pub fn create_simulation_state(
     state.sneaking = descriptor.sneaking.unwrap_or(false);
     state.swimming = descriptor.swimming.unwrap_or(false);
     state.passenger = descriptor.passenger.unwrap_or(false);
+    state.boat_vehicle = descriptor.boat_vehicle.map(Into::into);
+    state.can_simulate_movement = descriptor.can_simulate_movement;
+    state.non_living = descriptor.non_living.unwrap_or(false);
     state.climbing = descriptor.climbing.unwrap_or(false);
     state.no_gravity = descriptor.no_gravity.unwrap_or(false);
     state.fall_flying = descriptor.fall_flying.unwrap_or(false);
@@ -2397,12 +2941,11 @@ pub fn create_simulation_state(
     state.flying_speed = descriptor.flying_speed.unwrap_or(f64::from(0.05_f32));
     state.no_physics = descriptor.no_physics.unwrap_or(false);
     state.pitch = descriptor.pitch.unwrap_or(0.0);
+    let release = match descriptor.version.as_deref() {
+        Some(version) => registered_release(version)?,
+        None => VersionPhysicsRules::default().release,
+    };
     state.look = descriptor.look.map(Into::into).unwrap_or_else(|| {
-        let release = descriptor
-            .version
-            .as_deref()
-            .and_then(MinecraftVersion::parse)
-            .unwrap_or(VersionPhysicsRules::default().release);
         view_vector(state.pitch, state.yaw, release)
     });
     state.firework_boost = descriptor
@@ -2453,7 +2996,7 @@ fn dimensions_for_pose(
     let Some(pose) = pose else {
         return Ok(Dimensions::new(half_width, height));
     };
-    let release = version.and_then(MinecraftVersion::parse);
+    let release = version.map(registered_release).transpose()?;
     // ids 6 and 7 name different poses before and from 1.17: no release, no telling which
     match (release, pose) {
         (None, 6) => {
@@ -2552,6 +3095,25 @@ pub fn version_capabilities(major: u16, minor: u16, patch: u16) -> NativeVersion
         fall_flying: capabilities.fall_flying,
         water_movement_efficiency: capabilities.water_movement_efficiency,
         minor_horizontal_collision: capabilities.minor_horizontal_collision,
+    }
+}
+
+/// What this binary is, as it was compiled: the Rust target and the hash of the sources it was built
+/// from (native/build.rs). native/artifacts/provenance.*.json records the same, so a binary from
+/// another build cannot pass as this one, and a WebAssembly fallback cannot pass as a native addon.
+#[napi(object)]
+pub struct NativeBuildIdentity {
+    pub target: String,
+    pub source_hash: String,
+    pub crate_version: String,
+}
+
+#[napi]
+pub fn build_identity() -> NativeBuildIdentity {
+    NativeBuildIdentity {
+        target: env!("MCPN_BUILD_TARGET").to_string(),
+        source_hash: env!("MCPN_SOURCE_HASH").to_string(),
+        crate_version: env!("CARGO_PKG_VERSION").to_string(),
     }
 }
 
@@ -2729,6 +3291,71 @@ pub fn generated_exact_method_shape_boxes_for_state(
     })
 }
 
+fn native_state_shape(shape: crate::block_shapes::StateShape) -> NativeGeneratedStateShape {
+    use crate::block_shapes::{StateShape, DEPENDS_ENTITY, DEPENDS_LEVEL, DEPENDS_POSITION};
+    match shape {
+        StateShape::Exact(boxes) => NativeGeneratedStateShape {
+            status: "exact".to_string(),
+            depends_on: Vec::new(),
+            boxes: boxes
+                .iter()
+                .map(|[min_x, min_y, min_z, max_x, max_y, max_z]| NativeGeneratedShapeBox {
+                    min_x: *min_x,
+                    min_y: *min_y,
+                    min_z: *min_z,
+                    max_x: *max_x,
+                    max_y: *max_y,
+                    max_z: *max_z,
+                })
+                .collect(),
+        },
+        StateShape::Contextual(mask) => NativeGeneratedStateShape {
+            status: "contextual".to_string(),
+            depends_on: [(DEPENDS_POSITION, "position"), (DEPENDS_LEVEL, "level"), (DEPENDS_ENTITY, "entity")]
+                .into_iter()
+                .filter(|(bit, _)| mask & bit != 0)
+                .map(|(_, name)| name.to_string())
+                .collect(),
+            boxes: Vec::new(),
+        },
+        StateShape::Absent => NativeGeneratedStateShape {
+            status: "absent".to_string(),
+            depends_on: Vec::new(),
+            boxes: Vec::new(),
+        },
+    }
+}
+
+/// A channel of a block's state by its index among the block's states; null for a release with no table, an
+/// unknown block or channel, or an index past its states.
+#[napi]
+pub fn generated_state_shape(
+    version: String,
+    block: String,
+    kind: String,
+    index: u32,
+) -> Option<NativeGeneratedStateShape> {
+    let (shapes, block) = crate::block_shapes::block(&version, &block)?;
+    block.shape(shapes, &kind, index as usize).map(native_state_shape)
+}
+
+/// A channel of a block's state by its properties, vanilla's names and values: null as above, and for a tuple
+/// that is not exactly one value of each of the block's properties.
+#[napi]
+pub fn generated_state_shape_for_properties(
+    version: String,
+    block: String,
+    kind: String,
+    properties: Vec<NativeBlockProperty>,
+) -> Option<NativeGeneratedStateShape> {
+    let (shapes, block) = crate::block_shapes::block(&version, &block)?;
+    let values = properties
+        .iter()
+        .map(|property| (property.name.as_str(), property.value.as_str()))
+        .collect::<Vec<_>>();
+    block.shape(shapes, &kind, block.state_index(&values)?).map(native_state_shape)
+}
+
 #[napi]
 pub fn generated_shape_property_dependencies(
     version: String,
@@ -2816,18 +3443,30 @@ pub fn generated_method_shape_provenance(
 pub fn simulate_boat_tick(state: NativeBoatState) -> Result<NativeBoatState> {
     let mut state = boat_state(state)?;
     tick_boat(&mut state);
+    check_move("simulateBoatTick", state.move_out_of_range)?;
     Ok(native_boat_state(state))
+}
+
+/// The release a caller named, which must be one the engine registers by that exact spelling: an
+/// unknown patch, a prerelease or "1.21.0" for 1.21 is refused, never read as the nearest release.
+pub(crate) fn registered_release(version: &str) -> Result<MinecraftVersion> {
+    if !versioned::is_supported(version) {
+        return Err(Error::from_reason(format!(
+            "unsupported Minecraft version: {version}"
+        )));
+    }
+    MinecraftVersion::parse(version)
+        .ok_or_else(|| Error::from_reason(format!("invalid Minecraft version: {version}")))
 }
 
 fn world_border_release(version: Option<String>) -> Result<MinecraftVersion> {
     match version {
-        Some(version) => MinecraftVersion::parse(&version)
-            .ok_or_else(|| Error::from_reason(format!("invalid Minecraft version: {version}"))),
+        Some(version) => registered_release(&version),
         None => Ok(VersionPhysicsRules::default().release),
     }
 }
 
-fn vehicle_release(version: &str, kind: &str) -> Result<MinecraftVersion> {
+pub(crate) fn vehicle_release(version: &str, kind: &str) -> Result<MinecraftVersion> {
     if !versioned::is_supported(version) {
         return Err(Error::from_reason(format!(
             "unsupported Minecraft version for {kind} simulation: {version}"
@@ -2837,41 +3476,139 @@ fn vehicle_release(version: &str, kind: &str) -> Result<MinecraftVersion> {
         .ok_or_else(|| Error::from_reason(format!("invalid Minecraft version: {version}")))
 }
 
+/// Where a boat seats a player alone in it, and the yaw it leaves it with (Entity.positionRider,
+/// Boat.positionRider: `boat_passenger_position`, `boat_passenger_yaw`).
+#[napi(object)]
+pub struct NativeBoatPlacement {
+    pub position: NativeVec3,
+    pub yaw_degrees: f64,
+}
+
+/// The seat of the player a boat in `state`, as its tick left it, carries in front: a chest boat's
+/// and a raft's differ (`chest`, `raft`), and so does one of `passengers` (absent: alone).
+#[napi]
+pub fn boat_passenger_placement(
+    version: String,
+    state: NativeBoatState,
+    passenger_yaw_degrees: f64,
+    chest: Option<bool>,
+    raft: Option<bool>,
+    passengers: Option<u32>,
+) -> Result<NativeBoatPlacement> {
+    let release = vehicle_release(&version, "boat")?;
+    let boat = boat_state(state)?;
+    let seat = BoatSeat {
+        chest: chest.unwrap_or(false),
+        raft: raft.unwrap_or(false),
+        passengers: passengers.unwrap_or(1) as _,
+        ..BoatSeat::player(release)
+    };
+    Ok(NativeBoatPlacement {
+        position: boat_passenger_position(&boat, seat, release).into(),
+        yaw_degrees: f64::from(boat_passenger_yaw(passenger_yaw_degrees as f32, &boat, release)),
+    })
+}
+
 #[napi]
 pub fn simulate_versioned_boat_tick(
     version: String,
-    world: &NativeWorld,
-    state: NativeBoatState,
+    world: &mut NativeWorld,
+    mut state: NativeBoatState,
 ) -> Result<NativeBoatState> {
     let release = vehicle_release(&version, "boat")?;
+    let colliders = vehicle_colliders(state.nearby_entities.take(), true, release);
     let mut state = boat_state(state)?;
+    world.inner.set_entity_colliders(colliders);
     tick_boat_in_world(&mut state, world.snapshot(), release);
+    world.inner.set_entity_colliders(Vec::new());
+    check_move("simulateVersionedBoatTick", state.move_out_of_range)?;
     Ok(native_boat_state(state))
+}
+
+/// The head or the tail of a vehicle's move inside its tick.
+#[napi(object)]
+pub struct NativeVehicleMove {
+    pub name: String,
+    pub position: NativeVec3,
+    pub velocity: NativeVec3,
+}
+
+/// simulateVersionedBoatTick's state, and the moves of the tick on the way to it.
+#[napi(object)]
+pub struct NativeTracedBoatTick {
+    pub state: NativeBoatState,
+    pub moves: Vec<NativeVehicleMove>,
+}
+
+/// simulateVersionedHorseTick's state, and the moves of the tick on the way to it.
+#[napi(object)]
+pub struct NativeTracedHorseTick {
+    pub state: NativeHorseState,
+    pub moves: Vec<NativeVehicleMove>,
+}
+
+fn native_vehicle_moves(events: Vec<crate::phase::VehicleMoveEvent>) -> Vec<NativeVehicleMove> {
+    events.into_iter().map(|event| NativeVehicleMove { name: event.name.to_string(), position: event.position.into(), velocity: event.velocity.into() }).collect()
+}
+
+/// simulateVersionedBoatTick with the head and tail of each move inside the tick, which only a trace pays for.
+#[napi]
+pub fn simulate_versioned_boat_tick_traced(
+    version: String,
+    world: &mut NativeWorld,
+    state: NativeBoatState,
+) -> Result<NativeTracedBoatTick> {
+    let (state, events) = crate::phase::traced_vehicle(|| simulate_versioned_boat_tick(version, world, state));
+    Ok(NativeTracedBoatTick { state: state?, moves: native_vehicle_moves(events) })
+}
+
+/// simulateVersionedHorseTick with the head and tail of each move inside the tick.
+#[napi]
+pub fn simulate_versioned_horse_tick_traced(
+    version: String,
+    world: &mut NativeWorld,
+    state: NativeHorseState,
+) -> Result<NativeTracedHorseTick> {
+    let (state, events) = crate::phase::traced_vehicle(|| simulate_versioned_horse_tick(version, world, state));
+    Ok(NativeTracedHorseTick { state: state?, moves: native_vehicle_moves(events) })
+}
+
+/// The colliders of a vehicle's `nearbyEntities` (vehicle_entity_colliders).
+pub(crate) fn vehicle_colliders(
+    nearby: Option<Vec<NativeNearbyEntity>>,
+    boat: bool,
+    release: MinecraftVersion,
+) -> Vec<EntityCollider> {
+    let entities: Vec<NearbyEntity> = nearby
+        .unwrap_or_default()
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    vehicle_entity_colliders(&entities, boat, release)
 }
 
 #[napi]
 pub fn simulate_versioned_boat_ticks(
     version: String,
-    world: &NativeWorld,
+    world: &mut NativeWorld,
     states: Vec<NativeBoatState>,
     ticks: u32,
 ) -> Result<Vec<NativeBoatState>> {
-    let release = vehicle_release(&version, "boat")?;
-    let snapshot = world.snapshot();
-    let mut states: Vec<BoatSimulationState> = states
-        .into_iter()
-        .map(boat_state)
-        .collect::<Result<Vec<_>>>()?;
-    for _ in 0..ticks {
-        for state in &mut states {
-            tick_boat_in_world(state, snapshot, release);
-        }
-    }
-    Ok(states.into_iter().map(native_boat_state).collect())
+    let mut batch = BoatBatch::new(&version, states)?;
+    batch.advance(world, ticks)?;
+    Ok(batch.states())
 }
 
 #[napi]
 pub fn simulate_horse_tick(state: NativeHorseState) -> Result<NativeHorseState> {
+    // (this is AbstractHorse's tick: the other mobs have their own, which take a world)
+    if let Some(name) = state.entity_type.as_deref() {
+        if !RiddenMobKind::parse(name).is_some_and(RiddenMobKind::is_horse) {
+            return Err(Error::from_reason(format!(
+                "simulateHorseTick is a horse's: {name} ticks through simulateVersionedHorseTick"
+            )));
+        }
+    }
     let mut state = horse_state(state)?;
     tick_horse(&mut state);
     Ok(native_horse_state(state))
@@ -2881,37 +3618,29 @@ pub fn simulate_horse_tick(state: NativeHorseState) -> Result<NativeHorseState> 
 #[napi]
 pub fn simulate_versioned_horse_tick(
     version: String,
-    world: &NativeWorld,
-    state: NativeHorseState,
+    world: &mut NativeWorld,
+    mut state: NativeHorseState,
 ) -> Result<NativeHorseState> {
     let release = vehicle_release(&version, "ridden mob")?;
-    let mut mob = ridden_mob_state(state)?;
+    let colliders = vehicle_colliders(state.nearby_entities.take(), false, release);
+    let mut mob = ridden_mob_state(state, release)?;
+    world.inner.set_entity_colliders(colliders);
     tick_ridden_mob(&mut mob, world.snapshot(), release);
+    world.inner.set_entity_colliders(Vec::new());
+    check_move("simulateVersionedHorseTick", mob.move_out_of_range)?;
     Ok(native_ridden_mob_state(mob, release))
 }
 
 #[napi]
 pub fn simulate_versioned_horse_ticks(
     version: String,
-    world: &NativeWorld,
+    world: &mut NativeWorld,
     states: Vec<NativeHorseState>,
     ticks: u32,
 ) -> Result<Vec<NativeHorseState>> {
-    let release = vehicle_release(&version, "ridden mob")?;
-    let snapshot = world.snapshot();
-    let mut states: Vec<RiddenMobState> = states
-        .into_iter()
-        .map(ridden_mob_state)
-        .collect::<Result<Vec<_>>>()?;
-    for _ in 0..ticks {
-        for state in &mut states {
-            tick_ridden_mob(state, snapshot, release);
-        }
-    }
-    Ok(states
-        .into_iter()
-        .map(|state| native_ridden_mob_state(state, release))
-        .collect())
+    let mut batch = HorseBatch::new(&version, states)?;
+    batch.advance(world, ticks)?;
+    Ok(batch.states())
 }
 
 #[napi]
@@ -2920,6 +3649,7 @@ pub fn simulate_projectile_tick(
     state: NativeProjectileState,
 ) -> Result<NativeProjectileTickResult> {
     let mut state = projectile_state(state, None)?;
+    validate_projectile_flight(&state)?;
     let result = tick_projectile(&mut state, world.snapshot());
     Ok(native_projectile_tick_result(result, &state))
 }
@@ -2931,42 +3661,9 @@ pub fn simulate_versioned_projectile_ticks(
     states: Vec<NativeProjectileState>,
     ticks: u32,
 ) -> Result<Vec<NativeProjectileTickResult>> {
-    let release = vehicle_release(&version, "projectile")?;
-    let mut native_states = states
-        .into_iter()
-        .map(|state| projectile_state(state, Some(release)))
-        .collect::<Result<Vec<_>>>()?;
-    // the fishing hook before 1.11 is EntityFishHook's own tick (server-driven interpolation and
-    // a sliced water buoyancy), which is not modelled
-    if !release.at_least(1, 11, 0)
-        && native_states
-            .iter()
-            .any(|state| state.kind == ProjectileKind::FishingHook)
-    {
-        return Err(Error::from_reason(format!(
-            "fishing hook simulation is not supported before 1.11: {version}"
-        )));
-    }
-    // the wind charge is 1.20.3's (1.20.3 EntityType "wind_charge")
-    if !release.at_least(1, 20, 3)
-        && native_states
-            .iter()
-            .any(|state| state.kind == ProjectileKind::WindCharge)
-    {
-        return Err(Error::from_reason(format!(
-            "wind charge simulation is not supported before 1.20.3: {version}"
-        )));
-    }
-    let mut results = Vec::with_capacity(native_states.len());
-    let snapshot = world.snapshot();
-    for _ in 0..ticks {
-        results.clear();
-        for state in &mut native_states {
-            let result = tick_projectile_in_release(state, snapshot, release);
-            results.push(native_projectile_tick_result(result, state));
-        }
-    }
-    Ok(results)
+    let mut batch = ProjectileBatch::new(&version, states)?;
+    batch.advance(world.snapshot(), ticks)?;
+    Ok(batch.into_results())
 }
 
 #[napi]
@@ -2975,6 +3672,7 @@ pub fn simulate_arrow_tick(
     state: NativeArrowState,
 ) -> Result<NativeArrowTickResult> {
     let mut state = arrow_state(state, None)?;
+    validate_arrow_flight(&state)?;
     let result = tick_arrow(&mut state, world.snapshot());
     Ok(native_arrow_tick_result(result, &state))
 }
@@ -2986,21 +3684,9 @@ pub fn simulate_versioned_arrow_ticks(
     states: Vec<NativeArrowState>,
     ticks: u32,
 ) -> Result<Vec<NativeArrowTickResult>> {
-    let release = vehicle_release(&version, "arrow")?;
-    let mut native_states = states
-        .into_iter()
-        .map(|state| arrow_state(state, Some(release)))
-        .collect::<Result<Vec<_>>>()?;
-    let mut results = Vec::with_capacity(native_states.len());
-    let snapshot = world.snapshot();
-    for _ in 0..ticks {
-        results.clear();
-        for state in &mut native_states {
-            let result = tick_arrow_in_release(state, snapshot, release);
-            results.push(native_arrow_tick_result(result, state));
-        }
-    }
-    Ok(results)
+    let mut batch = ArrowBatch::new(&version, states)?;
+    batch.advance(world.snapshot(), ticks)?;
+    Ok(batch.into_results())
 }
 
 #[napi]
@@ -3009,8 +3695,9 @@ pub fn simulate_trident_tick(
     state: NativeTridentState,
 ) -> Result<NativeTridentTickResult> {
     let mut state = trident_state(state, None)?;
+    validate_trident_flight(&state)?;
     let result = tick_trident(&mut state, world.snapshot());
-    Ok(native_trident_tick_result(result))
+    Ok(native_trident_tick_result(result, &state))
 }
 
 #[napi]
@@ -3020,27 +3707,9 @@ pub fn simulate_versioned_trident_ticks(
     states: Vec<NativeTridentState>,
     ticks: u32,
 ) -> Result<Vec<NativeTridentTickResult>> {
-    let release = vehicle_release(&version, "trident")?;
-    // the trident is 1.13's (EntityType "trident", 1.13.2 TridentEntity)
-    if !release.at_least(1, 13, 0) {
-        return Err(Error::from_reason(format!(
-            "trident simulation is not supported before 1.13: {version}"
-        )));
-    }
-    let mut native_states = states
-        .into_iter()
-        .map(|state| trident_state(state, Some(release)))
-        .collect::<Result<Vec<_>>>()?;
-    let mut results = Vec::with_capacity(native_states.len());
-    let snapshot = world.snapshot();
-    for _ in 0..ticks {
-        results.clear();
-        for state in &mut native_states {
-            let result = tick_trident_in_release(state, snapshot, release);
-            results.push(native_trident_tick_result(result));
-        }
-    }
-    Ok(results)
+    let mut batch = TridentBatch::new(&version, states)?;
+    batch.advance(world.snapshot(), ticks)?;
+    Ok(batch.into_results())
 }
 
 #[napi]
@@ -3058,14 +3727,42 @@ pub fn simulate_ticks(
 
 /// The projectile of a call; `release` gives the family's default gravity (the unversioned call
 /// takes 26.2's).
-fn projectile_state(
+/// Whether the release has the family, as the engine models it.
+pub(crate) fn check_projectile_family(
+    state: &ProjectileState,
+    release: MinecraftVersion,
+    version: &str,
+) -> Result<()> {
+    if let Some((name, first)) = state.kind.first_release().filter(|(_, first)| release < *first) {
+        return Err(Error::from_reason(format!(
+            "{name} simulation is not supported before {first}: {version}"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn projectile_state(
     value: NativeProjectileState,
     release: Option<MinecraftVersion>,
 ) -> Result<ProjectileState> {
     let kind = match value.kind.as_deref() {
-        Some(name) => ProjectileKind::from_name_checked(name).ok_or_else(|| {
-            Error::from_reason(format!("unsupported projectile family: {name}"))
-        })?,
+        Some(name) => {
+            let kind = ProjectileKind::from_name_checked(name).ok_or_else(|| {
+                Error::from_reason(format!("unsupported projectile family: {name}"))
+            })?;
+            // their embedded state has no place here, and thrown-item motion is another motion
+            if kind.is_arrow() {
+                let call = if kind == ProjectileKind::Trident {
+                    "simulateVersionedTridentTicks"
+                } else {
+                    "simulateVersionedArrowTicks"
+                };
+                return Err(Error::from_reason(format!(
+                    "{name} is an AbstractArrow: use {call}"
+                )));
+            }
+            kind
+        }
         None => ProjectileKind::Generic,
     };
     let defaults = match release {
@@ -3090,6 +3787,7 @@ fn projectile_state(
             .acceleration_power
             .unwrap_or(defaults.acceleration_power),
         in_water: value.in_water.unwrap_or(false),
+        ultra_warm: value.ultra_warm.unwrap_or(false),
         first_tick: value.first_tick.unwrap_or(true),
         kind,
         horizontal_collision: value.horizontal_collision.unwrap_or(false),
@@ -3097,6 +3795,8 @@ fn projectile_state(
         shot_at_angle: value.shot_at_angle.unwrap_or(false),
         bobbing: value.bobbing.unwrap_or(false),
         bob_random: value.bob_random.unwrap_or(0.0) as f32,
+        no_physics: value.no_physics.unwrap_or(false),
+        bounding_box: value.bounding_box.map(Into::into),
     };
     if !state.position.is_finite()
         || !state.velocity.is_finite()
@@ -3110,10 +3810,31 @@ fn projectile_state(
             "projectile simulation state contains invalid values",
         ));
     }
+    validate_position("projectile", state.position)?;
     Ok(state)
 }
 
-fn native_projectile_tick_result(
+/// The ray of a projectile's tick, which is its motion with what the tick adds first.
+pub(crate) fn validate_projectile_flight(state: &ProjectileState) -> Result<()> {
+    let adds = state.power + Vec3::new(0.0, state.gravity.abs(), 0.0);
+    let along = state.velocity.length() * state.acceleration_power.abs();
+    let slowed = state.velocity.scale(state.air_drag.abs().max(1.0));
+    validate_flight("projectile", state.position, slowed + adds + Vec3::new(along, along, along))
+}
+
+pub(crate) fn validate_arrow_flight(state: &ArrowState) -> Result<()> {
+    let adds = Vec3::new(0.0, state.gravity.abs(), 0.0) + state.fall_impulse;
+    let slowed = state.velocity.scale(state.air_drag.abs().max(state.water_inertia.abs()).max(1.0));
+    validate_flight("arrow", state.position, slowed + adds)
+}
+
+pub(crate) fn validate_trident_flight(state: &TridentState) -> Result<()> {
+    let adds = Vec3::new(0.0, state.gravity.abs(), 0.0) + state.fall_impulse;
+    let slowed = state.velocity.scale(state.air_drag.abs().max(state.water_inertia.abs()).max(1.0));
+    validate_flight("trident", state.position, slowed + adds)
+}
+
+pub(crate) fn native_projectile_tick_result(
     result: crate::projectile::ProjectileTickResult,
     state: &ProjectileState,
 ) -> NativeProjectileTickResult {
@@ -3121,16 +3842,18 @@ fn native_projectile_tick_result(
         position: result.position.into(),
         velocity: result.velocity.into(),
         block_hit: result.block_hit,
+        in_water: state.in_water,
         first_tick: state.first_tick,
         horizontal_collision: result.horizontal_collision,
         on_ground: result.on_ground,
         bobbing: result.bobbing,
         discarded: result.discarded,
+        bounding_box: state.bounding_box.map(Into::into),
     }
 }
 
 /// The arrow of a call; `release` gives the default gravity (the unversioned call takes 26.2's).
-fn arrow_state(value: NativeArrowState, release: Option<MinecraftVersion>) -> Result<ArrowState> {
+pub(crate) fn arrow_state(value: NativeArrowState, release: Option<MinecraftVersion>) -> Result<ArrowState> {
     let defaults = match release {
         Some(release) => ArrowState::new_in_release(Vec3::ZERO, Vec3::ZERO, release),
         None => ArrowState::new(Vec3::ZERO, Vec3::ZERO),
@@ -3151,6 +3874,8 @@ fn arrow_state(value: NativeArrowState, release: Option<MinecraftVersion>) -> Re
         last_block_position: value
             .last_block_position
             .map(|position| (position.x, position.y, position.z)),
+        no_physics: value.no_physics.unwrap_or(false),
+        ultra_warm: value.ultra_warm.unwrap_or(false),
     };
     if !state.position.is_finite()
         || !state.velocity.is_finite()
@@ -3162,10 +3887,11 @@ fn arrow_state(value: NativeArrowState, release: Option<MinecraftVersion>) -> Re
             "arrow simulation state contains invalid values",
         ));
     }
+    validate_position("arrow", state.position)?;
     Ok(state)
 }
 
-fn native_arrow_tick_result(
+pub(crate) fn native_arrow_tick_result(
     result: crate::projectile::ArrowTickResult,
     state: &ArrowState,
 ) -> NativeArrowTickResult {
@@ -3173,8 +3899,10 @@ fn native_arrow_tick_result(
         position: result.position.into(),
         velocity: result.velocity.into(),
         block_hit: result.block_hit,
+        in_water: state.in_water,
         in_ground: result.in_ground,
         discarded: result.discarded,
+        life: state.life,
         in_ground_time: result.in_ground_time,
         shake_time: result.shake_time,
         started_falling: result.started_falling,
@@ -3186,7 +3914,7 @@ fn native_arrow_tick_result(
 }
 
 /// The trident of a call; `release` gives the default gravity (the unversioned call takes 26.2's).
-fn trident_state(
+pub(crate) fn trident_state(
     value: NativeTridentState,
     release: Option<MinecraftVersion>,
 ) -> Result<TridentState> {
@@ -3202,6 +3930,17 @@ fn trident_state(
         water_inertia: value.water_inertia.unwrap_or(defaults.water_inertia),
         in_water: value.in_water.unwrap_or(false),
         dealt_damage: value.dealt_damage.unwrap_or(false),
+        in_ground: value.in_ground.unwrap_or(false),
+        life: value.life.unwrap_or(0),
+        in_ground_time: value.in_ground_time.unwrap_or(0),
+        shake_time: value.shake_time.unwrap_or(0),
+        fall_impulse: value.fall_impulse.map(Into::into).unwrap_or(Vec3::ZERO),
+        last_block_id: value.last_block_id,
+        last_block_position: value
+            .last_block_position
+            .map(|position| (position.x, position.y, position.z)),
+        no_physics: value.no_physics.unwrap_or(false),
+        ultra_warm: value.ultra_warm.unwrap_or(false),
     };
     if !state.position.is_finite()
         || !state.velocity.is_finite()
@@ -3213,16 +3952,30 @@ fn trident_state(
             "trident simulation state contains invalid values",
         ));
     }
+    validate_position("trident", state.position)?;
     Ok(state)
 }
 
-fn native_trident_tick_result(
+pub(crate) fn native_trident_tick_result(
     result: crate::projectile::TridentTickResult,
+    state: &TridentState,
 ) -> NativeTridentTickResult {
     NativeTridentTickResult {
         position: result.position.into(),
         velocity: result.velocity.into(),
         block_hit: result.block_hit,
+        in_water: state.in_water,
+        in_ground: result.in_ground,
+        discarded: result.discarded,
+        life: state.life,
+        in_ground_time: result.in_ground_time,
+        shake_time: result.shake_time,
+        started_falling: result.started_falling,
+        dealt_damage: result.dealt_damage,
+        last_block_id: state.last_block_id,
+        last_block_position: state
+            .last_block_position
+            .map(|(x, y, z)| NativeBlockPosition { x, y, z }),
     }
 }
 
@@ -3261,7 +4014,7 @@ mod tests {
         simulate_versioned_entity_push, simulate_versioned_entity_ticks,
         simulate_versioned_piston_push, simulate_versioned_tick, simulate_versioned_tick_outcome,
         simulate_versioned_ticks,
-        NativeAabb, NativeBlockShape, NativeBlockUpdate,
+        NativeAabb, NativeBlockShape, NativeBlockUpdate, NativeBoatVehicle,
         NativeEntityDescriptor, NativeEntityPushState, NativeMovingPiston, NativeNearbyEntity,
         NativeSimulationConfig, NativeSimulationState, NativeVec3, NativeVersionedEntityState,
         NativeWorld,
@@ -3316,6 +4069,7 @@ mod tests {
             suppresses_bounce: None,
             suffocating: None,
             in_wall: None,
+            bottom_face_sturdy: None,
             remove: None,
         }
     }
@@ -3339,6 +4093,118 @@ mod tests {
     fn pose_state() -> NativeSimulationState {
         create_simulation_state(pose_descriptor(Some("1.21.1"), Some(0)))
             .expect("pose fixture should be valid")
+    }
+
+    fn boat_vehicle() -> NativeBoatVehicle {
+        NativeBoatVehicle {
+            bounding_box: NativeAabb {
+                min: vec3(-1.0, 0.0, -1.0),
+                max: vec3(2.0, 2.0, 2.0),
+            },
+            underwater: false,
+        }
+    }
+
+    #[test]
+    fn boat_context_round_trips_through_descriptor_and_simulation_state() {
+        let mut descriptor = pose_descriptor(Some("26.3"), Some(0));
+        descriptor.passenger = Some(true);
+        descriptor.boat_vehicle = Some(boat_vehicle());
+        let state = create_simulation_state(descriptor).expect("valid boat descriptor");
+        let internal = SimulationState::from(state);
+        let boat = internal.boat_vehicle.expect("boat context is retained");
+        assert_eq!(boat.bounding_box.min, Vec3::new(-1.0, 0.0, -1.0));
+        assert_eq!(boat.bounding_box.max, Vec3::new(2.0, 2.0, 2.0));
+        assert!(!boat.underwater);
+        let state: NativeSimulationState = internal.into();
+        assert!(state.passenger.unwrap());
+        let mut world = NativeWorld::new();
+        let next = simulate_versioned_ticks("26.3".to_string(), &mut world, vec![state], 0, default_config())
+            .expect("a zero-tick batch preserves its input").pop().unwrap();
+        let returned = next.boat_vehicle.expect("boat context returns through the public batch");
+        assert_eq!(Vec3::from(returned.bounding_box.min), boat.bounding_box.min);
+        assert_eq!(Vec3::from(returned.bounding_box.max), boat.bounding_box.max);
+        assert_eq!(returned.underwater, boat.underwater);
+    }
+
+    #[test]
+    fn a_non_living_entity_stays_one_through_public_state() {
+        for (given, kept) in [(None, false), (Some(false), false), (Some(true), true)] {
+            let mut descriptor = pose_descriptor(Some("26.3"), Some(0));
+            descriptor.non_living = given;
+            let state = create_simulation_state(descriptor).expect("valid descriptor");
+            let internal = SimulationState::from(state);
+            assert_eq!(internal.non_living, kept);
+            let state: NativeSimulationState = internal.into();
+            assert_eq!(state.non_living, Some(kept));
+            let mut world = NativeWorld::new();
+            let next = simulate_versioned_tick(
+                "26.3".to_string(), &mut world, state, default_config(),
+            ).expect("the tick keeps the entity's family");
+            assert_eq!(next.non_living, Some(kept));
+        }
+    }
+
+    #[test]
+    fn movement_authority_preserves_absent_false_and_true_through_public_state() {
+        for version in ["26.2", "26.3"] {
+            for authority in [None, Some(false), Some(true)] {
+                let mut descriptor = pose_descriptor(Some(version), Some(0));
+                descriptor.can_simulate_movement = authority;
+                let state = create_simulation_state(descriptor).expect("valid descriptor");
+                assert_eq!(state.can_simulate_movement, authority);
+                let internal = SimulationState::from(state);
+                assert_eq!(internal.can_simulate_movement, authority);
+                let state: NativeSimulationState = internal.into();
+                assert_eq!(state.can_simulate_movement, authority);
+                let mut world = NativeWorld::new();
+                let mut batch = simulate_versioned_ticks(
+                    version.to_string(), &mut world, vec![state], 0, default_config(),
+                ).expect("a batch preserves the caller's authority context");
+                let state = batch.pop().unwrap();
+                assert_eq!(state.can_simulate_movement, authority);
+                let next = simulate_versioned_tick(
+                    version.to_string(), &mut world, state, default_config(),
+                ).expect("tick preserves authority context independently of fluid and travel state");
+                assert_eq!(next.can_simulate_movement, authority);
+            }
+        }
+    }
+
+    #[test]
+    fn all_simulation_entry_points_reject_malformed_boat_geometry() {
+        fn boat_error<T>(result: napi::Result<T>) {
+            let error = result.err().expect("malformed boat context must be rejected");
+            assert!(error.reason.contains("boatVehicle"), "{}", error.reason);
+        }
+        for invalid in 0..3 {
+            let mut boat = boat_vehicle();
+            match invalid {
+                0 => boat.bounding_box.min.x = f64::NAN,
+                1 => boat.bounding_box.max.y = f64::INFINITY,
+                _ => boat.bounding_box.min.z = boat.bounding_box.max.z + 1.0,
+            }
+            let state = || {
+                let mut state = pose_state();
+                state.passenger = Some(true);
+                state.boat_vehicle = Some(boat.clone());
+                state
+            };
+            let version = || "26.3".to_string();
+            let mut world = NativeWorld::new();
+            boat_error(simulate_versioned_tick(version(), &mut world, state(), default_config()));
+            boat_error(simulate_versioned_tick_outcome(version(), &mut world, state(), default_config()));
+            boat_error(simulate_versioned_ticks(version(), &mut world, vec![state()], 0, default_config()));
+            boat_error(simulate_versioned_piston_push(version(), &mut world, state(), default_config(), None));
+            boat_error(refresh_versioned_pose(version(), &mut world, state(), 0, 0, false, None));
+            boat_error(simulate_versioned_entity_ticks(version(), &world, vec![NativeVersionedEntityState {
+                simulation: state(), id: None, no_physics: false, vehicle_id: None,
+                pushable: true, pushthrough: 0.0,
+            }], 0, default_config()));
+            let mut descriptor = pose_descriptor(Some("26.3"), Some(0));
+            descriptor.boat_vehicle = Some(boat);
+            boat_error(create_simulation_state(descriptor));
+        }
     }
 
     fn pose_descriptor(version: Option<&str>, pose: Option<u8>) -> NativeEntityDescriptor {
@@ -3370,6 +4236,9 @@ mod tests {
             using_item: None,
             swimming: None,
             passenger: None,
+            boat_vehicle: None,
+            can_simulate_movement: None,
+            non_living: None,
             flying: None,
             flying_speed: None,
             climbing: None,
@@ -3412,6 +4281,417 @@ mod tests {
             pushable: true,
             pushthrough,
         }
+    }
+
+    fn saddled_horse(movement_speed: Option<f64>, jump_strength: Option<f64>) -> super::NativeHorseState {
+        super::NativeHorseState {
+            movement_speed,
+            jump_strength,
+            entity_type: Some("horse".to_string()),
+            ..super::native_ridden_mob_state(
+                crate::ridden::RiddenMobState::new(
+                    crate::ridden::RiddenMobKind::Horse,
+                    crate::Vec3::new(0.5, 1.0, 0.5),
+                ),
+                crate::version::MinecraftVersion::new(1, 20, 4),
+            )
+        }
+    }
+
+    #[test]
+    fn a_ridden_mob_exists_from_the_release_its_entity_type_arrives() {
+        let mob = |name: &str| super::NativeHorseState {
+            entity_type: Some(name.to_string()),
+            ..saddled_horse(None, None)
+        };
+        let version = crate::version::MinecraftVersion::new;
+        // the name, the last release without it, the first with it
+        for (name, last, first) in [
+            ("llama", version(1, 10, 2), version(1, 11, 0)),
+            ("trader_llama", version(1, 13, 2), version(1, 14, 0)),
+            ("strider", version(1, 15, 2), version(1, 16, 0)),
+            ("camel", version(1, 19, 2), version(1, 19, 3)),
+            ("happy_ghast", version(1, 21, 5), version(1, 21, 6)),
+            ("nautilus", version(1, 21, 10), version(1, 21, 11)),
+            ("zombie_nautilus", version(1, 21, 10), version(1, 21, 11)),
+            ("camel_husk", version(1, 21, 10), version(1, 21, 11)),
+        ] {
+            let refused = super::ridden_mob_state(mob(name), last).err().expect(name);
+            assert_eq!(refused.reason, format!("{name} is not in {last}: it arrives in {first}"));
+            assert!(super::ridden_mob_state(mob(name), first).is_ok(), "{name}");
+            assert!(super::ridden_mob_state(mob(name), version(26, 3, 0)).is_ok(), "{name}");
+        }
+        // (a variant of the horse before it is a type of its own)
+        for name in ["pig", "horse", "donkey", "mule", "skeleton_horse", "zombie_horse"] {
+            assert!(super::ridden_mob_state(mob(name), version(1, 8, 8)).is_ok(), "{name}");
+        }
+        let unknown = super::ridden_mob_state(mob("cow"), version(26, 3, 0)).err().unwrap();
+        assert_eq!(unknown.reason, "no ridden mob simulation for cow");
+    }
+
+    #[test]
+    fn a_ridden_mobs_zero_attributes_are_attributes() {
+        // MOVEMENT_SPEED and JUMP_STRENGTH go down to 0 (26.3 Attributes.java:73, 80); only an
+        // attribute not given takes the base
+        let release = crate::version::MinecraftVersion::new(1, 20, 4);
+        let zero = super::ridden_mob_state(saddled_horse(Some(0.0), Some(0.0)), release).unwrap();
+        assert_eq!((zero.movement_speed, zero.jump_strength), (0.0, 0.0));
+        let base = crate::ridden::RiddenMobState::new(
+            crate::ridden::RiddenMobKind::Horse,
+            crate::Vec3::ZERO,
+        );
+        let unset = super::ridden_mob_state(saddled_horse(None, None), release).unwrap();
+        assert_eq!(unset.movement_speed, base.movement_speed);
+        assert_eq!(unset.jump_strength, base.jump_strength);
+        for (speed, jump) in [(-0.1, 0.5), (0.1, -0.5), (f64::NAN, 0.5), (0.1, f64::INFINITY)] {
+            assert!(super::ridden_mob_state(saddled_horse(Some(speed), Some(jump)), release).is_err());
+        }
+    }
+
+    /// A stone floor at y 0 and a column of cobweb at x 2, for a ridden mob at y 1.
+    fn web_column_world() -> NativeWorld {
+        let mut world = NativeWorld::new();
+        for x in -3..=8 {
+            for z in -3..=3 {
+                world.set_full_block(x, 0, z, 1);
+            }
+        }
+        for z in -3..=3 {
+            for y in 1..=3 {
+                world
+                    .set_block_shape(2, y, z, 99, block_shape((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 4))
+                    .unwrap();
+            }
+        }
+        world
+    }
+
+    fn walking_horse(release: crate::version::MinecraftVersion) -> super::NativeHorseState {
+        let mut mob = crate::ridden::RiddenMobState::new(
+            crate::ridden::RiddenMobKind::Horse,
+            crate::Vec3::new(0.2, 1.0, 0.5),
+        );
+        mob.on_ground = true;
+        mob.velocity.y = -0.0784;
+        mob.yaw = -90.0;
+        mob.rider.yaw = -90.0;
+        mob.rider.forward = 1.0;
+        super::native_ridden_mob_state(mob, release)
+    }
+
+    #[test]
+    fn a_ridden_mobs_stuck_speed_crosses_public_calls_as_it_crosses_a_batch() {
+        // a multiplier that lived only inside one call would pass on the batch and fail here: the
+        // output of each call is the input of the next (26.3 Entity.java:783-790)
+        for version in ["1.9.4", "1.20.4", "1.21.9", "26.3"] {
+            let release = super::vehicle_release(version, "ridden mob").unwrap();
+            let mut world = web_column_world();
+            let mut repeated = walking_horse(release);
+            let mut stuck_ticks = 0;
+            for ticks in 1..=60_u32 {
+                repeated =
+                    super::simulate_versioned_horse_tick(version.to_string(), &mut world, repeated)
+                        .unwrap();
+                let batch = super::simulate_versioned_horse_ticks(
+                    version.to_string(),
+                    &mut world,
+                    vec![walking_horse(release)],
+                    ticks,
+                )
+                .unwrap();
+                let (batch, repeated) = (&batch[0], &repeated);
+                let (a, b) = (&batch.position, &repeated.position);
+                assert_eq!((a.x, a.y, a.z), (b.x, b.y, b.z), "{version} tick {ticks}");
+                let left = |state: &super::NativeHorseState| {
+                    let vec = state.stuck_speed_multiplier.as_ref().unwrap();
+                    (vec.x, vec.y, vec.z)
+                };
+                assert_eq!(left(batch), left(repeated), "{version} tick {ticks}");
+                if left(repeated).0 != 0.0 {
+                    stuck_ticks += 1;
+                }
+            }
+            assert!(stuck_ticks > 3, "{version}: {stuck_ticks}");
+        }
+    }
+
+    #[test]
+    fn a_ridden_mobs_weaving_and_stuck_speed_come_back() {
+        let release = crate::version::MinecraftVersion::new(1, 21, 9);
+        let mob = super::ridden_mob_state(
+            super::NativeHorseState {
+                weaving: Some(true),
+                stuck_speed_multiplier: Some(vec3(0.5, 0.25, 0.5)),
+                ..saddled_horse(None, None)
+            },
+            release,
+        )
+        .unwrap();
+        assert!(mob.weaving);
+        let back = super::native_ridden_mob_state(mob, release);
+        assert_eq!(back.weaving, Some(true));
+        assert_eq!(back.stuck_speed_multiplier.unwrap().x, 0.5);
+    }
+
+    fn stone_floor_world() -> NativeWorld {
+        let mut world = NativeWorld::new();
+        for x in -3..=8 {
+            for z in -3..=3 {
+                world.set_full_block(x, 0, z, 1);
+            }
+        }
+        world
+    }
+
+    #[test]
+    fn a_batch_of_ridden_mobs_keeps_their_zero_attributes() {
+        // MOVEMENT_SPEED and JUMP_STRENGTH go down to 0 in every release that has them (1.9.4
+        // EntityAttributes.java:20, HorseBaseEntity.java:65; 1.20.4 EntityAttributes.java:29, 45;
+        // 1.20.5 :46, 61; 26.3 Attributes.java:73, 80), and the batch is the public call repeated
+        for version in ["1.9.4", "1.20.4", "1.21.9", "26.3"] {
+            let release = super::vehicle_release(version, "ridden mob").unwrap();
+            let mut world = stone_floor_world();
+            let with = |speed, jump| super::NativeHorseState {
+                movement_speed: speed,
+                jump_strength: jump,
+                jump_pending_scale: Some(1.0),
+                ..walking_horse(release)
+            };
+            let ticks = super::simulate_versioned_horse_ticks(
+                version.to_string(),
+                &mut world,
+                vec![with(Some(0.0), Some(0.0)), with(None, None), with(Some(0.001), Some(0.001))],
+                1,
+            )
+            .unwrap();
+            let [zero, default, tiny] = [&ticks[0], &ticks[1], &ticks[2]];
+            assert_eq!(zero.position.y, 1.0, "{version}");
+            assert_eq!(zero.movement_speed, Some(0.0), "{version}");
+            assert_eq!(zero.jump_strength, Some(0.0), "{version}");
+            let base = crate::ridden::RiddenMobKind::Horse.movement_speed();
+            assert_eq!(default.movement_speed, Some(base), "{version}");
+            assert_eq!(default.jump_strength, Some(0.41999998688697815), "{version}");
+            assert!(default.position.y > 1.4, "{version}: {}", default.position.y);
+            // (the third by f32 from 1.20.5: 1.20.5 LivingEntity.java:2065-2068)
+            assert!((tiny.position.y - 1.001).abs() < 1.0e-6, "{version}: {}", tiny.position.y);
+            assert!(tiny.position.y < default.position.y, "{version}");
+            let single = super::simulate_versioned_horse_tick(
+                version.to_string(),
+                &mut world,
+                with(Some(0.0), Some(0.0)),
+            )
+            .unwrap();
+            assert_eq!(single.position.x, zero.position.x, "{version}");
+            assert_eq!(single.velocity.y, zero.velocity.y, "{version}");
+        }
+    }
+
+    #[test]
+    fn a_ridden_mobs_attributes_above_their_maximum_are_refused() {
+        // no RangedAttribute keeps more than its maximum (26.3 RangedAttribute.java:29-31):
+        // MOVEMENT_SPEED 1024; JUMP_STRENGTH 2 to 1.20.4, 32 from 1.20.5
+        let mut world = stone_floor_world();
+        for (version, major, minor, patch, top_jump) in
+            [("1.20.4", 1, 20, 4, 2.0), ("1.20.5", 1, 20, 5, 32.0), ("26.3", 26, 3, 0, 32.0)]
+        {
+            let release = crate::version::MinecraftVersion::new(major, minor, patch);
+            let mut tick = |speed: f64, jump: f64| {
+                let state = super::NativeHorseState {
+                    movement_speed: Some(speed),
+                    jump_strength: Some(jump),
+                    ..walking_horse(release)
+                };
+                super::simulate_versioned_horse_tick(version.to_string(), &mut world, state)
+            };
+            assert!(tick(1024.0, top_jump).is_ok(), "{version}");
+            assert!(tick(1024.0000001, 0.5).is_err(), "{version}");
+            assert!(tick(1.0e12, 0.5).is_err(), "{version}");
+            assert!(tick(0.1, top_jump + 1.0e-9).is_err(), "{version}");
+            let batch = super::simulate_versioned_horse_ticks(
+                version.to_string(),
+                &mut world,
+                vec![super::NativeHorseState {
+                    movement_speed: Some(2048.0),
+                    ..walking_horse(release)
+                }],
+                1,
+            );
+            assert!(batch.is_err(), "{version}");
+        }
+    }
+
+    #[test]
+    fn a_ridden_mobs_invalid_attributes_are_refused_alone_and_in_a_batch() {
+        // nothing a RangedAttribute keeps can be negative or not finite, so the effective value
+        // given here is not one (1.20.5 ClampedEntityAttribute.java:35-36, 26.3
+        // RangedAttribute.java:29-31)
+        let mut world = stone_floor_world();
+        let release = crate::version::MinecraftVersion::new(1, 21, 9);
+        for (speed, jump) in [
+            (-1.0e-9, 0.5),
+            (0.1, -1.0e-9),
+            (f64::NAN, 0.5),
+            (0.1, f64::NAN),
+            (f64::INFINITY, 0.5),
+            (0.1, f64::NEG_INFINITY),
+        ] {
+            let state = || super::NativeHorseState {
+                movement_speed: Some(speed),
+                jump_strength: Some(jump),
+                ..walking_horse(release)
+            };
+            let single =
+                super::simulate_versioned_horse_tick("1.21.9".to_string(), &mut world, state());
+            assert!(single.is_err(), "{speed} {jump}");
+            let batch = super::simulate_versioned_horse_ticks(
+                "1.21.9".to_string(),
+                &mut world,
+                vec![walking_horse(release), state()],
+                1,
+            );
+            assert!(batch.is_err(), "{speed} {jump}");
+            assert!(super::simulate_horse_tick(state()).is_err(), "{speed} {jump}");
+        }
+    }
+
+    #[test]
+    fn the_horse_without_a_world_keeps_its_zero_attributes() {
+        // tick_horse's speed and jump are the attributes too (1.21.11 AbstractHorse.java:748-775)
+        let state = super::NativeHorseState {
+            movement_speed: Some(0.0),
+            jump_strength: Some(0.0),
+            forward: 1.0,
+            jump_requested: true,
+            ..saddled_horse(None, None)
+        };
+        let out = super::simulate_horse_tick(state).unwrap();
+        assert_eq!(out.movement_speed, Some(0.0));
+        assert_eq!(out.jump_strength, Some(0.0));
+        assert_eq!(out.position.y, 1.0);
+    }
+
+    #[test]
+    fn a_ridden_mobs_size_crosses_public_calls_as_it_crosses_a_batch() {
+        // a measured size of no round factor, whose output is the input of the next call: the box
+        // of every tick is the same as the batch's (1.20.5 LivingEntity.java:3250-3255)
+        for version in ["1.20.5", "1.21.9", "26.3"] {
+            let release = super::vehicle_release(version, "ridden mob").unwrap();
+            let mut world = stone_floor_world();
+            let start = || super::NativeHorseState {
+                half_width: Some(f64::from(1.3964844_f32 * 1.37 / 2.0)),
+                height: Some(f64::from(1.6_f32 * 1.37)),
+                ..walking_horse(release)
+            };
+            let (first_half, first_height) = (start().half_width, start().height);
+            let mut repeated = start();
+            for ticks in 1..=20_u32 {
+                repeated =
+                    super::simulate_versioned_horse_tick(version.to_string(), &mut world, repeated)
+                        .unwrap();
+                let batch =
+                    super::simulate_versioned_horse_ticks(version.to_string(), &mut world, vec![start()], ticks)
+                        .unwrap();
+                assert_eq!(repeated.half_width, batch[0].half_width, "{version} {ticks}");
+                assert_eq!(repeated.height, batch[0].height, "{version} {ticks}");
+                assert_eq!(repeated.position.x, batch[0].position.x, "{version} {ticks}");
+                assert_eq!(repeated.half_width, first_half, "{version} {ticks}");
+                assert_eq!(repeated.height, first_height, "{version} {ticks}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_ridden_mobs_effects_and_travel_attributes_come_back() {
+        let release = crate::version::MinecraftVersion::new(26, 3, 0);
+        let mob = super::ridden_mob_state(
+            super::NativeHorseState {
+                slow_falling: Some(true),
+                levitation_amplifier: Some(2),
+                dolphins_grace: Some(true),
+                gravity: Some(-0.25),
+                step_height: Some(2.5),
+                water_movement_efficiency: Some(0.5),
+                air_drag_modifier: Some(0.0),
+                friction_modifier: Some(0.25),
+                ..saddled_horse(None, None)
+            },
+            release,
+        )
+        .unwrap();
+        let back = super::native_ridden_mob_state(mob, release);
+        assert_eq!(back.slow_falling, Some(true));
+        assert_eq!(back.levitation_amplifier, Some(2));
+        assert_eq!(back.dolphins_grace, Some(true));
+        assert_eq!(back.gravity, Some(-0.25));
+        assert_eq!(back.step_height, Some(2.5));
+        assert_eq!(back.water_movement_efficiency, Some(0.5));
+        assert_eq!(back.air_drag_modifier, Some(0.0));
+        assert_eq!(back.friction_modifier, Some(0.25));
+        let plain = super::ridden_mob_state(saddled_horse(None, None), release).unwrap();
+        let plain = super::native_ridden_mob_state(plain, release);
+        assert_eq!(plain.gravity, None);
+        assert_eq!(plain.air_drag_modifier, None);
+    }
+
+    #[test]
+    fn a_ridden_mobs_attributes_of_no_number_stay_out_of_its_motion() {
+        // GRAVITY, STEP_HEIGHT and the modifiers are sanitized as RangedAttribute does (26.3
+        // RangedAttribute.java:29-31), so a batch of them gives finite motion
+        let mut world = stone_floor_world();
+        let release = crate::version::MinecraftVersion::new(26, 3, 0);
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let state = super::NativeHorseState {
+                gravity: Some(value),
+                step_height: Some(value),
+                water_movement_efficiency: Some(value),
+                air_drag_modifier: Some(value),
+                friction_modifier: Some(value),
+                ..walking_horse(release)
+            };
+            let out =
+                super::simulate_versioned_horse_ticks("26.3".to_string(), &mut world, vec![state], 5)
+                    .unwrap();
+            let (position, velocity) = (&out[0].position, &out[0].velocity);
+            for axis in [position.x, position.y, position.z, velocity.x, velocity.y, velocity.z] {
+                assert!(axis.is_finite(), "{value}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_ridden_mobs_flying_speed_is_an_attribute_too() {
+        // FLYING_SPEED keeps 0 to 1024 (26.3 Attributes.java:69): 0 flies nowhere, and what no
+        // RangedAttribute keeps is refused with the others
+        let release = crate::version::MinecraftVersion::new(26, 3, 0);
+        let ghast = |speed| super::NativeHorseState {
+            entity_type: Some("happy_ghast".to_string()),
+            flying_speed: Some(speed),
+            ..saddled_horse(None, None)
+        };
+        assert_eq!(super::ridden_mob_state(ghast(0.0), release).unwrap().flying_speed, 0.0);
+        for speed in [-0.1, f64::NAN, f64::INFINITY] {
+            assert!(super::ridden_mob_state(ghast(speed), release).is_err(), "{speed}");
+        }
+    }
+
+    #[test]
+    fn a_ridden_mobs_measured_dimensions_come_back() {
+        let release = crate::version::MinecraftVersion::new(1, 21, 9);
+        let mob = super::ridden_mob_state(
+            super::NativeHorseState {
+                half_width: Some(1.396484375),
+                height: Some(f64::from(3.2_f32)),
+                ..saddled_horse(None, None)
+            },
+            release,
+        )
+        .unwrap();
+        let back = super::native_ridden_mob_state(mob, release);
+        assert_eq!(back.half_width, Some(1.396484375));
+        assert_eq!(back.height, Some(f64::from(3.2_f32)));
+        let plain = super::ridden_mob_state(saddled_horse(None, None), release).unwrap();
+        let plain = super::native_ridden_mob_state(plain, release);
+        assert_eq!(plain.half_width, Some(0.6982421875));
     }
 
     #[test]
@@ -3568,6 +4848,7 @@ mod tests {
                 min: vec3(0.75, 0.0, 0.0),
                 max: vec3(1.0, 1.0, 1.0),
             }],
+            next_shapes: None,
             outline_shapes: None,
             bounces: None,
             sticky_for_entities: None,
@@ -3638,6 +4919,7 @@ mod tests {
             PhysicsConfig::default(),
         )
         .with_scene(TickScene {
+            movement_speed: None,
             nearby_entities,
             firework_rockets: 2,
             firework_rockets_before_player: 1,
@@ -4119,6 +5401,40 @@ mod tests {
     }
 
     #[test]
+    fn an_entity_after_the_player_meets_the_box_of_its_new_pose() {
+        // the step into a shulker's box the pose update leaves (26.2 Player.java:266): a shulker
+        // at 1.6 pushes a standing player (1.8 tall) from 0.1 and misses a crouching one (1.5)
+        for (release, height_after, pushed) in [
+            ("1.21.1", None, true),
+            ("1.21.1", Some(f64::from(1.5_f32)), false),
+            ("1.16.5", Some(f64::from(1.5_f32)), false),
+            ("26.2", Some(1.8), true),
+        ] {
+            let mut world = NativeWorld::new();
+            let mut state = pose_state();
+            state.no_gravity = Some(true);
+            state.position = vec3(0.0, 0.1, 0.0);
+            state.height = 1.8;
+            state.height_after_tick = height_after;
+            state.nearby_entities = Some(vec![nearby_entity(
+                "shulker",
+                vec3(0.1, 1.61, -0.5),
+                vec3(1.1, 2.61, 0.5),
+                false,
+            )]);
+            let after = simulate_versioned_tick(
+                release.to_string(),
+                &mut world,
+                state,
+                default_config(),
+            )
+            .expect("supported");
+            assert_eq!(after.velocity.x < 0.0, pushed, "{release} {height_after:?}");
+            assert_eq!(after.height, 1.8, "{release}: the tick's own height stays");
+        }
+    }
+
+    #[test]
     fn the_kept_bounding_box_goes_in_and_out_before_1_17() {
         let mut world = NativeWorld::new();
         let mut state = pose_state();
@@ -4190,7 +5506,7 @@ mod tests {
             .expect("a cobweb has no collision box");
         assert_eq!(world.block_at(0, 0, 0).effect, 4);
         assert!(world
-            .collision_shapes(vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0))
+            .collision_shapes(vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0), None)
             .expect("valid query")
             .is_empty());
     }
@@ -4206,7 +5522,7 @@ mod tests {
             .expect("a fence is 1.5 blocks tall");
         assert_eq!(
             world
-                .collision_shapes(vec3(0.0, 1.2, 0.0), vec3(1.0, 2.0, 1.0))
+                .collision_shapes(vec3(0.0, 1.2, 0.0), vec3(1.0, 2.0, 1.0), None)
                 .expect("valid query")
                 .len(),
             2
@@ -4217,6 +5533,43 @@ mod tests {
                 block_shape((0.0, 0.0, 0.0), (1.0, 2.5, 1.0), 0),
             )])
             .is_err());
+    }
+
+    /// A lectern's updates (26.3 LecternBlock.java:230-231): the boxes of its collision, then empty ones carrying the
+    /// rest of its outline, whose top plate reaches 18/16 of its cell. The refusal of one box loses the whole block.
+    #[test]
+    fn outline_boxes_may_reach_one_block_out_of_their_own() {
+        let outlined = |shape: NativeBlockShape, outline: NativeBlockShape| NativeBlockUpdate {
+            outline_shape: Some(outline),
+            ..shape_update((0, 0, 0), shape)
+        };
+        let empty = || block_shape((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0);
+        let base = block_shape((0.0, 0.0, 0.0), (1.0, 0.125, 1.0), 0);
+        let post = block_shape((0.25, 0.125, 0.25), (0.75, 0.875, 0.75), 0);
+        let plate = block_shape((0.0, 0.875, 0.0), (1.0, 1.125, 0.25), 0);
+        let mut world = NativeWorld::new();
+        world
+            .apply_block_updates(vec![
+                outlined(base.clone(), base.clone()),
+                outlined(post.clone(), post.clone()),
+                outlined(empty(), plate),
+            ])
+            .expect("a lectern's plate leaves its cell");
+        let cell = || (vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0));
+        let collision = world.collision_shapes(cell().0, cell().1, None).expect("valid query");
+        assert_eq!(collision.len(), 2);
+        let outline = world.outline_shapes(cell().0, cell().1, None).expect("valid query");
+        assert_eq!(outline.len(), 3);
+        assert!(outline.iter().any(|bounds| bounds.max.y == 1.125));
+
+        // the lower half of a pitcher crop, from -1/16 (26.3 PitcherCropBlock.java:53)
+        let crop = block_shape((0.1875, -0.0625, 0.1875), (0.8125, 1.0, 0.8125), 0);
+        world
+            .apply_block_updates(vec![outlined(empty(), crop)])
+            .expect("a pitcher crop leaves its cell");
+
+        let far = block_shape((0.0, 0.0, 0.0), (1.0, 2.5, 1.0), 0);
+        assert!(world.apply_block_updates(vec![outlined(empty(), far)]).is_err());
     }
 
     #[test]
@@ -4251,9 +5604,9 @@ mod tests {
             crate::math::Vec3::ZERO,
             crate::math::Vec3::new(1.0, 1.0, 1.0),
         );
-        assert_eq!(world.inner.collision_shapes(cell).len(), 2);
-        assert_eq!(world.inner.outline_shapes(cell).len(), 2);
-        assert_eq!(world.inner.interaction_shapes(cell).len(), 2);
+        assert_eq!(world.inner.collision_shapes(cell, MinecraftVersion::new(26, 3, 0)).len(), 2);
+        assert_eq!(world.inner.outline_shapes(cell, MinecraftVersion::new(26, 3, 0)).len(), 2);
+        assert_eq!(world.inner.interaction_shapes(cell, MinecraftVersion::new(26, 3, 0)).len(), 2);
         assert_eq!(
             world.inner.block_properties((0, 0, 0)),
             vec![("north".to_string(), "true".to_string())]
@@ -4654,6 +6007,9 @@ mod tests {
                 using_item: None,
                 swimming: None,
                 passenger: None,
+                boat_vehicle: None,
+                can_simulate_movement: None,
+                non_living: None,
                 flying: None,
                 flying_speed: None,
                 climbing: None,
@@ -4732,6 +6088,9 @@ mod tests {
             using_item: None,
             swimming: None,
             passenger: None,
+            boat_vehicle: None,
+            can_simulate_movement: None,
+            non_living: None,
             flying: None,
             flying_speed: None,
             climbing: None,
@@ -4805,6 +6164,9 @@ mod tests {
             using_item: Some(true),
             swimming: None,
             passenger: None,
+            boat_vehicle: None,
+            can_simulate_movement: None,
+            non_living: None,
             flying: Some(true),
             flying_speed: Some(0.1),
             climbing: None,
@@ -4883,6 +6245,9 @@ mod tests {
             using_item: None,
             swimming: None,
             passenger: None,
+            boat_vehicle: None,
+            can_simulate_movement: None,
+            non_living: None,
             flying: None,
             flying_speed: None,
             climbing: None,
@@ -5017,6 +6382,71 @@ mod tests {
     }
 
     #[test]
+    fn versioned_entity_push_drops_pushthrough_exactly_at_1_17() {
+        let right_x = |version: &str| {
+            simulate_versioned_entity_push(
+                version.to_string(),
+                push_state(0.0, 0.0, 1.0),
+                push_state(1.0, 0.0, 0.0),
+                false,
+            )
+            .unwrap()
+            .right_velocity
+            .x
+        };
+        assert_eq!(right_x("1.16.5"), 0.0);
+        assert_eq!(right_x("1.17"), 0.05_f32 as f64);
+    }
+
+    #[test]
+    fn versioned_entity_ticks_skip_a_sleeper_being_pushed() {
+        // the first's tick runs the sleeper's Entity.push(first), which LivingEntity.push cancels
+        // for both; the sleeper's own tick runs first.push(sleeper), which pushes both. So the
+        // first entity takes one push instead of two.
+        let first_x = |version: &str, sleeping: bool, is_player: bool| {
+            let mut sleeper = ticked_entity(0.0, None, None);
+            sleeper.simulation.sleeping = Some(sleeping);
+            sleeper.simulation.is_player = Some(is_player);
+            simulate_versioned_entity_ticks(
+                version.to_string(),
+                &NativeWorld::new(),
+                vec![ticked_entity(0.4, None, None), sleeper],
+                1,
+                entity_ticks_config(),
+            )
+            .unwrap()[0]
+                .simulation
+                .velocity
+                .x
+        };
+        let one_push = |version: &str| {
+            let release = MinecraftVersion::parse(version).unwrap();
+            let (_, pushed) = crate::entity::entity_push_impulses_with_pushthrough(
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(0.4, 0.0, 0.0),
+                false,
+                false,
+                false,
+                false,
+                false,
+                true,
+                true,
+                0.0,
+                release,
+            );
+            pushed.x
+        };
+        assert_eq!(first_x("1.21.1", true, true), one_push("1.21.1"));
+        assert_eq!(first_x("1.21.1", true, false), one_push("1.21.1"));
+        assert_eq!(first_x("1.14.4", true, false), one_push("1.14.4"));
+        assert_eq!(first_x("1.13.2", true, true), one_push("1.13.2"));
+        assert_ne!(first_x("1.21.1", false, false), one_push("1.21.1"));
+        // before 1.14 only Player overrides it, in 1.8 nothing does
+        assert_ne!(first_x("1.13.2", true, false), one_push("1.13.2"));
+        assert_ne!(first_x("1.8.8", true, true), one_push("1.8.8"));
+    }
+
+    #[test]
     fn versioned_entity_ticks_push_from_a_grown_box_on_1_8() {
         // 1.8.9 LivingEntity.collideWithNearbyEntities takes the entities in its box grown by
         // 0.2F, 0, 0.2F (LivingEntity.java:1482-1485); 1.9.4 :1765-1766 its box alone
@@ -5066,6 +6496,9 @@ mod tests {
             using_item: None,
             swimming: None,
             passenger: None,
+            boat_vehicle: None,
+            can_simulate_movement: None,
+            non_living: None,
             flying: None,
             flying_speed: None,
             climbing: None,
@@ -5140,6 +6573,7 @@ mod tests {
                     z: 0.0,
                 },
                 yaw: Some(0.0),
+                yaw_degrees: None,
                 pitch: None,
                 half_width: 0.3,
                 height: 1.8,
@@ -5166,6 +6600,9 @@ mod tests {
                 is_player: None,
                 controlled_by_local_instance: None,
                 passenger: None,
+                boat_vehicle: None,
+                can_simulate_movement: None,
+                non_living: None,
                 in_web: None,
                 weaving: None,
                 frost_walker: None,
@@ -5174,15 +6611,21 @@ mod tests {
                 powder_snow_walkable: None,
                 in_powder_snow: None,
                 fire_immune: None,
+                fire_resistance: None,
+                on_fire_flag: None,
                 in_rain: None,
+                stab_hit: None,
                 fire_protection: None,
                 burning_time: None,
                 remaining_fire_ticks: None,
+                server_fire_increment: None,
+                server_fire_increments: None,
                 ticks_frozen: None,
                 ticks_required_to_freeze: None,
                 tick_count: None,
                 freeze_damage: None,
                 contact_damage: None,
+                wall_damage: None,
                 inside_wall: None,
                 sleeping: None,
                 eye_height: None,
@@ -5194,6 +6637,10 @@ mod tests {
                 fall_distance: None,
                 safe_fall_distance: None,
                 fall_damage_immune: None,
+                client_side: None,
+                height_after_tick: None,
+                entity_type: None,
+                invulnerable: None,
                 fall_damage_multiplier: None,
                 sneaking: None,
                 moving_slowly: None,
@@ -5235,6 +6682,7 @@ mod tests {
                 supporting_block_kept: None,
                 on_ground_no_blocks: None,
                 outside_border: None,
+                movement_speed_attribute: None,
                 nearby_entities: None,
                 firework_rockets: None,
                 firework_rockets_before_player: None,
@@ -5292,6 +6740,7 @@ fn valid_horse_state(state: HorseSimulationState) -> bool {
 }
 
 fn horse_state(value: NativeHorseState) -> Result<HorseSimulationState> {
+    let base = RiddenMobState::new(RiddenMobKind::Horse, value.position.clone().into());
     let state = HorseSimulationState {
         position: value.position.into(),
         velocity: value.velocity.into(),
@@ -5301,8 +6750,8 @@ fn horse_state(value: NativeHorseState) -> Result<HorseSimulationState> {
         jump_requested: value.jump_requested,
         on_ground: value.on_ground,
         in_water: value.in_water,
-        movement_speed: value.movement_speed,
-        jump_strength: value.jump_strength,
+        movement_speed: value.movement_speed.unwrap_or(base.movement_speed),
+        jump_strength: value.jump_strength.unwrap_or(base.jump_strength),
         half_width: value.half_width.unwrap_or(0.7),
         height: value.height.unwrap_or(1.6),
         collided_horizontally: value.collided_horizontally.unwrap_or(false),
@@ -5315,11 +6764,13 @@ fn horse_state(value: NativeHorseState) -> Result<HorseSimulationState> {
             "horse simulation state contains invalid values",
         ));
     }
+    validate_position("horse", state.position)?;
     Ok(state)
 }
 
 fn native_horse_state(state: HorseSimulationState) -> NativeHorseState {
     NativeHorseState {
+        nearby_entities: None,
         position: state.position.into(),
         velocity: state.velocity.into(),
         yaw: state.yaw,
@@ -5328,8 +6779,8 @@ fn native_horse_state(state: HorseSimulationState) -> NativeHorseState {
         jump_requested: state.jump_requested,
         on_ground: state.on_ground,
         in_water: state.in_water,
-        movement_speed: state.movement_speed,
-        jump_strength: state.jump_strength,
+        movement_speed: Some(state.movement_speed),
+        jump_strength: Some(state.jump_strength),
         half_width: Some(state.half_width),
         height: Some(state.height),
         collided_horizontally: Some(state.collided_horizontally),
@@ -5356,6 +6807,7 @@ fn native_horse_state(state: HorseSimulationState) -> NativeHorseState {
         boost_time: None,
         boost_time_total: None,
         suffocating: None,
+        suffocating_speed: None,
         jump_pending_scale: None,
         horse_jumping: None,
         standing: None,
@@ -5369,18 +6821,27 @@ fn native_horse_state(state: HorseSimulationState) -> NativeHorseState {
         ultra_warm: None,
         jump_boost_amplifier: None,
         no_gravity: Some(state.no_gravity),
+        stuck_speed_multiplier: None,
+        slow_falling: None,
+        levitation_amplifier: None,
+        dolphins_grace: None,
+        weaving: None,
+        gravity: None,
+        step_height: None,
+        water_movement_efficiency: None,
+        air_drag_modifier: None,
+        friction_modifier: None,
     }
 }
 
 /// A ridden mob from the horse state: the rider's xxa and zza are `strafe` and `forward`, its
-/// jumping `jumpRequested`; an attribute given as 0 takes the mob's base.
-fn ridden_mob_state(value: NativeHorseState) -> Result<RiddenMobState> {
+/// jumping `jumpRequested`; an attribute not given takes the mob's base.
+pub(crate) fn ridden_mob_state(value: NativeHorseState, release: MinecraftVersion) -> Result<RiddenMobState> {
     let name = value.entity_type.as_deref().unwrap_or("horse");
-    let kind = RiddenMobKind::parse(name)
-        .ok_or_else(|| Error::from_reason(format!("no ridden mob simulation for {name}")))?;
+    let kind = RiddenMobKind::parse_for(name, release).map_err(Error::from_reason)?;
+    refuse_for_ridden_tick(name, release).map_err(Error::from_reason)?;
     let defaults = RiddenMobState::new(kind, value.position.into());
-    let positive = |value: f64, default: f64| if value > 0.0 { value } else { default };
-    let mob = RiddenMobState {
+    let mut mob = RiddenMobState {
         velocity: value.velocity.into(),
         yaw: value.yaw_degrees.unwrap_or_else(|| value.yaw.to_degrees()) as f32,
         pitch: value.pitch_degrees.unwrap_or(0.0) as f32,
@@ -5395,8 +6856,8 @@ fn ridden_mob_state(value: NativeHorseState) -> Result<RiddenMobState> {
         fall_distance: value.fall_distance.unwrap_or(0.0),
         bounding_box: value.bounding_box.map(Into::into),
         previous_position: value.previous_position.map(Into::into),
-        movement_speed: positive(value.movement_speed, defaults.movement_speed),
-        jump_strength: positive(value.jump_strength, defaults.jump_strength),
+        movement_speed: value.movement_speed.unwrap_or(defaults.movement_speed),
+        jump_strength: value.jump_strength.unwrap_or(defaults.jump_strength),
         flying_speed: value.flying_speed.unwrap_or(defaults.flying_speed),
         saddled: value.saddled.unwrap_or(true),
         no_ai: value.no_ai.unwrap_or(false),
@@ -5406,6 +6867,7 @@ fn ridden_mob_state(value: NativeHorseState) -> Result<RiddenMobState> {
         boost_time: value.boost_time.unwrap_or(0),
         boost_time_total: value.boost_time_total.unwrap_or(0),
         suffocating: value.suffocating.unwrap_or(false),
+        suffocating_speed: value.suffocating_speed,
         jump_pending_scale: value.jump_pending_scale.unwrap_or(0.0) as f32,
         horse_jumping: value.horse_jumping.unwrap_or(false),
         standing: value.standing.unwrap_or(false),
@@ -5428,18 +6890,56 @@ fn ridden_mob_state(value: NativeHorseState) -> Result<RiddenMobState> {
         ultra_warm: value.ultra_warm.unwrap_or(false),
         jump_boost_amplifier: value.jump_boost_amplifier,
         no_gravity: value.no_gravity.unwrap_or(false),
+        stuck_speed_multiplier: value
+            .stuck_speed_multiplier
+            .map_or(Vec3::ZERO, Into::into),
+        slow_falling: value.slow_falling.unwrap_or(false),
+        levitation_amplifier: value.levitation_amplifier,
+        dolphins_grace: value.dolphins_grace.unwrap_or(false),
+        weaving: value.weaving.unwrap_or(false),
+        gravity: value.gravity,
+        step_height: value.step_height,
+        water_movement_efficiency: value.water_movement_efficiency.unwrap_or(0.0),
+        air_drag_modifier: value.air_drag_modifier,
+        plain: None,
+        friction_modifier: value.friction_modifier,
         ..defaults
     };
-    let finite = mob.position.is_finite()
+    // (the attributes are the effective values: RangedAttribute keeps these at 0 or above; GRAVITY,
+    // STEP_HEIGHT, the efficiency and the modifiers are sanitized where ridden.rs reads them, as
+    // their signed or clamped ranges are in the attribute's own contract)
+    let valid = mob.position.is_finite()
         && mob.velocity.is_finite()
         && mob.yaw.is_finite()
         && mob.movement_speed.is_finite()
-        && mob.jump_strength.is_finite();
-    if !finite {
+        && mob.jump_strength.is_finite()
+        // MOVEMENT_SPEED tops out at 1024, JUMP_STRENGTH at 2 until 1.20.4 and 32 from 1.20.5 (1.20.4
+        // EntityAttributes.java:29, 45; 1.20.5 :46; 26.3 Attributes.java:73, 80)
+        && mob.movement_speed <= 1024.0
+        && mob.jump_strength <= if release.at_least(1, 20, 5) { 32.0 } else { 2.0 }
+        && mob.movement_speed >= 0.0
+        && mob.jump_strength >= 0.0
+        && mob.flying_speed.is_finite()
+        && mob.flying_speed >= 0.0
+        && mob.stuck_speed_multiplier.is_finite()
+        && value.half_width.map_or(true, |half| half.is_finite() && half > 0.0)
+        && value.height.map_or(true, |height| height.is_finite() && height > 0.0);
+    if !valid {
         return Err(Error::from_reason(
             "ridden mob simulation state contains invalid values",
         ));
     }
+    validate_position("ridden mob", mob.position)?;
+    for position in [mob.lerp_position, mob.previous_position].into_iter().flatten() {
+        validate_position("ridden mob", position)?;
+    }
+    validate_kept_box("ridden mob", mob.bounding_box)?;
+    validate_size("ridden mob", value.half_width.unwrap_or(0.0), value.height.unwrap_or(0.0))?;
+    mob.measure(
+        value.half_width.map(|half| (half * 2.0) as f32),
+        value.height.map(|height| height as f32),
+        release,
+    );
     Ok(mob)
 }
 
@@ -5461,9 +6961,10 @@ fn ridden_mob_name(kind: RiddenMobKind) -> &'static str {
     }
 }
 
-fn native_ridden_mob_state(mob: RiddenMobState, release: MinecraftVersion) -> NativeHorseState {
+pub(crate) fn native_ridden_mob_state(mob: RiddenMobState, release: MinecraftVersion) -> NativeHorseState {
     let (width, height) = mob.dimensions(release);
     NativeHorseState {
+        nearby_entities: None,
         position: mob.position.into(),
         velocity: mob.velocity.into(),
         yaw: f64::from(mob.yaw).to_radians(),
@@ -5472,8 +6973,8 @@ fn native_ridden_mob_state(mob: RiddenMobState, release: MinecraftVersion) -> Na
         jump_requested: mob.rider.jumping,
         on_ground: mob.on_ground,
         in_water: mob.in_water,
-        movement_speed: mob.movement_speed,
-        jump_strength: mob.jump_strength,
+        movement_speed: Some(mob.movement_speed),
+        jump_strength: Some(mob.jump_strength),
         half_width: Some(f64::from(width / 2.0)),
         height: Some(f64::from(height)),
         collided_horizontally: Some(mob.collided_horizontally),
@@ -5500,6 +7001,7 @@ fn native_ridden_mob_state(mob: RiddenMobState, release: MinecraftVersion) -> Na
         boost_time: Some(mob.boost_time),
         boost_time_total: Some(mob.boost_time_total),
         suffocating: Some(mob.suffocating),
+        suffocating_speed: mob.suffocating_speed,
         jump_pending_scale: Some(f64::from(mob.jump_pending_scale)),
         horse_jumping: Some(mob.horse_jumping),
         standing: Some(mob.standing),
@@ -5513,6 +7015,16 @@ fn native_ridden_mob_state(mob: RiddenMobState, release: MinecraftVersion) -> Na
         ultra_warm: Some(mob.ultra_warm),
         jump_boost_amplifier: mob.jump_boost_amplifier,
         no_gravity: Some(mob.no_gravity),
+        stuck_speed_multiplier: Some(mob.stuck_speed_multiplier.into()),
+        slow_falling: Some(mob.slow_falling),
+        levitation_amplifier: mob.levitation_amplifier,
+        dolphins_grace: Some(mob.dolphins_grace),
+        weaving: Some(mob.weaving),
+        gravity: mob.gravity,
+        step_height: mob.step_height,
+        water_movement_efficiency: Some(mob.water_movement_efficiency),
+        air_drag_modifier: mob.air_drag_modifier,
+        friction_modifier: mob.friction_modifier,
     }
 }
 
@@ -5527,17 +7039,19 @@ fn valid_boat_state(state: BoatSimulationState) -> bool {
         && state.delta_rotation.is_finite()
 }
 
-fn parse_boat_status(value: Option<&str>) -> BoatStatus {
+/// A boat's status by its name, absent being in the air: a name it does not know stands for no status.
+fn parse_boat_status(value: Option<&str>) -> Result<BoatStatus> {
     match value {
-        Some("in_water") => BoatStatus::InWater,
-        Some("under_water") => BoatStatus::UnderWater,
-        Some("under_flowing_water") => BoatStatus::UnderFlowingWater,
-        Some("on_land") => BoatStatus::OnLand,
-        _ => BoatStatus::InAir,
+        Some("in_water") => Ok(BoatStatus::InWater),
+        Some("under_water") => Ok(BoatStatus::UnderWater),
+        Some("under_flowing_water") => Ok(BoatStatus::UnderFlowingWater),
+        Some("on_land") => Ok(BoatStatus::OnLand),
+        Some("in_air") | None => Ok(BoatStatus::InAir),
+        Some(other) => Err(Error::from_reason(format!("unknown boat status: {other}"))),
     }
 }
 
-fn boat_state(value: NativeBoatState) -> Result<BoatSimulationState> {
+pub(crate) fn boat_state(value: NativeBoatState) -> Result<BoatSimulationState> {
     let state = BoatSimulationState {
         position: value.position.into(),
         velocity: value.velocity.into(),
@@ -5551,8 +7065,8 @@ fn boat_state(value: NativeBoatState) -> Result<BoatSimulationState> {
         in_water: value.in_water,
         water_level: value.water_level.unwrap_or(f64::NEG_INFINITY),
         land_friction: value.land_friction.unwrap_or(0.0) as f32,
-        status: parse_boat_status(value.status.as_deref()),
-        previous_status: parse_boat_status(value.previous_status.as_deref()),
+        status: parse_boat_status(value.status.as_deref())?,
+        previous_status: parse_boat_status(value.previous_status.as_deref())?,
         settle_status: value.status.is_none(),
         last_yd: value.last_vertical_velocity.unwrap_or(0.0),
         bubble_time: value.bubble_time.unwrap_or(0),
@@ -5560,6 +7074,7 @@ fn boat_state(value: NativeBoatState) -> Result<BoatSimulationState> {
             .bubble_column_direction_is_down
             .unwrap_or(false),
         above_bubble_column: value.above_bubble_column.unwrap_or(false),
+        server_side: value.server_side.unwrap_or(false),
         player_passenger: value.player_passenger.unwrap_or(false),
         collided_horizontally: value.collided_horizontally.unwrap_or(false),
         collided_vertically: value.collided_vertically.unwrap_or(false),
@@ -5576,12 +7091,25 @@ fn boat_state(value: NativeBoatState) -> Result<BoatSimulationState> {
         stuck_speed_multiplier: value.stuck_speed_multiplier.map_or(Vec3::ZERO, Into::into),
         ultra_warm: value.ultra_warm.unwrap_or(false),
         no_gravity: value.no_gravity.unwrap_or(false),
+        paddle_phases: match value.paddle_phases.as_deref() {
+            None => [0.0; 2],
+            Some([left, right]) => [*left as f32, *right as f32],
+            Some(_) => {
+                return Err(Error::from_reason(
+                    "boat paddlePhases must hold the left and right phases",
+                ))
+            }
+        },
+        silent: value.silent.unwrap_or(false),
+        move_out_of_range: false,
     };
     if !valid_boat_state(state) {
         return Err(Error::from_reason(
             "boat simulation state contains invalid values",
         ));
     }
+    validate_position("boat", state.position)?;
+    validate_kept_box("boat", state.bounding_box)?;
     Ok(state)
 }
 
@@ -5596,8 +7124,9 @@ fn boat_status_name(status: BoatStatus) -> String {
     .to_string()
 }
 
-fn native_boat_state(state: BoatSimulationState) -> NativeBoatState {
+pub(crate) fn native_boat_state(state: BoatSimulationState) -> NativeBoatState {
     NativeBoatState {
+        nearby_entities: None,
         position: state.position.into(),
         velocity: state.velocity.into(),
         yaw: state.yaw,
@@ -5613,6 +7142,7 @@ fn native_boat_state(state: BoatSimulationState) -> NativeBoatState {
         bubble_time: Some(state.bubble_time),
         bubble_column_direction_is_down: Some(state.bubble_column_direction_is_down),
         above_bubble_column: Some(state.above_bubble_column),
+        server_side: Some(state.server_side),
         player_passenger: Some(state.player_passenger),
         collided_horizontally: Some(state.collided_horizontally),
         collided_vertically: Some(state.collided_vertically),
@@ -5628,25 +7158,22 @@ fn native_boat_state(state: BoatSimulationState) -> NativeBoatState {
         stuck_speed_multiplier: Some(state.stuck_speed_multiplier.into()),
         ultra_warm: Some(state.ultra_warm),
         no_gravity: Some(state.no_gravity),
+        paddle_phases: Some(state.paddle_phases.iter().map(|&phase| f64::from(phase)).collect()),
+        silent: Some(state.silent),
     }
 }
 
-fn valid_shape(bounds: crate::math::Aabb, slipperiness: f64) -> bool {
-    valid_shape_within(bounds, slipperiness, 0.0, 1.0)
-}
-
-fn valid_collision_shape(bounds: crate::math::Aabb, slipperiness: f64) -> bool {
-    valid_shape_within(bounds, slipperiness, -1.0, 2.0)
-}
-
-fn valid_shape_within(bounds: crate::math::Aabb, slipperiness: f64, min: f64, max: f64) -> bool {
+/// A box of a block's shape, in any channel. No VoxelShape is held to its cell: collision has fences at 1.5, and the
+/// outline too leaves it, a lectern's top plate reaching 18/16 (26.3 LecternBlock.java:231) and a pitcher crop's lower
+/// half starting at -1/16 (26.3 PitcherCropBlock.java:53). The limit is the reach of a query's cells, one block out.
+fn valid_block_shape(bounds: crate::math::Aabb, slipperiness: f64) -> bool {
     valid_bounds(bounds)
-        && bounds.min.x >= min
-        && bounds.min.y >= min
-        && bounds.min.z >= min
-        && bounds.max.x <= max
-        && bounds.max.y <= max
-        && bounds.max.z <= max
+        && bounds.min.x >= -1.0
+        && bounds.min.y >= -1.0
+        && bounds.min.z >= -1.0
+        && bounds.max.x <= 2.0
+        && bounds.max.y <= 2.0
+        && bounds.max.z <= 2.0
         && slipperiness.is_finite()
         && slipperiness >= 0.0
 }
@@ -5656,9 +7183,9 @@ fn native_block_shape(value: NativeBlockShape) -> Result<BlockShape> {
         Vec3::new(value.min_x, value.min_y, value.min_z),
         Vec3::new(value.max_x, value.max_y, value.max_z),
     );
-    if !valid_shape(bounds, value.slipperiness) {
+    if !valid_block_shape(bounds, value.slipperiness) {
         return Err(Error::from_reason(
-            "outline shape bounds must be finite, ordered, and within one block",
+            "outline shape bounds must be finite, ordered, and reach at most one block out of their own",
         ));
     }
 
@@ -5809,35 +7336,52 @@ fn validate_fluid_state(
         Ok(())
 }
 
-fn block_effect_code(effect: BlockEffect) -> u8 {
-    match effect {
-        BlockEffect::None => 0,
-        BlockEffect::SoulSand => 1,
-        BlockEffect::Honey => 2,
-        BlockEffect::Slime => 3,
-        BlockEffect::Web => 4,
-        BlockEffect::Climbable => 5,
-        BlockEffect::BubbleUp => 6,
-        BlockEffect::BubbleDown => 7,
-        BlockEffect::PowderSnow => 8,
-        BlockEffect::SweetBerryBush => 9,
-        BlockEffect::SoulSoil => 10,
-        BlockEffect::Scaffolding => 11,
-        BlockEffect::Cactus => 12,
-        BlockEffect::Magma => 13,
-        BlockEffect::Campfire => 14,
-        BlockEffect::SoulCampfire => 15,
-        BlockEffect::Fire => 16,
-        BlockEffect::SoulFire => 17,
-        BlockEffect::Bed => 18,
-        BlockEffect::Hay => 19,
-        BlockEffect::PointedDripstoneTip => 20,
-        BlockEffect::GlideThroughClimbable => 21,
-        BlockEffect::LilyPad => 22,
-        BlockEffect::SnowLayer => 23,
-        BlockEffect::LavaCauldron => 24,
-        BlockEffect::LayeredCauldron(level) => 24 + level.clamp(1, 3),
+pub(crate) fn block_effect_code(effect: BlockEffect) -> u8 {
+    effect.code()
+}
+
+/// Whether an update says nothing of the block's state or geometry, only its metadata.
+fn metadata_only(update: &NativeBlockUpdate) -> bool {
+    update.id.is_none()
+        && update.tags.is_none()
+        && update.shape.is_none()
+        && update.outline_shape.is_none()
+        && update.interaction_shape.is_none()
+        && update.fluid.is_none()
+        && update.fluid_tags.is_none()
+        && update.fluid_level.is_none()
+        && update.fluid_source.is_none()
+        && update.fluid_flow.is_none()
+        && update.fluid_falling.is_none()
+        && update.water_block.is_none()
+        && update.fall_damage_resetting.is_none()
+        && update.player_fall_damage_resetting.is_none()
+        && update.bounce_restitution.is_none()
+        && update.suppresses_bounce.is_none()
+        && update.suffocating.is_none()
+        && update.in_wall.is_none()
+        && update.bottom_face_sturdy.is_none()
+}
+
+/// All applyBlockUpdates can refuse of one update, which it asks before it changes the world.
+fn validate_block_update(update: &NativeBlockUpdate) -> Result<()> {
+    if update.remove.unwrap_or(false) {
+        return Ok(());
     }
+    if let Some(properties) = update.properties.as_ref() {
+        validate_block_properties(properties)?;
+    }
+    if !metadata_only(update) {
+        block_update_state(update)?;
+    }
+    if let Some(value) = update.state_version.as_deref() {
+        let version = registered_release(value)?;
+        crate::world::VersionedBlockStateId::new(version, 0).map_err(Error::from_reason)?;
+    }
+    if update.block_entity.as_deref() == Some("") {
+        return Err(Error::from_reason("block entity kind must not be empty"));
+    }
+    Ok(())
 }
 
 fn block_update_state(update: &NativeBlockUpdate) -> Result<BlockState> {
@@ -5892,7 +7436,7 @@ fn block_update_state(update: &NativeBlockUpdate) -> Result<BlockState> {
         (bounds, value.slipperiness, value.effect.unwrap_or(0))
     });
     if let Some((bounds, slipperiness, effect)) = shape {
-        if !valid_collision_shape(bounds, slipperiness) {
+        if !valid_block_shape(bounds, slipperiness) {
             return Err(Error::from_reason(
                 "block shape bounds must be finite, ordered, and reach at most one block out of their own",
             ));
@@ -5902,9 +7446,9 @@ fn block_update_state(update: &NativeBlockUpdate) -> Result<BlockState> {
                 Vec3::new(value.min_x, value.min_y, value.min_z),
                 Vec3::new(value.max_x, value.max_y, value.max_z),
             );
-            if !valid_shape(outline_bounds, value.slipperiness) {
+            if !valid_block_shape(outline_bounds, value.slipperiness) {
                 return Err(Error::from_reason(
-                    "outline shape bounds must be finite, ordered, and within one block",
+                    "outline shape bounds must be finite, ordered, and reach at most one block out of their own",
                 ));
             }
             Some(BlockShape {
@@ -5955,6 +7499,7 @@ fn block_update_state(update: &NativeBlockUpdate) -> Result<BlockState> {
             player_fall_damage_resetting,
             suffocating: update.suffocating,
             in_wall: update.in_wall,
+            bottom_face_sturdy: update.bottom_face_sturdy,
         });
     }
     Ok(BlockState {
@@ -5966,9 +7511,9 @@ fn block_update_state(update: &NativeBlockUpdate) -> Result<BlockState> {
                 Vec3::new(value.min_x, value.min_y, value.min_z),
                 Vec3::new(value.max_x, value.max_y, value.max_z),
             );
-            if !valid_shape(bounds, value.slipperiness) {
+            if !valid_block_shape(bounds, value.slipperiness) {
                 return Err(Error::from_reason(
-                    "outline shape bounds must be finite, ordered, and within one block",
+                    "outline shape bounds must be finite, ordered, and reach at most one block out of their own",
                 ));
             }
             Some(BlockShape {
@@ -5985,9 +7530,9 @@ fn block_update_state(update: &NativeBlockUpdate) -> Result<BlockState> {
                 Vec3::new(value.min_x, value.min_y, value.min_z),
                 Vec3::new(value.max_x, value.max_y, value.max_z),
             );
-            if !valid_shape(bounds, value.slipperiness) {
+            if !valid_block_shape(bounds, value.slipperiness) {
                 return Err(Error::from_reason(
-                    "interaction shape bounds must be finite, ordered, and within one block",
+                    "interaction shape bounds must be finite, ordered, and reach at most one block out of their own",
                 ));
             }
             Some(BlockShape {
@@ -6015,37 +7560,116 @@ fn block_update_state(update: &NativeBlockUpdate) -> Result<BlockState> {
         player_fall_damage_resetting,
         suffocating: update.suffocating,
         in_wall: update.in_wall,
+        bottom_face_sturdy: update.bottom_face_sturdy,
     })
 }
 
-fn block_effect(value: u8) -> Result<BlockEffect> {
-    match value {
-        0 => Ok(BlockEffect::None),
-        1 => Ok(BlockEffect::SoulSand),
-        2 => Ok(BlockEffect::Honey),
-        3 => Ok(BlockEffect::Slime),
-        4 => Ok(BlockEffect::Web),
-        5 => Ok(BlockEffect::Climbable),
-        6 => Ok(BlockEffect::BubbleUp),
-        7 => Ok(BlockEffect::BubbleDown),
-        8 => Ok(BlockEffect::PowderSnow),
-        9 => Ok(BlockEffect::SweetBerryBush),
-        10 => Ok(BlockEffect::SoulSoil),
-        11 => Ok(BlockEffect::Scaffolding),
-        12 => Ok(BlockEffect::Cactus),
-        13 => Ok(BlockEffect::Magma),
-        14 => Ok(BlockEffect::Campfire),
-        15 => Ok(BlockEffect::SoulCampfire),
-        16 => Ok(BlockEffect::Fire),
-        17 => Ok(BlockEffect::SoulFire),
-        18 => Ok(BlockEffect::Bed),
-        19 => Ok(BlockEffect::Hay),
-        20 => Ok(BlockEffect::PointedDripstoneTip),
-        21 => Ok(BlockEffect::GlideThroughClimbable),
-        22 => Ok(BlockEffect::LilyPad),
-        23 => Ok(BlockEffect::SnowLayer),
-        24 => Ok(BlockEffect::LavaCauldron),
-        25..=27 => Ok(BlockEffect::LayeredCauldron(value - 24)),
-        _ => Err(Error::from_reason("block effect must be between 0 and 27")),
+pub(crate) fn block_effect(value: u8) -> Result<BlockEffect> {
+    BlockEffect::from_code(value).map_err(Error::from_reason)
+}
+
+/// A shulker box's lid at the bindings: `status` is 0 closed, 1 opening, 2 opened, 3 closing.
+#[napi(object)]
+#[derive(Clone, Copy)]
+pub struct NativeShulkerBox {
+    /// FACING as a Direction's ordinal: down, up, north, south, west, east.
+    pub facing: u8,
+    pub status: u8,
+    pub progress: f64,
+    pub progress_old: f64,
+    /// The progress a push reads before 1.17: `progress` when not given.
+    pub push_progress: Option<f64>,
+}
+
+#[napi(object)]
+pub struct NativeShulkerBoxTick {
+    pub state: NativeShulkerBox,
+    /// The cell's collision box, at the cell's origin.
+    pub bounds: NativeAabb,
+    /// Whether the lid pushes what it meets this tick (simulateVersionedShulkerBoxPush).
+    pub pushes: bool,
+}
+
+pub(crate) fn shulker_box(value: NativeShulkerBox) -> Result<ShulkerBox> {
+    let status = match value.status {
+        0 => ShulkerBoxStatus::Closed,
+        1 => ShulkerBoxStatus::Opening,
+        2 => ShulkerBoxStatus::Opened,
+        3 => ShulkerBoxStatus::Closing,
+        other => return Err(Error::from_reason(format!("shulker box status {other} is none of 0 to 3"))),
+    };
+    if value.facing > 5 || !value.progress.is_finite() || !value.progress_old.is_finite() {
+        return Err(Error::from_reason("shulker box facing must be 0 to 5, and its progress finite"));
     }
+    Ok(ShulkerBox {
+        facing: value.facing,
+        status,
+        progress: value.progress as f32,
+        progress_old: value.progress_old as f32,
+        push_progress: value.push_progress.unwrap_or(value.progress) as f32,
+    })
+}
+
+fn native_shulker_box(value: ShulkerBox) -> NativeShulkerBox {
+    NativeShulkerBox {
+        facing: value.facing,
+        status: value.status as u8,
+        progress: f64::from(value.progress),
+        progress_old: f64::from(value.progress_old),
+        push_progress: Some(f64::from(value.push_progress)),
+    }
+}
+
+/// A shulker box's block event, the server's (triggerEvent(1, count)).
+#[napi]
+pub fn shulker_box_block_event(state: NativeShulkerBox, count: i32) -> Result<NativeShulkerBox> {
+    let mut shulker = shulker_box(state)?;
+    shulker.block_event(count);
+    Ok(native_shulker_box(shulker))
+}
+
+/// One tick of a shulker box's block entity, in the releases that have it (from 1.11).
+#[napi]
+pub fn simulate_versioned_shulker_box_tick(
+    version: String,
+    state: NativeShulkerBox,
+) -> Result<NativeShulkerBoxTick> {
+    let release = vehicle_release(&version, "shulker box")?;
+    if !release.at_least(1, 11, 0) {
+        return Err(Error::from_reason(format!("{version} has no shulker box")));
+    }
+    let mut shulker = shulker_box(state)?;
+    let pushes = shulker.tick(release);
+    let bounds = shulker.bounds();
+    Ok(NativeShulkerBoxTick {
+        state: native_shulker_box(shulker),
+        bounds: NativeAabb { min: bounds.min.into(), max: bounds.max.into() },
+        pushes,
+    })
+}
+
+/// What an opening lid does to a state at the cell's edge: its state after the push.
+#[napi]
+pub fn simulate_versioned_shulker_box_push(
+    version: String,
+    world: &NativeWorld,
+    state: NativeSimulationState,
+    shulker: NativeShulkerBox,
+    x: i32,
+    y: i32,
+    z: i32,
+) -> Result<NativeSimulationState> {
+    let release = vehicle_release(&version, "shulker box")?;
+    validate_tick_state("simulateVersionedShulkerBoxPush", &state)?;
+    let shulker = shulker_box(shulker)?;
+    let mut moved: SimulationState = state.into();
+    crate::shulker_box::push_entity(
+        &mut moved,
+        world.snapshot(),
+        shulker,
+        (x, y, z),
+        PhysicsConfig::default(),
+        release,
+    );
+    Ok(moved.into())
 }

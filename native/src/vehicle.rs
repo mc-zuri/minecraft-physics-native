@@ -5,18 +5,21 @@ use crate::collision::{
 };
 use crate::entity::EntityState;
 use crate::legacy_fluid;
-use crate::math::{atan2_vanilla, wrap_degrees_f32, Aabb, Vec3};
+use crate::math::{
+    atan2_vanilla, ceil_i32_for, floor_i32, floor_i32_for, wrap_degrees_f32, Aabb, Vec3,
+};
 use crate::simulation::{
-    apply_block_effects, apply_inside_block_effects, block_speed_factor, blocks_inside,
+    apply_block_effects, apply_inside_block_effects, block_position, block_speed_factor, blocks_inside,
+    can_simulate_movement,
     blocks_inside_moves, fluid_falling_adjusted_y, friction_influenced_speed, landing_position,
-    main_supporting_block, movements_this_tick, moves_position, mth_cos, mth_sin,
+    entity_collision_query, main_supporting_block, movements_this_tick, moves_position, mth_cos, mth_sin,
     position_of_bounding_box, push_by_fluid, relative_movement, water_contact, yaw_radians,
     SimulationState, VersionPhysicsRules,
 };
 use crate::trig;
 use crate::version::MinecraftVersion;
 use crate::world::{
-    BlockEffect, BlockState, CollisionQueryEntity, EntityCollisionContext, FluidState,
+    shapes_join, BlockEffect, BlockState, CollisionQueryEntity, EntityCollisionContext, FluidState,
     WorldSnapshot,
 };
 
@@ -72,6 +75,7 @@ pub struct BoatSimulationState {
     pub bubble_time: i32,
     pub bubble_column_direction_is_down: bool,
     pub above_bubble_column: bool,
+    pub server_side: bool,
     pub player_passenger: bool,
     pub collided_horizontally: bool,
     pub collided_vertically: bool,
@@ -80,6 +84,13 @@ pub struct BoatSimulationState {
     pub stuck_speed_multiplier: Vec3,
     pub ultra_warm: bool,
     pub no_gravity: bool,
+    /// Boat.paddlePositions (1.9+): each paddle's rowing phase, which grows while that paddle
+    /// moves and is 0 while it rests.
+    pub paddle_phases: [f32; 2],
+    /// Entity.isSilent: a silent boat plays no paddle sound, so takes no second status.
+    pub silent: bool,
+    /// A move past MAX_WALKED_CELLS did not run, and the bindings refuse the tick (`move_vehicle`).
+    pub move_out_of_range: bool,
     pub legacy: LegacyBoatState,
 }
 
@@ -363,9 +374,13 @@ pub fn tick_boat_in_world(
     state.status = boat_status(state, world, release);
     push_boat_by_fluids(state, world, release);
     float_boat(state, world, release);
-    control_boat(state, release);
+    // (controlBoat is the client's: 26.3 AbstractBoat.java:222-226)
+    if !state.server_side {
+        control_boat(state, release);
+    }
     let mut body = boat_body(state, release);
     let velocity = state.velocity;
+    state.move_out_of_range |= !lily_pad_reach(body.bounds(), velocity).is_walkable();
     let cleared = legacy_boat_world(world, release, body.bounds(), velocity, None);
     let move_world = cleared.as_ref().unwrap_or(world);
     let outcome = move_vehicle(
@@ -377,8 +392,20 @@ pub fn tick_boat_in_world(
         |body, support| apply_effects_inside(body, move_world, support, release),
     );
     apply_boat_block_effects(&mut body, world, release, old_position, outcome);
-    state.last_yd = outcome.motion_at_landing.y;
+    if let (true, Some(drag_down)) = (state.server_side, body.above_bubble_column) {
+        state.above_bubble_column = true;
+        state.bubble_column_direction_is_down = drag_down;
+        if state.bubble_time == 0 {
+            state.bubble_time = 60;
+        }
+    }
+    // (1.21.4 alone: Entity.move skips checkFallDamage, which keeps lastYd, for a boat a player
+    // controls; 1.21.4 Entity.java:697)
+    if !(state.player_passenger && release.at_least(1, 21, 4) && !release.at_least(1, 21, 5)) {
+        state.last_yd = outcome.motion_at_landing.y;
+    }
     state.stuck_speed_multiplier = body.stuck_speed_multiplier;
+    state.move_out_of_range |= body.move_out_of_range;
     state.position = body.position;
     state.velocity = body.velocity;
     state.bounding_box = body.bounding_box;
@@ -386,6 +413,65 @@ pub fn tick_boat_in_world(
     state.collided_horizontally = body.collided_horizontally;
     state.collided_vertically = body.collided_vertically;
     state.yaw = f64::from(state.yaw_degrees).to_radians();
+    if state.server_side {
+        tick_bubble_column(state);
+    }
+    advance_paddles(state, world, release);
+}
+
+/// AbstractBoat.tickBubbleColumn on the server: 60 ticks over a column end with a push, down or up,
+/// and the timer stops on the tick it is not over one. A boat with no player (26.3
+/// AbstractBoat.java:276-336, 1.13.2 BoatEntity.java:356-378): the push a player's boat takes is
+/// not the server's to make, as that boat ticks on the client.
+fn tick_bubble_column(state: &mut BoatSimulationState) {
+    if !state.above_bubble_column {
+        state.bubble_time = 0;
+    }
+    if state.bubble_time > 0 {
+        state.bubble_time -= 1;
+        if state.bubble_time == 0 {
+            if state.bubble_column_direction_is_down {
+                state.velocity.y -= 0.7;
+            } else {
+                state.velocity.y = 0.6;
+            }
+        }
+        state.above_bubble_column = false;
+    }
+}
+
+/// The paddle loop at the end of Boat.tick, after the move. The client set the paddles from its
+/// rider's keys (Boat.controlBoat: the right paddle rows for right without left or forward, the
+/// left for left without right or forward). From 1.12 a paddle at the start of its stroke plays
+/// its sound, and getPaddleSound takes the boat's status again where it now is: the land
+/// friction and water level are taken anew there, so a player's boat keeps the unhalved ground
+/// friction on such a tick (1.12.2 BoatEntity.java, 1.20.4 BoatEntity.java:309-329,
+/// 1.21.11 AbstractBoat.java:255-270, 26.3 AbstractBoat.java:240-256). The phase grows by
+/// PI/8 a tick from 1.12; 1.9-1.11 add 0.01 and play no sound.
+fn advance_paddles(state: &mut BoatSimulationState, world: &WorldSnapshot, release: MinecraftVersion) {
+    // (a boat whose first passenger is not a player has its paddles stopped)
+    let rows = |a: bool, b: bool| state.player_passenger && (a && !b || state.forward);
+    let moving = [rows(state.right, state.left), rows(state.left, state.right)];
+    let modern = release.at_least(1, 12, 0);
+    for (i, moving) in moving.into_iter().enumerate() {
+        if !moving {
+            state.paddle_phases[i] = 0.0;
+            continue;
+        }
+        if !modern {
+            state.paddle_phases[i] = (f64::from(state.paddle_phases[i]) + 0.01) as f32;
+            continue;
+        }
+        let phase = state.paddle_phases[i];
+        let turn = std::f64::consts::TAU as f32;
+        let quarter = std::f64::consts::FRAC_PI_4 as f32;
+        let step = (std::f64::consts::PI / 8.0) as f32;
+        if !state.silent && phase % turn <= quarter && (phase + step) % turn >= quarter {
+            // the status itself is not kept: getPaddleSound only reads it
+            let _ = boat_status(state, world, release);
+        }
+        state.paddle_phases[i] = phase + step;
+    }
 }
 
 fn boat_box_at(position: Vec3) -> Aabb {
@@ -432,7 +518,7 @@ fn boat_body(state: &BoatSimulationState, release: MinecraftVersion) -> Simulati
 /// canClimb (1.8.9 Entity.java:668, 677; 1.12.2 :830, 839; 1.14 :602, 611), which a boat does not
 /// (1.8.9 BoatEntity.java:98; 1.12.2 :120; 1.13.2 :132); from 1.15 it is the onGround entity's
 /// that does not bypass stepping effects (1.15 Entity.java:585).
-fn apply_effects_inside(
+pub(crate) fn apply_effects_inside(
     body: &mut SimulationState,
     world: &WorldSnapshot,
     support: Option<BlockPosition>,
@@ -491,13 +577,24 @@ pub(crate) fn is_water(fluid: FluidState) -> bool {
     matches!(fluid, FluidState::Water | FluidState::Waterlogged)
 }
 
-/// FluidState.getHeight of the water at a position; before 1.13 BlockLiquid's
-/// getBlockLiquidHeight: 1 under water only for a level whose low bits are 0.
+/// FluidState.getHeight of the water at a position; in 1.13 its own amount over 9, with no look at
+/// the block above (method_17810: 1.13.2 BoatEntity.java:452, 525, 555, FishingBobberEntity.java:161,
+/// FlowableFluid.java:434); before 1.13 BlockLiquid's getBlockLiquidHeight: 1 under water only for
+/// a level whose low bits are 0.
 pub(crate) fn water_height(world: &WorldSnapshot, position: BlockPosition, release: MinecraftVersion) -> f32 {
-    if release.at_least(1, 13, 0) {
+    if release.at_least(1, 14, 0) {
         return world.fluid_height_at(position) as f32;
     }
-    let level = world.block(position).fluid_level;
+    let block = world.block(position);
+    if release.at_least(1, 13, 0) {
+        let amount = if block.fluid_source || block.fluid_falling || !(1..8).contains(&block.fluid_level) {
+            8
+        } else {
+            8 - block.fluid_level
+        };
+        return f32::from(amount) / 9.0;
+    }
+    let level = block.fluid_level;
     let (x, y, z) = position;
     if level & 7 == 0 && is_water(world.fluid_at((x, y + 1, z))) {
         return 1.0;
@@ -521,7 +618,7 @@ fn boat_status(
     if in_water {
         return BoatStatus::InWater;
     }
-    let friction = ground_friction(bounds, world);
+    let friction = ground_friction(bounds, world, release);
     if friction > 0.0 {
         state.land_friction = friction;
         BoatStatus::OnLand
@@ -538,9 +635,9 @@ fn underwater_status(
 ) -> Option<BoatStatus> {
     let top = bounds.max.y + 0.001;
     let mut under_water = false;
-    for x in bounds.min.x.floor() as i32..bounds.max.x.ceil() as i32 {
-        for y in bounds.max.y.floor() as i32..top.ceil() as i32 {
-            for z in bounds.min.z.floor() as i32..bounds.max.z.ceil() as i32 {
+    for x in floor_i32_for(release, bounds.min.x)..ceil_i32_for(release, bounds.max.x) {
+        for y in floor_i32_for(release, bounds.max.y)..ceil_i32_for(release, top) {
+            for z in floor_i32_for(release, bounds.min.z)..ceil_i32_for(release, bounds.max.z) {
                 let block = world.block((x, y, z));
                 if !is_water(block.fluid) {
                     continue;
@@ -561,15 +658,17 @@ fn underwater_status(
 /// Boat.checkInWater: whether water reaches above the box's bottom, and the highest surface
 /// in its bottom layer (the smallest double before 1.13, the lowest after, when none).
 fn water_level_in(bounds: Aabb, world: &WorldSnapshot, release: MinecraftVersion) -> (bool, f64) {
-    let mut water_level = if release.at_least(1, 13, 0) {
+    // Double.MIN_VALUE, the smallest positive double, until 1.17 (1.15 and 1.16.5 BoatEntity.java
+    // checkBoatInWater; -Double.MAX_VALUE in 1.17 :531)
+    let mut water_level = if release.at_least(1, 17, 0) {
         -f64::MAX
     } else {
         f64::from_bits(1)
     };
     let mut in_water = false;
-    for x in bounds.min.x.floor() as i32..bounds.max.x.ceil() as i32 {
-        for y in bounds.min.y.floor() as i32..(bounds.min.y + 0.001).ceil() as i32 {
-            for z in bounds.min.z.floor() as i32..bounds.max.z.ceil() as i32 {
+    for x in floor_i32_for(release, bounds.min.x)..ceil_i32_for(release, bounds.max.x) {
+        for y in floor_i32_for(release, bounds.min.y)..ceil_i32_for(release, bounds.min.y + 0.001) {
+            for z in floor_i32_for(release, bounds.min.z)..ceil_i32_for(release, bounds.max.z) {
                 if !is_water(world.fluid_at((x, y, z))) {
                     continue;
                 }
@@ -590,11 +689,11 @@ fn water_level_above(
     world: &WorldSnapshot,
     release: MinecraftVersion,
 ) -> f32 {
-    let top = (bounds.max.y - last_yd).ceil() as i32;
-    'layers: for y in bounds.max.y.floor() as i32..top {
+    let top = ceil_i32_for(release, bounds.max.y - last_yd);
+    'layers: for y in floor_i32_for(release, bounds.max.y)..top {
         let mut height = 0.0_f32;
-        for x in bounds.min.x.floor() as i32..bounds.max.x.ceil() as i32 {
-            for z in bounds.min.z.floor() as i32..bounds.max.z.ceil() as i32 {
+        for x in floor_i32_for(release, bounds.min.x)..ceil_i32_for(release, bounds.max.x) {
+            for z in floor_i32_for(release, bounds.min.z)..ceil_i32_for(release, bounds.max.z) {
                 if is_water(world.fluid_at((x, y, z))) {
                     height = height.max(water_height(world, (x, y, z), release));
                 }
@@ -605,7 +704,7 @@ fn water_level_above(
         }
         return y as f32 + height;
     }
-    (top + 1) as f32
+    top.wrapping_add(1) as f32
 }
 
 /// Boat.getGroundFriction: the float average friction of the blocks whose collision shape meets
@@ -613,23 +712,20 @@ fn water_level_above(
 /// `instanceof LilyPadBlock` from 1.13 (1.13.2 BoatEntity.java:492, 1.20.4 :506; 1.21.5
 /// AbstractBoat.java:455, 1.21.11 :453), by the box it gives no boat before (1.9.4 - 1.12.2
 /// LilyPadBlock.java:22-26, which the friction reads with the boat: 1.12.2 BoatEntity.java:431).
-fn ground_friction(bounds: Aabb, world: &WorldSnapshot) -> f32 {
+fn ground_friction(bounds: Aabb, world: &WorldSnapshot, release: MinecraftVersion) -> f32 {
     let slice = Aabb::new(
         Vec3::new(bounds.min.x, bounds.min.y - 0.001, bounds.min.z),
         Vec3::new(bounds.max.x, bounds.min.y, bounds.max.z),
     );
-    let (min_x, max_x) = (
-        slice.min.x.floor() as i32 - 1,
-        slice.max.x.ceil() as i32 + 1,
-    );
-    let (min_y, max_y) = (
-        slice.min.y.floor() as i32 - 1,
-        slice.max.y.ceil() as i32 + 1,
-    );
-    let (min_z, max_z) = (
-        slice.min.z.floor() as i32 - 1,
-        slice.max.z.ceil() as i32 + 1,
-    );
+    let cells = |min: f64, max: f64| {
+        (
+            floor_i32_for(release, min).wrapping_sub(1),
+            ceil_i32_for(release, max).wrapping_add(1),
+        )
+    };
+    let (min_x, max_x) = cells(slice.min.x, slice.max.x);
+    let (min_y, max_y) = cells(slice.min.y, slice.max.y);
+    let (min_z, max_z) = cells(slice.min.z, slice.max.z);
     let mut friction = 0.0_f32;
     let mut blocks = 0;
     for x in min_x..max_x {
@@ -822,6 +918,14 @@ fn control_boat(state: &mut BoatSimulationState, release: MinecraftVersion) {
     let sin = mth_sin(f64::from(-radians), release) as f32;
     let cos = mth_cos(f64::from(radians), release) as f32;
     state.velocity.x += f64::from(sin * acceleration);
+    // Vec3.add(sin * acceleration, 0.0, cos * acceleration) from 1.14: its 0.0 turns the -0.0 that
+    // floatBoat's multiply(1.0, 0.0, 1.0) leaves on a boat falling onto water into 0.0, which
+    // checkFallDamage then keeps as lastYd (1.14 BoatEntity.java:574, 630-633, 1.20.4 :589, 647,
+    // 26.3 AbstractBoat.java:547, 610, 721). 1.13.2 sets velocityY to 0.0 and its paddles add to
+    // the other two alone (1.13.2 BoatEntity.java:578, 613-640).
+    if release.at_least(1, 14, 0) {
+        state.velocity.y += 0.0;
+    }
     state.velocity.z += f64::from(cos * acceleration);
 }
 
@@ -914,6 +1018,7 @@ fn tick_legacy_boat(
         ..SimulationState::default()
     };
     let velocity = state.velocity;
+    state.move_out_of_range |= !lily_pad_reach(bounds, velocity).is_walkable();
     let cleared = legacy_boat_world(world, release, bounds, velocity, Some(state.position));
     let world = cleared.as_ref().unwrap_or(world);
     // Entity.moveEntity's doBlockCollisions, the only one of 1.8's boat (1.8.9
@@ -927,6 +1032,7 @@ fn tick_legacy_boat(
         |body, support| apply_effects_inside(body, world, support, release),
     );
     state.stuck_speed_multiplier = body.stuck_speed_multiplier;
+    state.move_out_of_range |= body.move_out_of_range;
     state.position = body.position;
     state.velocity = body.velocity;
     state.bounding_box = body.bounding_box;
@@ -950,6 +1056,11 @@ fn tick_legacy_boat(
     state.yaw = f64::from(state.yaw_degrees).to_radians();
 }
 
+/// The cells a boat's move looks for lily pads in.
+fn lily_pad_reach(bounds: Aabb, movement: Vec3) -> Aabb {
+    bounds.expand_towards(movement).inflate(Vec3::new(1.0, 1.0, 1.0))
+}
+
 /// The world a boat moves in before 1.13, where a lily pad gives it no collision box (1.8.9
 /// LilyPadBlock.java:37-41; 1.9.4 - 1.12.2 :22-26; 1.13 drops the override): the lily pads the
 /// move can reach removed. 1.8's boat (`corners_of`, where it is) also clears the snow layers and
@@ -968,10 +1079,10 @@ fn legacy_boat_world(
     let mut cleared = Vec::new();
     if let Some(position) = corners_of {
         for corner in 0..4 {
-            let x = (position.x + (f64::from(corner % 2) - 0.5) * 0.8).floor() as i32;
-            let z = (position.z + (f64::from(corner / 2) - 0.5) * 0.8).floor() as i32;
+            let x = floor_i32_for(release, position.x + (f64::from(corner % 2) - 0.5) * 0.8);
+            let z = floor_i32_for(release, position.z + (f64::from(corner / 2) - 0.5) * 0.8);
             for layer in 0..2 {
-                let at = (x, position.y.floor() as i32 + layer, z);
+                let at = (x, floor_i32_for(release, position.y) + layer, z);
                 if matches!(
                     world.effect_at(at),
                     BlockEffect::SnowLayer | BlockEffect::LilyPad
@@ -981,12 +1092,14 @@ fn legacy_boat_world(
             }
         }
     }
-    let reach = bounds
-        .expand_towards(movement)
-        .inflate(Vec3::new(1.0, 1.0, 1.0));
-    for x in reach.min.x.floor() as i32..=reach.max.x.floor() as i32 {
-        for y in reach.min.y.floor() as i32..=reach.max.y.floor() as i32 {
-            for z in reach.min.z.floor() as i32..=reach.max.z.floor() as i32 {
+    let reach = lily_pad_reach(bounds, movement);
+    // (a move past what a call walks is refused, by the caller)
+    if !reach.is_walkable() {
+        return None;
+    }
+    for x in floor_i32_for(release, reach.min.x)..=floor_i32_for(release, reach.max.x) {
+        for y in floor_i32_for(release, reach.min.y)..=floor_i32_for(release, reach.max.y) {
+            for z in floor_i32_for(release, reach.min.z)..=floor_i32_for(release, reach.max.z) {
                 if world.effect_at((x, y, z)) == BlockEffect::LilyPad {
                     cleared.push((x, y, z));
                 }
@@ -1006,7 +1119,7 @@ fn legacy_boat_world(
 /// 1.8's World.isAABBInMaterial for water: a water block in the cells from the box's corner to
 /// one past it whose surface (its top, less level / 8 under level 8) reaches the box's bottom.
 fn legacy_water_reaches(world: &WorldSnapshot, bounds: Aabb) -> bool {
-    let cells = |min: f64, max: f64| min.floor() as i32..(max + 1.0).floor() as i32;
+    let cells = |min: f64, max: f64| floor_i32(min)..floor_i32(max + 1.0);
     cells(bounds.min.x, bounds.max.x).any(|x| {
         cells(bounds.min.y, bounds.max.y).any(|y| {
             cells(bounds.min.z, bounds.max.z).any(|z| {
@@ -1050,6 +1163,10 @@ pub(crate) struct MoveRules {
     pub stands_on_lava: bool,
     /// The entity's checkFallDamage runs checkInsideBlocks itself (a strider's, 1.16 - 1.21.1).
     pub checks_inside_at_fall: bool,
+    /// AbstractMinecart.getBlockSpeedFactor: 1 on a rail, whatever lies under it (1.16+).
+    pub rails_keep_speed: bool,
+    /// The cells whose blocks do not collide (MinecartCollisionContext).
+    pub ignored: [Option<BlockPosition>; 2],
 }
 
 impl MoveRules {
@@ -1071,7 +1188,11 @@ impl MoveRules {
         bounciness: 0.0,
         stands_on_lava: false,
         checks_inside_at_fall: false,
+        rails_keep_speed: false,
+        ignored: [None, None],
     };
+
+    pub(crate) const MINECART: Self = Self::BOAT;
 }
 
 /// What Entity.move left besides the body: the movement asked for and made, the block that
@@ -1082,6 +1203,8 @@ pub(crate) struct VehicleMove {
     pub moved: Vec3,
     pub support: Option<BlockPosition>,
     pub motion_at_landing: Vec3,
+    /// The water and lava heights a mob's refresh within the move left, from 26.1.
+    pub fluid_heights: Option<(f64, f64)>,
 }
 
 /// Entity.move for an entity that is not the player: the stuck speed, the collision (stepping
@@ -1096,6 +1219,34 @@ pub(crate) fn move_vehicle(
     rules: MoveRules,
     inside: impl FnOnce(&mut SimulationState, Option<BlockPosition>),
 ) -> VehicleMove {
+    move_vehicle_among(body, world, release, movement, rules, &[], inside)
+}
+
+/// `move_vehicle` of an entity the boxes of `entities` stop (a minecart's canCollideWith).
+pub(crate) fn move_vehicle_among(
+    body: &mut SimulationState,
+    world: &WorldSnapshot,
+    release: MinecraftVersion,
+    movement: Vec3,
+    rules: MoveRules,
+    entities: &[Aabb],
+    inside: impl FnOnce(&mut SimulationState, Option<BlockPosition>),
+) -> VehicleMove {
+    crate::phase::emit_vehicle_move("vehicleBeforeMove", body);
+    let moved = run_vehicle_move(body, world, release, movement, rules, entities, inside);
+    crate::phase::emit_vehicle_move("vehicleAfterMove", body);
+    moved
+}
+
+fn run_vehicle_move(
+    body: &mut SimulationState,
+    world: &WorldSnapshot,
+    release: MinecraftVersion,
+    movement: Vec3,
+    mut rules: MoveRules,
+    entities: &[Aabb],
+    inside: impl FnOnce(&mut SimulationState, Option<BlockPosition>),
+) -> VehicleMove {
     let mut requested = movement;
     if body.stuck_speed_multiplier.length_squared() > 1.0e-7 {
         requested = requested.multiply(body.stuck_speed_multiplier);
@@ -1103,9 +1254,16 @@ pub(crate) fn move_vehicle(
         body.velocity = Vec3::ZERO;
     }
     let bounds = body.bounds();
+    // (every entity's move ends here, and what it walks is a cell at a time)
+    let step = Vec3::new(0.0, f64::from(rules.max_step.max(0.0)), 0.0);
+    if !bounds.expand_towards(requested).expand_towards(step).is_walkable() {
+        body.move_out_of_range = true;
+        requested = Vec3::ZERO;
+        rules.max_step = 0.0;
+    }
     let modern = release.at_least(1, 14, 0);
     let moved = if modern {
-        let moved = collide_vehicle(body, world, release, bounds, requested, rules);
+        let moved = collide_vehicle(body, world, release, bounds, requested, rules, entities);
         if moves_position(requested, moved, release) {
             place_body(body, moved);
         }
@@ -1118,6 +1276,7 @@ pub(crate) fn move_vehicle(
             requested,
             rules.max_step,
             body.on_ground,
+            entities,
         );
         body.bounding_box = Some(moved_box);
         body.position = position_of_bounding_box(moved_box);
@@ -1138,7 +1297,7 @@ pub(crate) fn move_vehicle(
     body.on_ground = body.vertical_collision_below;
     let support = release
         .at_least(1, 20, 0)
-        .then(|| main_supporting_block(world, body, Some(moved)))
+        .then(|| main_supporting_block(world, body, Some(moved), release))
         .flatten();
     if rules.checks_inside_at_fall {
         // Strider.checkFallDamage's checkInsideBlocks, before the motion stops on the axes it
@@ -1151,8 +1310,12 @@ pub(crate) fn move_vehicle(
         apply_inside_block_effects(body, world, release, &inside);
     }
     let motion_at_landing = body.velocity;
+    // a landing's block stops or bounces what the side simulates alone: the client leaves an item it does not own moving
+    // until 26.3 (1.21.2 Entity.java:721-724, 1.21.3 :698-703, 1.21.5 :720-725, 26.2 :815; before, on both sides: 1.21 :667)
+    let simulates = !release.at_least(1, 21, 2) || !body.client_side || can_simulate_movement(body, release);
     if release.at_least(26, 2, 0) {
-        restitute_vehicle_motion(
+        if simulates {
+            restitute_vehicle_motion(
             body,
             world,
             support,
@@ -1160,7 +1323,8 @@ pub(crate) fn move_vehicle(
             [x_collision, y_collision, z_collision],
             moved.y,
             rules,
-        );
+            );
+        }
     } else {
         let (stops_x, stops_z) = if release.at_least(1, 18, 2) {
             (x_collision, z_collision)
@@ -1177,7 +1341,7 @@ pub(crate) fn move_vehicle(
         if stops_z {
             body.velocity.z = 0.0;
         }
-        if y_collision {
+        if y_collision && simulates {
             fall_on(body, world, support, release, rules.living);
         }
     }
@@ -1185,7 +1349,13 @@ pub(crate) fn move_vehicle(
         inside(body, support);
     }
     if release.at_least(1, 15, 0) {
-        let factor = f64::from(block_speed_factor(world, body, support, release));
+        let on_rail = rules.rails_keep_speed
+            && crate::minecart::is_rail(world, block_position(body.position, release));
+        let factor = if on_rail {
+            1.0
+        } else {
+            f64::from(block_speed_factor(world, body, support, release))
+        };
         body.velocity.x *= factor;
         body.velocity.z *= factor;
     }
@@ -1194,6 +1364,7 @@ pub(crate) fn move_vehicle(
         moved,
         support,
         motion_at_landing,
+        fluid_heights: None,
     }
 }
 
@@ -1217,13 +1388,14 @@ fn collide_vehicle(
     bounds: Aabb,
     movement: Vec3,
     rules: MoveRules,
+    entities: &[Aabb],
 ) -> Vec3 {
     let max_step = rules.max_step;
     let context = EntityCollisionContext {
         bottom: body.position.y,
         descending: false,
         fall_distance: body.fall_distance,
-        walks_on_powder_snow: false,
+        walks_on_powder_snow: body.powder_snow_walkable,
     };
     let swept = bounds.expand_towards(movement);
     let query = Aabb::new(
@@ -1234,10 +1406,14 @@ fn collide_vehicle(
             swept.max.z,
         ),
     );
-    let mut blocks = world.collision_block_shapes_for_entity(query, &context);
+    let mut blocks = world.collision_block_shapes_for_entity(query, &context, release);
+    for (x, y, z) in rules.ignored.into_iter().flatten() {
+        let origin = Vec3::new(f64::from(x), f64::from(y), f64::from(z));
+        blocks.retain(|shape| shape.origin != origin);
+    }
     if rules.stands_on_lava {
         // LiquidBlock.getCollisionShape: the lava's STABLE_SHAPE is the block's own shape
-        for surface in lava_surfaces(world, query, body.position.y) {
+        for surface in lava_surfaces(world, query, body.position.y, release) {
             let origin = Vec3::new(surface.min.x.floor(), surface.min.y.floor(), surface.min.z.floor());
             blocks.retain(|shape| shape.origin != origin);
             blocks.push(BlockVoxelShape::from_world(origin, vec![surface]));
@@ -1248,10 +1424,17 @@ fn collide_vehicle(
     let collides_with_border = if release.at_least(1, 18, 0) {
         world.is_inside_close_to_world_border(body.position, swept, release)
     } else {
+        // (as collide_with_world; 1.13's matchesAnywhere merges on `>`, a strict join of the cells)
         let inside = bounds.deflate(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7));
-        !border.iter().any(|outside| outside.intersects(inside))
+        !border.iter().any(|outside| {
+            if release.at_least(1, 14, 0) {
+                shapes_join(*outside, inside)
+            } else {
+                outside.intersects(inside)
+            }
+        })
     };
-    let rules = CollisionRules {
+    let collision = CollisionRules {
         step_up: if release.at_least(1, 21, 0) {
             StepUp::CandidateHeights
         } else {
@@ -1262,25 +1445,38 @@ fn collide_vehicle(
             && !release.at_least(1, 18, 0),
         single_axis_walk: !release.at_least(1, 18, 0),
     };
+    // (collectColliders asks the level for the entities first, whatever the entity; a cart's own come after)
+    let mut colliding = world.entity_collisions(
+        entity_collision_query(swept, query, max_step, release),
+        &context,
+    );
+    colliding.extend_from_slice(entities);
     let colliders = Colliders {
-        entities: &[],
+        entities: &colliding,
         border: collides_with_border.then_some(&border[..]),
         boxes: &[],
         block_border: world
             .block_collisions_offer_world_border(bounds, release)
             .then_some(&border[..]),
         blocks: &blocks,
+        release: Some(release),
     };
-    collide_shapes(bounds, movement, colliders, body.on_ground, max_step, rules)
+    collide_shapes(bounds, movement, colliders, body.on_ground, max_step, collision)
 }
 
 /// The top half of each still lava block in the cells of `query` under no lava, for an entity whose
 /// feet are above it (LiquidBlock.STABLE_SHAPE, EntityCollisionContext.isAbove).
-pub(crate) fn lava_surfaces(world: &WorldSnapshot, query: Aabb, bottom: f64) -> Vec<Aabb> {
+pub(crate) fn lava_surfaces(
+    world: &WorldSnapshot,
+    query: Aabb,
+    bottom: f64,
+    release: MinecraftVersion,
+) -> Vec<Aabb> {
+    let cells = |min: f64, max: f64| floor_i32_for(release, min)..ceil_i32_for(release, max);
     let mut surfaces = Vec::new();
-    for x in query.min.x.floor() as i32..query.max.x.ceil() as i32 {
-        for y in query.min.y.floor() as i32..query.max.y.ceil() as i32 {
-            for z in query.min.z.floor() as i32..query.max.z.ceil() as i32 {
+    for x in cells(query.min.x, query.max.x) {
+        for y in cells(query.min.y, query.max.y) {
+            for z in cells(query.min.z, query.max.z) {
                 if is_lava_surface(world, (x, y, z), bottom) {
                     let min = Vec3::new(f64::from(x), f64::from(y), f64::from(z));
                     surfaces.push(Aabb::new(min, min + Vec3::new(1.0, 0.5, 1.0)));
@@ -1314,13 +1510,18 @@ fn legacy_collide(
     requested: Vec3,
     max_step: f32,
     on_ground: bool,
+    entities: &[Aabb],
 ) -> (Aabb, Vec3) {
     if release.at_least(1, 13, 0) {
         let obstacles = legacy_obstacles(world, bounds, requested, max_step);
-        let legacy = collide_legacy(bounds, requested, &obstacles, &[], on_ground, max_step, true);
+        let mut colliding = legacy_entity_colliders(world, bounds, requested, max_step);
+        colliding.extend_from_slice(entities);
+        let legacy = collide_legacy(bounds, requested, &obstacles, &colliding, on_ground, max_step, true);
         return (legacy.bounds, legacy.movement);
     }
-    let colliders = legacy_colliders(world, bounds, requested);
+    let mut colliders = legacy_colliders(world, bounds, requested, release);
+    colliders.extend(legacy_entity_colliders(world, bounds, requested, max_step));
+    colliders.extend_from_slice(entities);
     let offset = |axis, bounds, colliders: &[Aabb], distance| {
         legacy_offset(axis, bounds, colliders, distance)
     };
@@ -1348,11 +1549,18 @@ fn legacy_collide(
         return (moved_box, Vec3::new(x, y, z));
     }
     let step = f64::from(max_step);
-    let step_colliders = legacy_colliders(
+    let mut step_colliders = legacy_colliders(
         world,
         bounds,
         Vec3::new(requested.x, step, requested.z),
+        release,
     );
+    step_colliders.extend(legacy_entity_colliders(
+        world,
+        bounds,
+        Vec3::new(requested.x, step, requested.z),
+        max_step,
+    ));
     let across = |rise: f64| {
         let raised = bounds.translated(Vec3::new(0.0, rise, 0.0));
         let dx = offset(Axis::X, raised, &step_colliders, requested.x);
@@ -1389,11 +1597,40 @@ fn legacy_collide(
 
 /// The block boxes a move can meet before 1.13 (World.getCollisionBoxes): those meeting the swept
 /// box.
-fn legacy_colliders(world: &WorldSnapshot, bounds: Aabb, movement: Vec3) -> Vec<Aabb> {
+fn legacy_colliders(
+    world: &WorldSnapshot,
+    bounds: Aabb,
+    movement: Vec3,
+    release: MinecraftVersion,
+) -> Vec<Aabb> {
     let swept = bounds.expand_towards(movement);
-    let mut colliders = world.collision_shapes(swept);
+    // (a list of boxes: one of no height stops a vehicle too, as a head at the start of its way on 1.8)
+    let mut colliders = world.legacy_collision_shapes(swept, release);
     colliders.retain(|shape| shape.intersects(swept));
     colliders
+}
+
+/// The entity colliders a move can meet before 1.14 (World.getCollisionBoxes after the blocks).
+fn legacy_entity_colliders(
+    world: &WorldSnapshot,
+    bounds: Aabb,
+    movement: Vec3,
+    max_step: f32,
+) -> Vec<Aabb> {
+    let swept = bounds.expand_towards(movement);
+    let query = Aabb::new(
+        Vec3::new(swept.min.x, swept.min.y - 1.0e-5, swept.min.z),
+        Vec3::new(
+            swept.max.x,
+            swept.max.y.max(bounds.max.y + f64::from(max_step.max(0.0))),
+            swept.max.z,
+        ),
+    );
+    let context = EntityCollisionContext {
+        bottom: bounds.min.y,
+        ..EntityCollisionContext::default()
+    };
+    world.entity_collisions(query, &context)
 }
 
 /// The block boxes of every cell 1.13's getCollisionBoxes can walk for the move and its step (the
@@ -1412,9 +1649,9 @@ fn legacy_obstacles(world: &WorldSnapshot, bounds: Aabb, movement: Vec3, max_ste
     )
     .inflate(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7));
     let mut obstacles = Vec::new();
-    for z in query.min.z.floor() as i32..=query.max.z.floor() as i32 {
-        for y in query.min.y.floor() as i32 - 1..=query.max.y.floor() as i32 {
-            for x in query.min.x.floor() as i32..=query.max.x.floor() as i32 {
+    for z in floor_i32(query.min.z)..=floor_i32(query.max.z) {
+        for y in floor_i32(query.min.y).wrapping_sub(1)..=floor_i32(query.max.y) {
+            for x in floor_i32(query.min.x)..=floor_i32(query.max.x) {
                 obstacles.extend(world.block_collision_boxes((x, y, z)));
             }
         }
@@ -1467,7 +1704,7 @@ fn fall_on(
     } else {
         0.8
     };
-    match world.effect_at(landing_position(body, support, release)) {
+    match world.effect_at(landing_position(world, body, support, release)) {
         BlockEffect::Slime if !body.sneaking => {
             if body.velocity.y < 0.0 {
                 body.velocity.y = -body.velocity.y * bounce;
@@ -1511,8 +1748,14 @@ fn restitute_vehicle_motion(
         return;
     }
     if body.vertical_collision_below {
-        let landed_on = world.block(landing_position(body, support, release));
-        restitution = if -current.y < rules.gravity || landed_on.suppresses_bounce {
+        let landed_on = world.block(landing_position(world, body, support, release));
+        // (26.3 Entity.java:878 rests at the gravity itself, 26.2 :848 only under it)
+        let resting = if release.at_least(26, 3, 0) {
+            -current.y <= rules.gravity
+        } else {
+            -current.y < rules.gravity
+        };
+        restitution = if resting || landed_on.suppresses_bounce {
             0.0
         } else if rules.living {
             restitution.max(landed_on.bounce_restitution)
@@ -1720,6 +1963,20 @@ mod tests {
     }
 
     #[test]
+    fn the_water_over_a_boat_is_its_own_height_in_1_13() {
+        // method_17810 has no look at the block above: the top of a source under water is 8/9 in
+        // 1.13, 1 from 1.14 (1.13.2 BoatEntity.java:555, 1.14 :449): physrec/bf_under_stone
+        let status = |release| {
+            let mut boat = submerged_boat();
+            boat.position.y = 101.95 - f64::from(BOAT_HEIGHT);
+            boat.bounding_box = None;
+            super::boat_status(&mut boat, &submerged(water_source()), release)
+        };
+        assert_ne!(status(MinecraftVersion::new(1, 13, 2)), BoatStatus::UnderWater);
+        assert_eq!(status(MinecraftVersion::new(1, 14, 4)), BoatStatus::UnderWater);
+    }
+
+    #[test]
     fn submerged_boat_status_separates_source_and_flowing_water() {
         // Boat.isUnderwater: any water cell in the top layer whose surface is above maxY + 0.001
         // makes it UNDER_WATER, and the first that is not a source returns UNDER_FLOWING_WATER
@@ -1861,6 +2118,38 @@ mod tests {
     }
 
     #[test]
+    fn steering_clears_the_negative_zero_of_a_boat_set_on_the_water() {
+        let mut boat = BoatSimulationState {
+            velocity: Vec3::new(0.1, -0.0, 0.0),
+            ..BoatSimulationState::default()
+        };
+        super::control_boat(&mut boat, V1_21_1);
+        assert!(boat.velocity.y.is_sign_positive());
+    }
+
+    #[test]
+    fn a_boat_stops_at_an_entity_it_collides_with() {
+        // Entity.collide takes the entity colliders first (26.3 Entity.java:1262-1263) on every
+        // path: the modern, the 1.13 and the older one
+        for release in [V1_21_1, MinecraftVersion::parse("1.13.2").unwrap(), MinecraftVersion::parse("1.12.2").unwrap()] {
+            let mut world = WorldSnapshot::new();
+            world.set_entity_colliders(vec![crate::world::EntityCollider {
+                bounds: Aabb::new(Vec3::new(2.0, 9.0, 0.0), Vec3::new(3.0, 11.0, 1.0)),
+                only_from_above: false,
+            }]);
+            let mut boat = BoatSimulationState {
+                position: Vec3::new(0.5, 10.0, 0.5),
+                velocity: Vec3::new(3.0, 0.0, 0.0),
+                no_gravity: true,
+                ..BoatSimulationState::default()
+            };
+            tick_boat_in_world(&mut boat, &world, release);
+            assert!(boat.position.x < 2.0 - 0.6, "{release:?}: {}", boat.position.x);
+            assert!(boat.collided_horizontally, "{release:?}");
+        }
+    }
+
+    #[test]
     fn a_boat_with_no_gravity_does_not_fall_but_keeps_its_buoyancy() {
         // Boat.floatBoat: `hasNoGravity() ? 0.0 : -0.04F` (1.10.2 BoatEntity.java:499, 1.20.4
         // :583), getFinalGravity() from 1.20.5 (1.20.5 BoatEntity.java:582, Entity.java:1112-1114);
@@ -1913,7 +2202,7 @@ mod tests {
         let bounds = Aabb::new(Vec3::new(0.4, 0.0, 0.0), Vec3::new(1.0 - 5.0e-8, 1.0, 1.0));
         let push = Vec3::new(0.7, 0.0, 0.0);
         let gap = 1.0 - (1.0 - 5.0e-8);
-        let (_, moved) = legacy_collide(&world, MinecraftVersion::new(1, 13, 2), bounds, push, 0.0, false);
+        let (_, moved) = legacy_collide(&world, MinecraftVersion::new(1, 13, 2), bounds, push, 0.0, false, &[]);
         assert_eq!(moved.x, gap);
         // a full cube of the next row after it is a later shape, which drops the 5e-8
         world.set_block(
@@ -1924,7 +2213,7 @@ mod tests {
             },
         );
         let across = Aabb::new(Vec3::new(0.4, 0.0, 0.5), Vec3::new(1.0 - 5.0e-8, 1.0, 1.5));
-        let (_, moved) = legacy_collide(&world, MinecraftVersion::new(1, 13, 2), across, push, 0.0, false);
+        let (_, moved) = legacy_collide(&world, MinecraftVersion::new(1, 13, 2), across, push, 0.0, false, &[]);
         assert_eq!(moved.x, 0.0);
     }
 
@@ -2023,6 +2312,58 @@ mod tests {
     }
 
     #[test]
+    fn a_paddle_stroke_takes_the_boats_status_again_after_the_move() {
+        // getPaddleSound in the paddle loop after the move: a stroke's start gives back the ground's
+        // friction, unhalved (1.20.4 BoatEntity.java:309-329, 393-404), which a silent boat does not;
+        // the phase grows by PI/8 from 1.12, by 0.01 before and with no sound (1.9.4 :269-270)
+        let mut world = WorldSnapshot::new();
+        for x in -3..=3 {
+            for z in -3..=3 {
+                world.set_block((x, -1, z), solid(0.5));
+            }
+        }
+        let start = BoatSimulationState {
+            position: Vec3::new(0.5, 0.0, 0.5),
+            forward: true,
+            player_passenger: true,
+            ..BoatSimulationState::default()
+        };
+        let step = (std::f64::consts::PI / 8.0) as f32;
+
+        let mut boat = start;
+        tick_boat_in_world(&mut boat, &world, V1_20_4);
+        assert_eq!(boat.paddle_phases, [step, step]);
+        assert_eq!(boat.land_friction, 0.25);
+        tick_boat_in_world(&mut boat, &world, V1_20_4);
+        assert_eq!(boat.paddle_phases, [step * 2.0, step * 2.0]);
+        assert_eq!(boat.land_friction, 0.5);
+        // the window holds two strokes' starts: PI/4 itself is within it
+        tick_boat_in_world(&mut boat, &world, V1_20_4);
+        assert_eq!(boat.land_friction, 0.5);
+        tick_boat_in_world(&mut boat, &world, V1_20_4);
+        assert_eq!(boat.land_friction, 0.25);
+
+        let mut silent = BoatSimulationState { silent: true, ..start };
+        tick_boat_in_world(&mut silent, &world, V1_20_4);
+        tick_boat_in_world(&mut silent, &world, V1_20_4);
+        assert_eq!(silent.land_friction, 0.25);
+
+        let mut old = start;
+        tick_boat_in_world(&mut old, &world, MinecraftVersion::new(1, 9, 4));
+        tick_boat_in_world(&mut old, &world, MinecraftVersion::new(1, 9, 4));
+        assert_eq!(old.land_friction, 0.25);
+        assert_eq!(old.paddle_phases[0], (0.01_f64 as f32 as f64 + 0.01) as f32);
+
+        // a paddle at rest has no phase, and a boat without a player does not row
+        let mut resting = BoatSimulationState { paddle_phases: [1.0, 1.0], forward: false, ..start };
+        tick_boat_in_world(&mut resting, &world, V1_20_4);
+        assert_eq!(resting.paddle_phases, [0.0, 0.0]);
+        let mut empty = BoatSimulationState { player_passenger: false, ..start };
+        tick_boat_in_world(&mut empty, &world, V1_20_4);
+        assert_eq!(empty.paddle_phases, [0.0, 0.0]);
+    }
+
+    #[test]
     fn boat_landing_keeps_a_positive_zero_from_26_2() {
         let mut world = WorldSnapshot::new();
         world.set_block((0, -1, 0), solid(0.6));
@@ -2054,8 +2395,34 @@ mod tests {
 
         assert_eq!(boat.status, BoatStatus::InWater);
         assert_eq!(boat.position.y, f64::from(101.0_f32 - 0.5625) + 0.101);
-        assert!(boat.velocity.y == 0.0 && boat.velocity.y.is_sign_negative());
-        assert_eq!(boat.last_yd, 0.0);
+        assert_eq!(boat.velocity.y.to_bits(), 0.0_f64.to_bits());
+        assert_eq!(boat.last_yd.to_bits(), 0.0_f64.to_bits());
+    }
+
+    #[test]
+    fn a_boat_set_on_the_water_keeps_no_negative_zero_through_its_paddles_from_1_14() {
+        // floatBoat's multiply(1.0, 0.0, 1.0) leaves -0.0 and controlBoat's Vec3.add(.., 0.0, ..)
+        // clears it (1.14 BoatEntity.java:574, 630-633, 26.3 AbstractBoat.java:547, 610); before
+        // 1.14 floatBoat writes 0.0 itself and nothing adds to it
+        for release in [
+            MinecraftVersion::new(1, 13, 2),
+            MinecraftVersion::new(1, 14, 0),
+            V1_20_4,
+            MinecraftVersion::new(26, 3, 0),
+        ] {
+            let mut boat = BoatSimulationState {
+                position: Vec3::new(0.5, 100.7, 2125.5),
+                velocity: Vec3::new(0.19, -0.3, 0.0),
+                status: BoatStatus::InAir,
+                last_yd: -0.3,
+                ..BoatSimulationState::default()
+            };
+
+            tick_boat_in_world(&mut boat, &pond(), release);
+
+            assert_eq!(boat.velocity.y.to_bits(), 0.0_f64.to_bits(), "{release:?}");
+            assert_eq!(boat.last_yd.to_bits(), 0.0_f64.to_bits(), "{release:?}");
+        }
     }
 
     #[test]
@@ -2098,6 +2465,19 @@ mod tests {
         let kept = boat.bounding_box.expect("a boat keeps its box before 1.17");
         assert_eq!(kept.min.y, boat.position.y);
         assert_eq!(kept.max.y - kept.min.y, 0.5625);
+    }
+
+    #[test]
+    fn a_box_of_no_height_stops_a_vehicle_before_1_13() {
+        // the head at the start of its way on 1.8, drawn back flat (1.8.9 PistonExtensionBlock.java:122-134,
+        // 166-197): World.getCollisionBoxes keeps what a block lists, whatever its height
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 100, 0), crate::world::BlockState::default());
+        let flat = Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.0, 1.0));
+        world.set_moving_block((0, 100, 0), &[flat], false);
+        let bounds = Aabb::new(Vec3::new(0.1, 100.0, 0.1), Vec3::new(0.9, 100.7, 0.9));
+        let (_, moved) = legacy_collide(&world, MinecraftVersion::new(1, 8, 8), bounds, Vec3::new(0.0, -0.02, 0.0), 0.0, false, &[]);
+        assert_eq!(moved.y, 0.0);
     }
 
     #[test]
@@ -2646,6 +3026,29 @@ mod tests {
     }
 
     #[test]
+    fn sixty_ticks_over_a_column_end_in_the_server_s_push() {
+        let tick = |down: bool, velocity_y: f64, time: i32| {
+            let mut boat = BoatSimulationState {
+                velocity: Vec3::new(0.1, velocity_y, 0.0),
+                bubble_time: time,
+                above_bubble_column: true,
+                bubble_column_direction_is_down: down,
+                ..BoatSimulationState::default()
+            };
+            super::tick_bubble_column(&mut boat);
+            boat
+        };
+        assert_eq!(tick(false, 0.25, 1).velocity.y, 0.6);
+        assert_eq!(tick(true, 0.25, 1).velocity.y, 0.25 - 0.7);
+        let waiting = tick(false, 0.25, 2);
+        assert_eq!((waiting.velocity.y, waiting.bubble_time, waiting.above_bubble_column), (0.25, 1, false));
+        // (off the column the timer is gone with no push)
+        let mut left = BoatSimulationState { bubble_time: 1, velocity: Vec3::new(0.0, 0.25, 0.0), ..BoatSimulationState::default() };
+        super::tick_bubble_column(&mut left);
+        assert_eq!((left.bubble_time, left.velocity.y), (0, 0.25));
+    }
+
+    #[test]
     fn a_bubble_column_under_the_air_does_not_move_the_boat_its_player_steers() {
         // AbstractBoat.onAboveBubbleColumn moves the boat on the server alone (1.16
         // BoatEntity.java:205-215, 1.21.11 AbstractBoat.java:155-162, 26.3 :151-158)
@@ -2772,9 +3175,43 @@ mod tests {
         let mut world = WorldSnapshot::new();
         world.set_block((0, 100, 0), lily_pad(release));
         let bounds = super::boat_box_at(Vec3::new(0.5, 100.09375, 0.5));
-        assert!(super::ground_friction(bounds, &world).is_nan());
+        assert!(super::ground_friction(bounds, &world, MinecraftVersion::new(26, 3, 0)).is_nan());
         world.set_block((1, 100, 0), solid(0.98));
-        assert_eq!(super::ground_friction(bounds, &world), 0.98);
+        assert_eq!(super::ground_friction(bounds, &world, MinecraftVersion::new(26, 3, 0)), 0.98);
+    }
+
+    #[test]
+    fn a_boats_ground_friction_is_the_float_average_of_what_it_spans() {
+        // Boat.getGroundFriction sums the floats by x, then z, and divides by the count as a float
+        // (1.13.2 BoatEntity.java:477-495, 26.3 AbstractBoat.java:449-470): the blocks meeting the
+        // slice under the box, no block whose edge it only touches
+        let mut world = WorldSnapshot::new();
+        let (ice, stone, blue_ice, slime) = (0.98_f32, 0.6_f32, 0.989_f32, 0.8_f32);
+        for (position, friction) in [
+            ((0, 99, 0), ice),
+            ((0, 99, 1), stone),
+            ((1, 99, 0), blue_ice),
+            ((1, 99, 1), slime),
+        ] {
+            world.set_block(position, solid(f64::from(friction)));
+        }
+        let spanning = super::boat_box_at(Vec3::new(1.0, 100.0, 1.0));
+        assert_eq!(
+            super::ground_friction(spanning, &world, MinecraftVersion::new(26, 3, 0)).to_bits(),
+            ((ice + stone + blue_ice + slime) / 4.0).to_bits(),
+        );
+        // an edge on x 1 leaves the blocks past it out, and a hair past it brings them in
+        let touching = super::boat_box_at(Vec3::new(1.0 - super::BOAT_HALF_WIDTH, 100.0, 0.5));
+        assert_eq!(touching.max.x, 1.0);
+        assert_eq!(
+            super::ground_friction(touching, &world, MinecraftVersion::new(26, 3, 0)).to_bits(),
+            ((ice + stone) / 2.0).to_bits(),
+        );
+        let over = super::boat_box_at(Vec3::new(1.0 - super::BOAT_HALF_WIDTH + 1.0e-6, 100.0, 0.5));
+        assert_eq!(
+            super::ground_friction(over, &world, MinecraftVersion::new(26, 3, 0)).to_bits(),
+            ((ice + stone + blue_ice + slime) / 4.0).to_bits(),
+        );
     }
 
     #[test]

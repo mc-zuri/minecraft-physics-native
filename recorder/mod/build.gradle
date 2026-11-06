@@ -1,0 +1,11 @@
+allprojects {
+    version = '0.1.0'
+    group = 'dev.mcpn.recorder'
+
+    repositories {
+        maven { name = 'wagyourtail releases'; url = 'https://maven.wagyourtail.xyz/releases' }
+        maven { name = 'fabric'; url = 'https://maven.fabricmc.net/' }
+        maven { name = 'minecraft'; url = 'https://libraries.minecraft.net/' }
+        mavenCentral()
+    }
+}

@@ -215,4 +215,22 @@ function methodBodyIn(text, name) {
   return null;
 }
 
-module.exports = { javaCode, matchingBracket, splitTopLevel, indexClasses, classChain, methodBodyIn };
+/**
+ * The source with the fields a decompiler assigned in `static { }` given their initializers where
+ * they are declared, as other decompiles of the same class print them.
+ */
+function hoistStaticFields(source) {
+  const code = javaCode(source);
+  let hoisted = source;
+  for (const block of code.matchAll(/^[ \t]*static\s*\{/gm)) {
+    const open = block.index + block[0].length - 1;
+    const body = source.slice(open + 1, matchingBracket(code, open));
+    for (const assignment of body.matchAll(/^[ \t]*([A-Z][A-Z0-9_]*)\s*=\s*([\s\S]*?);[ \t]*\r?$/gm)) {
+      const declared = new RegExp(String.raw`(\bstatic\s+final\s+[^;=\n]*\b${assignment[1]})\s*;`);
+      hoisted = hoisted.replace(declared, (_, head) => `${head} = ${assignment[2]};`);
+    }
+  }
+  return hoisted;
+}
+
+module.exports = { javaCode, matchingBracket, splitTopLevel, indexClasses, classChain, methodBodyIn, hoistStaticFields };

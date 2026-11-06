@@ -1,0 +1,18 @@
+1.14.4
+-java/dev/mcpn/recorder/mc/mixin/ClientChunkEntriesMixin.java
+-java/dev/mcpn/recorder/mc/LightFence.java
+-java/dev/mcpn/recorder/mc/mixin/LightCheckMixin.java
+-java/dev/mcpn/recorder/mc/mixin/ChunkMapAccessor.java
+-java/dev/mcpn/recorder/mc/mixin/ShufflingListMixin.java
+-java/dev/mcpn/recorder/mc/mixin/SensorTimeMixin.java
+-java/dev/mcpn/recorder/mc/mixin/ServerEntityAccessor.java
+-java/dev/mcpn/recorder/mc/mixin/TrackedEntityAccessor.java
+-java/dev/mcpn/recorder/mc/mixin/BlockableEventLoopAccessor.java
+-java/dev/mcpn/recorder/mc/mixin/ClientLevelAccessor.java
+-java/dev/mcpn/recorder/mc/mixin/ThreadedLevelLightEngineAccessor.java
+-java/dev/mcpn/recorder/mc/mixin/ConfirmScreenAccessor.java
+=BuiltInRegistries.ITEM.get BuiltInRegistries.ITEM.getByIdentifier
+=BuiltInRegistries.MOB_EFFECT.get BuiltInRegistries.MOB_EFFECT.getByIdentifier
+=BuiltInRegistries.ENCHANTMENT.get BuiltInRegistries.ENCHANTMENT.getByIdentifier
+=p.isVisuallySneaking() p.isSneaking()
+=BlockStateParser.serialize(state) BlockStateParser.serialize(state,null)

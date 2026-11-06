@@ -1,3 +1,4 @@
+import type { OpenShulkerBox } from './shulkers';
 // The local player's tick for mineflayer-physics-utils' EPhysicsCtx, the engine interface mineflayer's physics plugin
 // drives (IPhysics.simulate, as BotcraftPhysics). The native engine moves the player (simulateVersionedTick); around it
 // the adapter makes the client's own decisions that the engine leaves to its caller, as LocalPlayer.aiStep makes them
@@ -11,6 +12,8 @@ import {
     NativePlayerInputFlag,
     NativePlayerOutput,
     NativePlayerOutputFlag,
+    type NativeBoatVehicle,
+    type NativeMovementSpeedAttribute,
     type NativeMovingPiston,
     type NativePlayer,
     type NativeSimulationState,
@@ -18,9 +21,10 @@ import {
 } from '../native';
 import { NativeEngine, type NativeEngineOptions, type PhysicsRegistry } from './base';
 import { EFFECT, FLUID_LAVA, GLIDE_THROUGH, type DescribedBlock } from './blocks';
+import { livingFlagsSlot } from './physics-features';
 import { floatRadians, mthFor, viewVector, type Mth } from './mth';
-import type { Box, PhysicsCtx, PlayerState, Vec3 } from './types';
-import type { NativeWorldSync, PrismarineWorld } from './world';
+import type { Attribute, AttributeModifier, Box, EquippedItem, ItemEnchants, PhysicsCtx, PlayerState, Vec3 } from './types';
+import { syncReads, type NativeWorldSync, type PrismarineWorld } from './world';
 
 const f32 = Math.fround;
 
@@ -49,12 +53,42 @@ export interface MovingPiston {
     shapes: number[][];
     /** The outline boxes of a block it pushes, which push on 1.9 - 1.10 (absent: the full cube). */
     outlineShapes?: number[][];
+    /** The collision boxes it has once it has gone on this tick, for the blocks after it, if they are other ones. */
+    nextShapes?: number[][];
     /** The name of the block it moves: a slime block bounces the player, a honey block carries it. */
     movedBlock?: string;
 }
 
 /** The slime block's names: slime before 1.13 (minecraft-data's), slime_block from it. */
 const SLIME_BLOCKS = new Set(['slime', 'slime_block']);
+
+/** The engine's form of a moving piston block. */
+export function nativeMovingPiston(piston: MovingPiston): NativeMovingPiston {
+    const [dx, dy, dz] = piston.direction;
+    return {
+        x: piston.pos[0],
+        y: piston.pos[1],
+        z: piston.pos[2],
+        facing: DIRECTIONS.findIndex(([x, y, z]) => x === dx && y === dy && z === dz),
+        extending: piston.extending,
+        source: piston.source,
+        progress: piston.progress,
+        shapes: piston.shapes.map(([minX, minY, minZ, maxX, maxY, maxZ]) => nativeBox(box(minX, minY, minZ, maxX, maxY, maxZ))),
+        outlineShapes: piston.outlineShapes?.map(([minX, minY, minZ, maxX, maxY, maxZ]) => nativeBox(box(minX, minY, minZ, maxX, maxY, maxZ))),
+        nextShapes: piston.nextShapes?.map(([minX, minY, minZ, maxX, maxY, maxZ]) => nativeBox(box(minX, minY, minZ, maxX, maxY, maxZ))),
+        bounces: SLIME_BLOCKS.has(piston.movedBlock ?? ''),
+        stickyForEntities: piston.movedBlock === 'honey_block',
+    };
+}
+
+/** What a tick reads back of the state that mineflayer-physics-utils' PlayerState.clone leaves out. */
+const CLONE_DROPS = [
+    'fallDistance', 'prevForwardImpulse', 'sprintingTicksLeft', 'autoJumpEnabled', 'autoJumpTime', 'autoJumping', 'autoSpinAttackTicks', 'itemUseTicks',
+    'usedItemRiptide', 'riptide', 'eyeInWater', 'isInPowderSnow', 'wasInPowderSnow', 'scale', 'sizedPose', 'passenger', 'boatVehicle', 'invulnerable',
+    'noGravity', 'flySpeed', 'mayFly', 'useItemCanSprint', 'useItemSpeedMultiplier', 'fireworkRockets', 'fireworkRocketsBeforePlayer', 'nearbyEntities',
+    'vehicleCanSprint', 'vehicleJumpable', 'vehicleOnGround', 'sprintWindow', 'seaLevel', 'safeFallDistance', 'fallDamageImmune', 'fallDamageMultiplier',
+    'entityBounciness', 'blockBounciness', 'controlledByLocalInstance', 'canSimulateMovement', 'canWalkOnPowderSnow', 'removed',
+] as const;
 
 /** Direction.from3DDataValue: down, up, north, south, west, east. */
 const DIRECTIONS = [[0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1], [-1, 0, 0], [1, 0, 0]];
@@ -63,6 +97,10 @@ const DIRECTIONS = [[0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1], [-1, 0, 0], [1
 const CLIMBABLE = new Set(['ladder', 'vine', 'scaffolding', 'weeping_vines', 'weeping_vines_plant', 'twisting_vines', 'twisting_vines_plant', 'cave_vines', 'cave_vines_plant']);
 
 type Size = { width: number; height: number };
+
+/** The slots mineflayer's getEquipmentDestSlot names for the worn armor, head first (EquipmentSlot's ALL_ARMOR). */
+const ARMOR_SLOTS = ['head', 'torso', 'legs', 'feet'] as const;
+type ArmorSlot = typeof ARMOR_SLOTS[number];
 
 /**
  * The engine's own copy of a player (a NativePlayer, which keeps what mineflayer-physics-utils' state has no field for:
@@ -74,9 +112,16 @@ interface Carry {
     position: Vec3Like;
     /** The inputs that rarely change (attributes, effects, enchantments), sent with the whole state when they do. */
     slow: Partial<NativeSimulationState>;
-    /** The box the engine keeps before 1.17 (null without one), and the size the player moved with. */
+    /** The frozen ticks last synced: the engine counts on from them where the client does (from 1.21.5) until the next sync. */
+    frozen: number | undefined;
+    /** The box the engine keeps before 1.17 (null without one), the size the player moved with and the one its tick left. */
     kept: Box | null;
     size: Size;
+    keptSize: Size;
+    /** The native world it last ticked in. */
+    world?: object;
+    /** Entity.verticalCollisionBelow as the last tick left it: no PlayerState field holds it. */
+    verticalCollisionBelow: boolean;
 }
 
 type Vec3Like = { x: number; y: number; z: number };
@@ -86,10 +131,13 @@ const InFlag = NativePlayerInputFlag;
 const Out = NativePlayerOutput;
 const OutFlag = NativePlayerOutputFlag;
 
+/** AttributeModifier.Operation by its id in the attributes packet, as the engine names them. */
+const SPEED_OPERATIONS = ['add_value', 'add_multiplied_base', 'add_multiplied_total'];
+
 /** The kinds of the nearby entities in a NativePlayer's entities array. */
 const ENTITY_KINDS: Record<string, number> = {
     inert: 0, living: 1, boat: 2, shulker: 3, happy_ghast: 4, still_living: 5, happy_ghast_stays_still: 6,
-    attached_rocket: 7,
+    attached_rocket: 7, minecart: 8,
 };
 
 /**
@@ -125,9 +173,20 @@ const scoreboardTeam = (entity: TeamEntity, teams: TeamMap): TeamTeam => {
     return name != null ? teams[name] : undefined;
 };
 
+const sameBoatVehicle = (a: NativeBoatVehicle | null | undefined, b: NativeBoatVehicle | null | undefined) => {
+    if (a == null || b == null) return a == null && b == null;
+    return a.underwater === b.underwater
+        && (['min', 'max'] as const).every(side => (['x', 'y', 'z'] as const)
+            .every(axis => Object.is(a.boundingBox[side][axis], b.boundingBox[side][axis])));
+};
+const sameSpeedAttribute = (a?: NativeMovementSpeedAttribute, b?: NativeMovementSpeedAttribute) => a === b || (!!a && !!b
+    && a.base === b.base && a.frost === b.frost && a.modifiers.length === b.modifiers.length
+    && a.modifiers.every((modifier, i) => modifier.amount === b.modifiers[i].amount && modifier.operation === b.modifiers[i].operation));
 const sameInputs = (a: Partial<NativeSimulationState>, b: Partial<NativeSimulationState>) => {
     const keys = Object.keys(a) as (keyof NativeSimulationState)[];
-    return keys.length === Object.keys(b).length && keys.every(key => Object.is(a[key], b[key]));
+    return keys.length === Object.keys(b).length && keys.every(key => (key === 'boatVehicle'
+        ? sameBoatVehicle(a.boatVehicle, b.boatVehicle)
+        : key === 'movementSpeedAttribute' ? sameSpeedAttribute(a[key], b[key]) : Object.is(a[key], b[key])));
 };
 const sameBox = (a: Box | null, b: Box | null) => a === b || (!!a && !!b && a.minX === b.minX && a.minY === b.minY
     && a.minZ === b.minZ && a.maxX === b.maxX && a.maxY === b.maxY && a.maxZ === b.maxZ);
@@ -136,6 +195,44 @@ const box = (minX: number, minY: number, minZ: number, maxX: number, maxY: numbe
 const shrink = (b: Box, by: number): Box => box(b.minX + by, b.minY + by, b.minZ + by, b.maxX - by, b.maxY - by, b.maxZ - by);
 const nativeBox = (b: Box) => ({ min: { x: b.minX, y: b.minY, z: b.minZ }, max: { x: b.maxX, y: b.maxY, z: b.maxZ } });
 const vec = (v: { x: number; y: number; z: number }): NativeVec3 => ({ x: v.x, y: v.y, z: v.z });
+const validateBoatVehicle = (boat: NativeBoatVehicle | null | undefined): void => {
+    if (boat == null) return;
+    const min = boat.boundingBox?.min;
+    const max = boat.boundingBox?.max;
+    if (typeof boat.underwater !== 'boolean' || !min || !max || !(['x', 'y', 'z'] as const)
+        .every(axis => Number.isFinite(min[axis]) && Number.isFinite(max[axis]) && min[axis] <= max[axis])) {
+        throw new Error('boatVehicle must contain finite, ordered boundingBox coordinates and an underwater boolean');
+    }
+};
+const copyBoatVehicle = (boat: NativeBoatVehicle | null | undefined): NativeBoatVehicle | undefined => {
+    validateBoatVehicle(boat);
+    return boat == null ? undefined : {
+        underwater: boat.underwater,
+        boundingBox: { min: vec(boat.boundingBox.min), max: vec(boat.boundingBox.max) },
+    };
+};
+const addedComponent = (item: EquippedItem, type: string) => item.componentMap?.get(type);
+const removedComponent = (item: EquippedItem, type: string) => !!item.removedComponents?.some(removed => removed.type === type);
+/** ItemStack.getMaxDamage: the stack's max_damage component (1.20.5+), else the registry's. */
+const maxDamageOf = (item: EquippedItem) => (addedComponent(item, 'max_damage')?.data as number | undefined) ?? item.maxDurability ?? 0;
+/** The slot of an item's own equippable component (Items.java: `.humanoidArmor` and the elytra's, 26.3 :2105), for a stack that adds no other. */
+const defaultEquippableSlot = (name: string) => (name === 'elytra' ? 'chest' : /_helmet$/.test(name) ? 'head' : /_chestplate$/.test(name) ? 'chest'
+    : /_leggings$/.test(name) ? 'legs' : /_boots$/.test(name) ? 'feet' : undefined);
+/** ItemStack.nextDamageWillBreak (client1.21.2 ItemStack.java:412-414, 436-438). */
+const nextDamageWillBreak = (item: EquippedItem) => {
+    const damageable = (!!addedComponent(item, 'max_damage') || (!!item.maxDurability && !removedComponent(item, 'max_damage')))
+        && !addedComponent(item, 'unbreakable') && !removedComponent(item, 'damage');
+    return damageable && (item.durabilityUsed ?? 0) >= maxDamageOf(item) - 1;
+};
+/** LivingEntity.canGlideUsing: the stack has GLIDER, its EQUIPPABLE names the slot, and it survives the next damage. */
+const canGlideUsing = (item: EquippedItem | null | undefined, slot: string) => {
+    const name = item?.name;
+    if (!item || name == null) return false;
+    if (!addedComponent(item, 'glider') && (name !== 'elytra' || removedComponent(item, 'glider'))) return false;
+    const equippable = addedComponent(item, 'equippable')?.data as { slot?: string } | undefined;
+    const equippedIn = equippable?.slot ?? (removedComponent(item, 'equippable') ? undefined : defaultEquippableSlot(name));
+    return equippedIn === slot && !nextDamageWillBreak(item);
+};
 const samePosition = (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) => a.x === b.x && a.y === b.y && a.z === b.z;
 const isBoatName = (name: string) => /(^|_)(boat|raft)$/.test(name);
 const isWaterish = (block: DescribedBlock | null): block is DescribedBlock => !!block?.fluid && block.fluid.type !== FLUID_LAVA;
@@ -154,13 +251,63 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         this.mth = mthFor(!this.lt('1.21.11'));
     }
 
-    /** One client tick of the player in ctx (a PlayerState), its world read through world.getBlock. */
+    /**
+     * One client tick of the player in ctx (a PlayerState), its world read through world.getBlock. A passenger's tick is
+     * Entity.rideTick and never ordinary travel: its position is the seat the caller hands in (see PlayerState.passenger).
+     */
     simulate<Ctx extends PhysicsCtx>(ctx: Ctx, world: PrismarineWorld): Ctx['state'] {
         const state = ctx.state as PlayerState;
+        validateBoatVehicle(state.boatVehicle);
         state.attributes ??= {};
-        this.tick(state, world);
+        // (mineflayer-physics-utils' PlayerState has no such counters: they start with the adapter's first tick)
+        state.fallDistance ??= 0;
+        state.itemUseTicks ??= 0;
+        state.autoSpinAttackTicks ??= 0;
+        state.autoJumpTime ??= 0;
+        // A velocity packet is the server's word and takes no check: from 1.21.9 its LpVec3 carries up to 1.7179869183E10
+        // blocks a tick (26.3 LpVec3.java:17, 70). The motion past what a sync reads, which comes well before the engine's
+        // MAX_WALKED_CELLS, is dropped: nothing of the tick ran, and the next tick starts from rest where the player is.
+        // (a riptide launch reaches further, and can come only of a use that ended)
+        state.moveRefused = !syncReads(this.reachOf(state, !state.isUsingItem && state.itemUseTicks > 0), 0);
+        if (state.moveRefused) state.vel.set(0, 0, 0);
+        else this.tick(state, world);
         state.age += 1;
         return ctx.state;
+    }
+
+    /**
+     * A copy of a state to predict on that goes on as the state would: mineflayer-physics-utils' clone() and what it drops,
+     * the adapter's counters (the fall, the input's history, the frost) and the engine's own copy of the player. A one-shot
+     * event still to be taken (attackHit) stays with the state it came to, so a prediction does not take it twice.
+     */
+    cloneState<State extends PlayerState>(state: State): State {
+        const copy = (state as State & { clone(): State }).clone();
+        for (const key of CLONE_DROPS) (copy as Record<string, unknown>)[key] = state[key];
+        copy.pos.set(state.pos.x, state.pos.y, state.pos.z);
+        copy.stuckSpeedMultiplier = state.stuckSpeedMultiplier.clone();
+        // PlayerState.clone shares these by reference: a fork's edit would reach the state it came from
+        copy.attributes = structuredClone(state.attributes);
+        copy.effects = structuredClone(state.effects);
+        const controls = <Held extends object>(held: Held) => (held as Held & { clone?(): Held }).clone?.() ?? { ...held };
+        copy.control = controls(state.control);
+        copy.prevControl = controls(state.prevControl);
+        if (state.keptBoundingBox) copy.keptBoundingBox = { ...state.keptBoundingBox, pos: state.keptBoundingBox.pos.clone() };
+        const carry = this.carries.get(state);
+        if (carry) {
+            this.carries.set(copy, {
+                ...carry, player: new this.binding.NativePlayer(this.version, carry.player.state(), {}),
+                position: { ...carry.position }, slow: { ...carry.slow }, size: { ...carry.size }, keptSize: { ...carry.keptSize },
+            });
+        }
+        return copy;
+    }
+
+    /** An opening shulker box's lid pushes the player after its tick, as the block entities tick after the entities. */
+    pushByShulkerBox(ctx: PhysicsCtx, world: PrismarineWorld, open: OpenShulkerBox): void {
+        const state = ctx.state as PlayerState;
+        const carry = this.carries.get(state);
+        if (!carry || !open.pushes || !samePosition(carry.position, state.pos)) return;
+        this.takeOutput(state, carry, carry.player.pushByShulkerBox(this.syncOf(world).world, open.state, open.x, open.y, open.z));
     }
 
     /**
@@ -168,24 +315,18 @@ export class NativePhysics extends NativeEngine implements IPhysics {
      * its entities), each in turn: the engine's push of simulateVersionedTick's movingPistons.
      */
     pushByMovingPiston(ctx: PhysicsCtx, world: PrismarineWorld, piston: MovingPiston): void {
+        this.pushByMovingPistons(ctx, world, [piston]);
+    }
+
+    /**
+     * All the moving blocks of a tick, in the order they tick. One that has ticked stands at its new progress for the ones
+     * after it, which pushes given one at a time cannot show (movingPistonsOf has them so).
+     */
+    pushByMovingPistons(ctx: PhysicsCtx, world: PrismarineWorld, pistons: readonly MovingPiston[]): void {
         const state = ctx.state as PlayerState;
         const carry = this.carries.get(state);
         if (!carry || !samePosition(carry.position, state.pos)) return;
-        const [dx, dy, dz] = piston.direction;
-        const movingPiston: NativeMovingPiston = {
-            x: piston.pos[0],
-            y: piston.pos[1],
-            z: piston.pos[2],
-            facing: DIRECTIONS.findIndex(([x, y, z]) => x === dx && y === dy && z === dz),
-            extending: piston.extending,
-            source: piston.source,
-            progress: piston.progress,
-            shapes: piston.shapes.map(([minX, minY, minZ, maxX, maxY, maxZ]) => nativeBox(box(minX, minY, minZ, maxX, maxY, maxZ))),
-            outlineShapes: piston.outlineShapes?.map(([minX, minY, minZ, maxX, maxY, maxZ]) => nativeBox(box(minX, minY, minZ, maxX, maxY, maxZ))),
-            bounces: SLIME_BLOCKS.has(piston.movedBlock ?? ''),
-            stickyForEntities: piston.movedBlock === 'honey_block',
-        };
-        this.takeOutput(state, carry, carry.player.pushByMovingPistons(this.syncOf(world).world, [movingPiston]));
+        this.takeOutput(state, carry, carry.player.pushByMovingPistons(this.syncOf(world).world, pistons.map(nativeMovingPiston)));
     }
 
     /**
@@ -203,34 +344,80 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         state.keptBoundingBox = { bb: this.stateBox(state, refitted), pos: kept.pos, width, height };
     }
 
+    /** Entity.isInRain of the tick under way. */
+    private rainNow = false;
+
+    /** LivingEntity.getScale of the tick under way, as the crouch's fit tests read it; state.scale catches up at the end of aiStep. */
+    private scaleNow = 1;
+
+    /**
+     * Entity.isInRain derived from the bot: Level.isRainingAt at the block position and at the box's top (26.3
+     * Entity.java:1638-1641, 1.8.9 Entity.java:830-832). isRaining is the rain level above 0.2 (26.3 Level.java:716-718),
+     * and canHaveWeather needs no test here: the nether and the end have no rain level, sky or precipitation.
+     */
+    private rainExposed(state: PlayerState, world: PrismarineWorld, sync: NativeWorldSync): boolean {
+        const bot = state.bot;
+        if (!bot || !((bot.rainState ?? 0) > 0.2)) return false;
+        const seaLevel = state.seaLevel ?? 63;
+        const top = (bot.game?.minY ?? 0) + (bot.game?.height ?? 256);
+        const x = Math.floor(state.pos.x);
+        const y = Math.floor(state.pos.y);
+        const z = Math.floor(state.pos.z);
+        const { height } = this.poseSize(state.pose, state.scale);
+        return sync.rainingAt(world, x, y, z, top, seaLevel) || sync.rainingAt(world, x, Math.floor(state.pos.y + height), z, top, seaLevel);
+    }
+
     private tick(state: PlayerState, world: PrismarineWorld): void {
+        // Reject invalid external geometry before changing the caller's state or the native carry.
+        validateBoatVehicle(state.boatVehicle);
         const sync = this.syncOf(world);
         const control = state.control;
-        state.scale = this.lt('1.20.5') ? 1 : f32(this.attributeValueOf(state.attributes, 'scale') ?? 1);
+        this.rainNow = state.inRain ?? this.rainExposed(state, world, sync);
+        this.takeAttackHit(state);
+        // The attribute is read live (LivingEntity.getScale: Player's fit tests), the dimensions keep the scale of their last
+        // refresh: a synced change waits for the end of LivingEntity.aiStep (1.20.5 LivingEntity.java:2461-2466, 26.3
+        // :2786, 1097-1109), so the tick's box, eyes and fluids are the old ones. A new pose refreshes them at once
+        // (Entity.onSyncedDataUpdated, 26.3 Entity.java:3490).
+        this.scaleNow = this.lt('1.20.5') ? 1 : f32(this.attributeValueOf(state.attributes, 'scale') ?? 1);
+        if (state.sizedPose !== state.pose) {
+            state.scale = this.scaleNow;
+            // a pose the server synced since the last tick refreshes the dimensions as it arrives (1.15 Entity.java:2246, 1.16.5 :446-448)
+            if (state.sizedPose !== undefined) this.refreshDimensions(state);
+        }
+        // Player.tick takes a passenger off the ground from 1.21.4, before LocalPlayer.aiStep reads it (1.21.3
+        // PlayerEntity.java:256, 1.21.4 :259-260, 26.3 Player.java:219-221)
+        if (!this.lt('1.21.4') && this.isPassenger(state)) state.onGround = false;
 
         // the use key is handled before the entities tick: releasing a riptide trident launches the player
         let riptideLaunch: number | undefined;
         if (state.isUsingItem) {
             state.itemUseTicks += 1;
+            state.usedItemRiptide = this.itemInUseRiptide(state);
         } else {
             const used = state.itemUseTicks;
             state.itemUseTicks = 0;
-            if (!this.lt('1.13') && used >= 10 && state.riptide > 0 && state.isInWater) {
-                riptideLaunch = state.riptide;
+            // TridentItem.releaseUsing: isInWaterOrRain (1.13.2 class_3564.java:62, 1.20.4 TridentItem.java:70), and from
+            // 26.1 not a passenger (26.3 TridentItem.java:64)
+            const wet = state.isInWater || this.rainNow;
+            const riding = !this.lt('26.1') && this.isPassenger(state);
+            const riptide = state.riptide ?? state.usedItemRiptide ?? 0;
+            state.usedItemRiptide = 0;
+            if (!this.lt('1.13') && used >= 10 && riptide > 0 && wet && !riding) {
+                riptideLaunch = riptide;
                 state.autoSpinAttackTicks = 20;
             }
         }
         // the attached rockets the client ticks before the player, which boost it only while it glides
         let rocketsBefore = 0;
-        if (state.fireworkRocketsBeforePlayer > 0 && state.fireworkRocketDuration > 0) {
-            if (state.fallFlying) rocketsBefore = state.fireworkRocketsBeforePlayer;
-            else state.fireworkRocketDuration = 0;
-        }
+        // (a rocket outlives the glide: it boosts no one until its lifetime ends, and a new glide meets it, 1.11.2
+        // FireworkRocketEntity.java:113-126, 26.3 :119-133, 172-178)
+        if (state.fireworkRocketsBeforePlayer > 0 && state.fireworkRocketDuration > 0 && state.fallFlying) rocketsBefore = state.fireworkRocketsBeforePlayer;
 
         sync.sync(world, this.reachOf(state, riptideLaunch !== undefined), 0);
+        // (the block entities tick after the entities: the move meets them as the last tick left them)
+        this.syncMovingBlocks(sync, world, state.bot);
         // Entity.collide collides with the border the server set (ClientPacketListener's border packets)
-        const border = state.bot?.worldBorder;
-        if (border) sync.setWorldBorder(border, state.bot?.game);
+        sync.setWorldBorder(state.bot?.worldBorder, state.bot?.game);
 
         const wasInWater = state.isInWater;
         const wasInLava = state.isInLava;
@@ -251,10 +438,7 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         state.flyJumpTriggerTime = Math.max(0, state.flyJumpTriggerTime - 1);
 
         let rocketsAfter = 0;
-        if (state.fireworkRocketDuration > 0) {
-            if (state.fallFlying) rocketsAfter = Math.max(0, (state.fireworkRockets > 0 ? state.fireworkRockets : 1) - state.fireworkRocketsBeforePlayer);
-            else state.fireworkRocketDuration = 0;
-        }
+        if (state.fireworkRocketDuration > 0 && state.fallFlying) rocketsAfter = Math.max(0, (state.fireworkRockets > 0 ? state.fireworkRockets : 1) - state.fireworkRocketsBeforePlayer);
 
         const kept = this.keptFor(state);
         const size = this.moveSize(state, kept !== null);
@@ -268,7 +452,6 @@ export class NativePhysics extends NativeEngine implements IPhysics {
             | bit(state.onGround, InFlag.ON_GROUND) | bit(state.isCollidedHorizontally, InFlag.COLLIDED_HORIZONTALLY)
             | bit(!!state.isCollidedHorizontallyMinor, InFlag.MINOR_HORIZONTAL_COLLISION)
             | bit(state.isCollidedVertically, InFlag.COLLIDED_VERTICALLY)
-            | bit(state.isCollidedVertically && state.onGround, InFlag.VERTICAL_COLLISION_BELOW)
             | bit(wasInWater, InFlag.IN_WATER) | bit(wasInLava, InFlag.IN_LAVA) | bit(state.isInPowderSnow, InFlag.IN_POWDER_SNOW)
             | bit(!!state.removed, InFlag.REMOVED) | bit(state.autoSpinAttackTicks > 0, InFlag.AUTO_SPIN_ATTACK)
             | bit(this.isSleeping(state), InFlag.SLEEPING) | bit(this.isDead(state), InFlag.DEAD);
@@ -300,7 +483,8 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         input[In.STUCK_SPEED_MULTIPLIER] = stuck.x;
         input[In.STUCK_SPEED_MULTIPLIER + 1] = stuck.y;
         input[In.STUCK_SPEED_MULTIPLIER + 2] = stuck.z;
-        input[In.RIPTIDE_LAUNCH] = riptideLaunch ?? 0;
+        // (EnchantmentHelper clamps a level to 255, 1.20.4 EnchantmentHelper.java:50: an item a server sends is no error)
+        input[In.RIPTIDE_LAUNCH] = Math.min(riptideLaunch ?? 0, 255);
         // the attached rockets listed among the nearby entities boost in their turns of the tick (each entity runs its
         // whole tick in ClientLevel.tickEntities' order, FireworkRocketEntity.java:124-131 in 1.21.11), the rest at the
         // start of their side of the player
@@ -313,15 +497,23 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         input[In.ITEM_USE_SPEED_MULTIPLIER] = state.useItemSpeedMultiplier ?? f32(0.2);
 
         const carry = this.carryFor(state, kept);
-        input[In.FLAGS] = flags | bit(samePosition(carry.position, pos), InFlag.UNMOVED);
+        // a state ticked on in another world goes there by setState, which the native player asks of it
+        if (carry.world !== sync.world) {
+            if (carry.world) carry.player.setState(carry.player.state());
+            carry.world = sync.world;
+        }
+        const unmoved = samePosition(carry.position, pos);
+        // no PlayerState field holds it: what the last tick left, or for a player put elsewhere what its flags say
+        const below = unmoved ? carry.verticalCollisionBelow : state.isCollidedVertically && state.onGround;
+        input[In.FLAGS] = flags | bit(unmoved, InFlag.UNMOVED) | bit(below, InFlag.VERTICAL_COLLISION_BELOW);
         const flyingDuringMove = state.flying;
         carry.size = size;
-        const out = carry.player.tick(sync.world, input, this.entitiesOf(state));
+        carry.keptSize = size;
+        const out = carry.player.tickMove(sync.world, input, this.entitiesOf(state));
         this.takeOutput(state, carry, out);
         // isInWeb: the move was slowed by a cobweb, berry bush or powder snow (Entity.isInWeb before 1.14); the lift of a
         // riptide launch from the ground takes the slowdown, and to 1.21.1 its own checkInsideBlocks may set it again
         if (state.gameMode !== 'spectator') state.isInWeb = (out[Out.FLAGS] & OutFlag.MOVE_SLOWED) !== 0;
-        state.pushedEntities = this.pushedEntities(state, carry);
 
         // LivingEntity.aiStep after the move: the spin attack runs down, and ends on an entity or a wall (the engine's
         // checkAutoSpinAttack, which bounces the player off a living entity)
@@ -332,12 +524,27 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         // Player.travel's flight clears the glide flag on 1.9 - 1.21.1; from 1.21.2 only the server does
         // (LivingEntity.updateFallFlying is server side, 1.21.2 Player.java:1399-1421, LivingEntity.java:2864-2869)
         if (flyingDuringMove && !this.lt('1.9') && this.lt('1.21.2')) state.fallFlying = false;
+        state.scale = this.scaleNow;
         state.onClimbable = this.isInClimbable(state, sync);
         if (state.onGround && state.flying && state.gameMode !== 'spectator') state.flying = false;
-        if (this.gt('1.13.2')) this.updatePoses(state, sync);
-        else this.updateLegacySize(state, sync);
+        if (this.gt('1.13.2')) {
+            const posed = state.pose;
+            this.updatePoses(state, sync);
+            // setPose is a synced value: its change runs refreshDimensions at once on this side too (1.15
+            // Entity.java:2246, 1.16.5 :446-448, :2323-2346), which refits the box the entity keeps
+            if (state.pose !== posed) this.refreshDimensions(state);
+        } else {
+            this.updateLegacySize(state, sync);
+        }
+        // Player.tick ends with the pose update, and what ticks after the player meets the box of the new pose (26.2
+        // Player.java:266; before 1.14 updateSize, 1.13.2 PlayerEntity.java:293, 339)
+        carry.keptSize = this.sizeAfterTick(state, size);
+        const finished = carry.player.finishTick(sync.world, carry.keptSize.height);
+        state.vel.set(finished[Out.VELOCITY], finished[Out.VELOCITY + 1], finished[Out.VELOCITY + 2]);
+        state.pushedEntities = this.pushedEntities(state, carry);
         if (state.fireworkRocketDuration > 0) state.fireworkRocketDuration -= 1;
 
+        state.sizedPose = state.pose;
         state.lastOnGround = state.onGround;
         state.prevHeading.forward = heading.forward;
         state.prevHeading.strafe = heading.strafe;
@@ -352,10 +559,12 @@ export class NativePhysics extends NativeEngine implements IPhysics {
      */
     private carryFor(state: PlayerState, kept: Box | null): Carry {
         const slow = this.slowInputs(state);
+        const frozen = this.ticksFrozenOf(state);
         const carry = this.carries.get(state);
         if (!carry) {
             const created: NativeSimulationState = {
                 ...slow,
+                ticksFrozen: frozen,
                 position: vec(state.pos),
                 velocity: vec(state.vel),
                 halfWidth: 0.3,
@@ -367,14 +576,16 @@ export class NativePhysics extends NativeEngine implements IPhysics {
                 boundingBox: kept ? nativeBox(kept) : undefined,
             };
             const player = new this.binding.NativePlayer(this.version, created, {});
-            const fresh = { player, position: vec(state.pos), slow, kept, size: { width: 0.6, height: 1.8 } };
+            const fresh = { verticalCollisionBelow: state.isCollidedVertically && state.onGround, player, position: vec(state.pos), slow, frozen, kept, size: { width: 0.6, height: 1.8 }, keptSize: { width: 0.6, height: 1.8 } };
             this.carries.set(state, fresh);
             return fresh;
         }
-        if (!sameInputs(slow, carry.slow)) {
+        const refrozen = frozen !== carry.frozen;
+        if (refrozen || !sameInputs(slow, carry.slow)) {
             const dropped = Object.fromEntries(Object.keys(carry.slow).map(key => [key, undefined]));
-            carry.player.setState({ ...carry.player.state(), ...dropped, ...slow });
+            carry.player.setState({ ...carry.player.state(), ...dropped, ...slow, ...(refrozen ? { ticksFrozen: frozen } : {}) });
             carry.slow = slow;
+            carry.frozen = frozen;
         }
         if (!sameBox(kept, carry.kept)) {
             carry.player.setBoundingBox(kept ? nativeBox(kept) : null);
@@ -387,30 +598,44 @@ export class NativePhysics extends NativeEngine implements IPhysics {
     private slowInputs(state: PlayerState): Partial<NativeSimulationState> {
         return {
             ...this.attributesAndEffects(state),
-            depthStrider: state.depthStrider,
-            soulSpeed: state.soulSpeed,
-            powderSnowWalkable: state.canWalkOnPowderSnow,
+            // getDepthStrider: the highest level on any armor piece (1.8.9 EnchantmentHelper.java:88-103, 182-183; 1.9.4
+            // Enchantment.java:118, 137; 1.20.5 Enchantments.java:72-75); from 1.21 the WATER_MOVEMENT_EFFICIENCY attribute
+            depthStrider: this.lt('1.21') ? this.wornEnchantmentLevel(state, 'depth_strider', ARMOR_SLOTS) ?? state.depthStrider : 0,
+            // the boots alone (1.16.5 Enchantments.java:29, 1.20.5 :92-98); from 1.21 the MOVEMENT_EFFICIENCY attribute
+            soulSpeed: this.lt('1.21') ? this.wornEnchantmentLevel(state, 'soul_speed', ['feet']) ?? state.soulSpeed : 0,
+            powderSnowWalkable: this.canWalkOnPowderSnow(state),
             // MagmaBlock.stepOn and CampfireBlock.entityInside spare Frost Walker's wearer before 1.21 (1.20.5
             // MagmaBlock.java:29, CampfireBlock.java:104), the enchantment's damage immunity from 1.21 (1.21.11
             // Enchantments.java:389-394)
-            frostWalker: this.bootsEnchantmentLevel(state, 'frost_walker') > 0,
+            frostWalker: (this.wornEnchantmentLevel(state, 'frost_walker', ['feet']) ?? 0) > 0,
             // ProtectionEnchantment.transformFireDuration takes the highest Fire Protection level worn off the burning before
             // 1.21 (1.17 ProtectionEnchantment.java:59-66, EnchantmentHelper.getEquipmentLevel); from 1.21 the
             // enchantment is in the BURNING_TIME attribute
-            fireProtection: this.lt('1.21') ? this.armorEnchantmentLevel(state, 'fire_protection') : 0,
+            fireProtection: this.lt('1.21') ? this.wornEnchantmentLevel(state, 'fire_protection', ARMOR_SLOTS) ?? 0 : 0,
             // Player.causeFallDamage deals nothing where the abilities allow flight (1.21.5 Player.java:1470-1472), and
             // calculateFallDamage nothing for a type in #fall_damage_immune (1.20.5 LivingEntity.java:1603-1605, 1.21.5
             // :1673-1675): the state's fallDamageImmune
             fallDamageImmune: state.mayFly || !!state.fallDamageImmune,
+            // the bot's own player, as its client ticks it (the client's side of the fire and freeze ticks)
+            clientSide: true,
+            invulnerable: !!state.invulnerable,
+            inRain: this.rainNow,
+            passenger: this.isPassenger(state),
+            // Snapshot nested coordinates: callers may mutate the same context object between ticks.
+            boatVehicle: copyBoatVehicle(state.boatVehicle),
             // the client's own player moves itself (Entity.isLogicalSideForUpdatingMovement through
             // ClientPlayerEntity.canMoveVoluntarily, 1.21.3 Entity.java:3198-3200, ClientPlayerEntity.java:477); a
             // state may say otherwise
             controlledByLocalInstance: state.controlledByLocalInstance ?? true,
+            // Keep omission distinct from false for the native piston bounce/restitution authority fallback.
+            canSimulateMovement: state.canSimulateMovement,
             // Entity.updateFluidHeightAndDoFluidPushing pushes by lava at 0.007 in an ultrawarm dimension (FAST_LAVA from
             // 1.21.11), 0.0023333333333333335 elsewhere (1.16 Entity.java:1049, 1.21.11 :1519); of the vanilla dimension
             // types only the nether's is (1.16 DimensionType.java:80-95, 1.21.11 DimensionTypes.java:81)
             ultraWarm: state.bot?.game?.dimension === 'the_nether',
             noGravity: this.noGravityOf(state, state.bot?.entity),
+            // the burning the server says, which Entity.isOnFire reads on a client (1.8.9 Entity.java:1459-1462, 26.3 :2779-2782)
+            onFireFlag: this.onFireFlagOf(state.bot?.entity),
         };
     }
 
@@ -427,6 +652,7 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         state.isCollidedHorizontally = flag(OutFlag.COLLIDED_HORIZONTALLY);
         state.isCollidedHorizontallyMinor = flag(OutFlag.MINOR_HORIZONTAL_COLLISION);
         state.isCollidedVertically = flag(OutFlag.COLLIDED_VERTICALLY);
+        carry.verticalCollisionBelow = flag(OutFlag.VERTICAL_COLLISION_BELOW);
         state.isInWater = flag(OutFlag.IN_WATER);
         state.isInLava = flag(OutFlag.IN_LAVA);
         state.isInPowderSnow = flag(OutFlag.IN_POWDER_SNOW);
@@ -437,6 +663,19 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         // carries (safeFallDistance, fallDamageImmune, fallDamageMultiplier, the bounciness, controlledByLocalInstance)
         // are its own and stay as they are
         state.fallDamage = out[Out.FALL_DAMAGE];
+        // the amounts the engine hands hurt, not changes of the health: the adapter runs the client's side, where a block's
+        // hurt, a flight into a wall and the freeze ticks are the server's, so they stay 0 unless a state of the server's
+        // side is given (26.3 Entity.java:1969-1975, LivingEntity.java:2505-2510, 3082)
+        state.contactDamage = out[Out.CONTACT_DAMAGE];
+        state.wallDamage = out[Out.WALL_DAMAGE];
+        state.freezeDamage = out[Out.FREEZE_DAMAGE];
+        this.keepFrost(state, carry, out[Out.FROST]);
+        state.blockFallCallback = flag(OutFlag.BLOCK_FALL_CALLBACK);
+        // from 26.1 a move into water refreshes the eyes as well (LivingEntity.checkFallDamage's updateFluidInteraction, 26.1
+        // EntityFluidInteraction.update): the next tick's isUnderWater is those; a seat's fluids are the vehicle's (updateFluids)
+        // (before 1.16 no flag is kept, and each read asks the world: the state says what the eyes meet where the move left them)
+        if ((!this.lt('26.1') || this.lt('1.16')) && !this.isPassenger(state)) state.eyeInWater = flag(OutFlag.EYE_IN_WATER);
+        if (this.lt('1.13') && !this.isPassenger(state)) state.isUnderWater = !!state.eyeInWater;
         state.jumpTicks = out[Out.JUMP_TICKS];
         state.autoJumpTime = out[Out.AUTO_JUMP_TIME];
         state.stuckSpeedMultiplier.set(out[Out.STUCK_SPEED_MULTIPLIER], out[Out.STUCK_SPEED_MULTIPLIER + 1], out[Out.STUCK_SPEED_MULTIPLIER + 2]);
@@ -444,34 +683,67 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         const at = Out.BOUNDING_BOX;
         carry.kept = Number.isNaN(out[at]) ? null : box(out[at], out[at + 1], out[at + 2], out[at + 3], out[at + 4], out[at + 5]);
         state.keptBoundingBox = carry.kept && this.lt('1.17')
-            ? { bb: this.stateBox(state, carry.kept), pos: state.pos.clone(), ...carry.size }
+            ? { bb: this.stateBox(state, carry.kept), pos: state.pos.clone(), ...carry.keptSize }
             : null;
     }
 
-    /** The highest level of an enchantment on the armor the bot wears, 0 without a bot. */
-    private armorEnchantmentLevel(state: PlayerState, name: string): number {
+    /** The enchantments of an item as enchantmentLevelByName reads them, through the item format of its release. */
+    private itemEnchantments(item: { enchants?: ItemEnchants } | null | undefined): { id: string | number; lvl: number }[] {
+        const enchants = item?.enchants;
+        return Array.isArray(enchants)
+            ? enchants.map(({ name: id, lvl }) => ({ id, lvl }))
+            : (enchants?.enchantments ?? []).map(({ id, level }) => ({ id, lvl: level }));
+    }
+
+    /**
+     * EnchantmentHelper.getEquipmentLevel on the bot's own armor: the highest level on the slots the enchantment counts
+     * (1.20.5 EnchantmentHelper.java:150-166), undefined when the state has no bot inventory to read. The fields
+     * mineflayer-physics-utils' PlayerState keeps are not that: it reads the helmet for the boots (equipment[5]) and only
+     * the nbt, which items have no more from 1.20.5.
+     */
+    private wornEnchantmentLevel(state: PlayerState, name: string, slots: readonly ArmorSlot[]): number | undefined {
         const bot = state.bot;
-        if (!bot?.inventory || !bot.getEquipmentDestSlot) return 0;
+        if (!bot?.inventory || !bot.getEquipmentDestSlot) return undefined;
         let highest = 0;
-        for (const slot of ['head', 'torso', 'legs', 'feet']) {
-            const enchants = bot.inventory.slots[bot.getEquipmentDestSlot(slot)]?.enchants;
-            const enchantments = Array.isArray(enchants)
-                ? enchants.map(({ name: id, lvl }) => ({ id, lvl }))
-                : (enchants?.enchantments ?? []).map(({ id, level }) => ({ id, lvl: level }));
+        for (const slot of slots) {
+            const enchantments = this.itemEnchantments(bot.inventory.slots[bot.getEquipmentDestSlot(slot)]);
             highest = Math.max(highest, this.enchantmentLevelByName(name, enchantments));
         }
         return highest;
     }
 
-    /** The level of an enchantment on the boots the bot wears (its inventory's feet slot), 0 without a bot. */
-    private bootsEnchantmentLevel(state: PlayerState, name: string): number {
+    /** The Swift Sneak on the leggings (1.19 Enchantments.java:30, 1.20.5 :100-106), which LocalPlayer.aiStep reads to 1.20.6. */
+    private swiftSneakLevel(state: PlayerState): number {
+        return this.wornEnchantmentLevel(state, 'swift_sneak', ['legs']) ?? state.swiftSneak;
+    }
+
+    /**
+     * PowderSnowBlock.canEntityWalkOnPowderSnow for a player: leather boots on its feet, the item alone (1.17
+     * PowderSnowBlock.java:107-113, 26.3 PowderSnowBlock.java). The state's own value first: PlayerState has none.
+     */
+    private canWalkOnPowderSnow(state: PlayerState): boolean {
+        if (state.canWalkOnPowderSnow !== undefined) return state.canWalkOnPowderSnow;
         const bot = state.bot;
-        if (!bot?.inventory || !bot.getEquipmentDestSlot) return 0;
-        const enchants = bot.inventory.slots[bot.getEquipmentDestSlot('feet')]?.enchants;
-        const enchantments = Array.isArray(enchants)
-            ? enchants.map(({ name: id, lvl }) => ({ id, lvl }))
-            : (enchants?.enchantments ?? []).map(({ id, level }) => ({ id, lvl: level }));
-        return this.enchantmentLevelByName(name, enchantments);
+        if (!bot?.inventory || !bot.getEquipmentDestSlot) return false;
+        return bot.inventory.slots[bot.getEquipmentDestSlot('feet')]?.name === 'leather_boots';
+    }
+
+    /**
+     * LivingEntity.getUsedItemHand from the bot's tracked flags, bit 2 (1.14.4 LivingEntity.java:2427): the dependency reads
+     * slot 6 or 8 for `> 2`, health where the field is at 7 (1.14-1.16), and counts a spin attack's bit 4 as the off hand.
+     */
+    private usingOffHand(state: PlayerState): boolean {
+        const slot = livingFlagsSlot(this.version);
+        const flags = slot === null ? undefined : state.bot?.entity?.metadata?.[slot];
+        return typeof flags === 'number' ? (flags & 2) !== 0 : !!state.isUsingOffHand;
+    }
+
+    /** The Riptide of the item in use: the off hand's when it is that hand, else the main hand's. */
+    private itemInUseRiptide(state: PlayerState): number {
+        const bot = state.bot;
+        if (!bot) return 0;
+        const offHand = this.usingOffHand(state) && bot.getEquipmentDestSlot ? bot.inventory?.slots[bot.getEquipmentDestSlot('off-hand')] : undefined;
+        return this.enchantmentLevelByName('riptide', this.itemEnchantments(offHand ?? bot.heldItem));
     }
 
     /** The engine's inputs from the synced attributes and the effects. */
@@ -479,23 +751,35 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         const attributes = state.attributes;
         const levitation = this.effectAmplifier(state, state.levitation, 'Levitation');
         const jumpBoost = this.effectAmplifier(state, state.jumpBoost, 'JumpBoost');
+        // an attribute the server synced holds the effects' modifiers; without one (or with only setSprinting's) the
+        // engine's fallback applies them (1.21.11 LivingEntity.java:2224-2225, 26.3 AttributeInstance.java:151-169)
+        const movementSpeed = this.attribute(attributes, 'movementSpeed');
+        const syncedSpeed = movementSpeed !== undefined && !movementSpeed.unsynced;
         const out: Partial<NativeSimulationState> = {
             movementSpeed: f32(0.1),
             // the state's own boundary values first (a caller's runtime state), else the synced attributes
-            safeFallDistance: state.safeFallDistance ?? this.attributeValueOf(attributes, 'safeFallDistance') ?? 3,
+            // (Jump Boost's ADD_VALUE modifier of it, 1 a level from 1.20.5, a synced attribute already holds: 1.20.5
+            // StatusEffects.java:57-62, 26.3 MobEffects.java:76, MobEffect.java:212)
+            safeFallDistance: state.safeFallDistance ?? this.attributeValueOf(attributes, 'safeFallDistance')
+                ?? 3 + (jumpBoost !== undefined && !this.lt('1.20.5') ? jumpBoost + 1 : 0),
             slowFalling: this.effectAmplifier(state, state.slowFalling, 'SlowFalling') !== undefined,
             levitation: levitation !== undefined,
             // WebBlock.entityInside's (0.5, 0.25, 0.5) under Weaving (1.20.5+, 1.21.11 WebBlock.java:27-31)
             weaving: this.effectLevelByName('Weaving', state.effects) > 0,
+            // LivingEntity.hurt refuses fire damage under it (1.8.9 LivingEntity.java:682, 26.3 :1154)
+            fireResistance: this.effectLevelByName('FireResistance', state.effects) > 0,
         };
         const sneakingSpeed = this.lt('1.21')
-            ? (state.swiftSneak > 0 && !this.lt('1.19') ? Math.min(Math.max(f32(f32(0.3) + f32(state.swiftSneak * f32(0.15))), 0), 1) : undefined)
+            ? (this.swiftSneakLevel(state) > 0 && !this.lt('1.19') ? this.sneakingSpeedFactor(state) : undefined)
             : this.attributeValueOf(attributes, 'playerSneakingSpeed') ?? this.attributeValueOf(attributes, 'sneakingSpeed');
         const optional: Partial<NativeSimulationState> = {
+            movementSpeedAttribute: movementSpeed && syncedSpeed && this.clientHoldsFrost() ? this.speedAttributeParts(movementSpeed) : undefined,
             // LivingEntity.getSpeed and getJumpPower read the attributes with every modifier they hold, the speed and
             // slowness effects' and the sprint's among them (1.21.11 LivingEntity.java:2224-2225, 26.3
             // AttributeInstance.java:151-169)
-            movementSpeedValue: this.attributeValueOf(attributes, 'movementSpeed'),
+            movementSpeedValue: syncedSpeed ? this.attributeValueOf(attributes, 'movementSpeed') : undefined,
+            speedEffectAmplifier: syncedSpeed ? undefined : this.effectAmplifier(state, state.speed, 'Speed'),
+            slownessEffectAmplifier: syncedSpeed ? undefined : this.effectAmplifier(state, state.slowness, 'Slowness'),
             gravity: this.attributeValueOf(attributes, 'gravity'),
             stepHeight: this.attributeValueOf(attributes, 'stepHeight'),
             jumpStrength: this.attributeValueOf(attributes, 'jumpStrength'),
@@ -514,6 +798,60 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         };
         for (const [key, value] of Object.entries(optional)) if (value !== undefined) (out as Record<string, unknown>)[key] = value;
         return out;
+    }
+
+    /** LivingEntity.aiStep makes the powder snow modifier on the client too on 1.17 - 1.21.4 (1.17 LivingEntity.java:2555-2556, 1.21.4 :2812-2813), on the server alone from 1.21.5 (1.21.5 :2775-2783). */
+    private clientHoldsFrost(): boolean {
+        return !this.lt('1.17') && this.lt('1.21.5');
+    }
+
+    /** The modifier's id, a UUID before 1.21 (1.17 LivingEntity.java:123, 1.21 :139). */
+    private get frostModifierId(): string {
+        return this.lt('1.21') ? '1eaf83ff-7207-4596-b37a-d7a07b3ec4ce' : 'minecraft:powder_snow';
+    }
+
+    private isFrostModifier(modifier: AttributeModifier): boolean {
+        return String(modifier.uuid ?? modifier.id).toLowerCase() === this.frostModifierId;
+    }
+
+    /** The movement speed's base, its modifiers but the powder snow one, each operation in the order its container iterates, and that one's amount. */
+    private speedAttributeParts(attribute: Attribute): NativeMovementSpeedAttribute {
+        const held = attribute.modifiers ?? [];
+        const others = held.filter(modifier => !this.isFrostModifier(modifier));
+        return {
+            base: attribute.value,
+            modifiers: [0, 1, 2].flatMap(operation => this.iterationOrder(others.filter(modifier => modifier.operation === operation))
+                .map(({ amount }) => ({ amount, operation: SPEED_OPERATIONS[operation] }))),
+            frost: held.find(modifier => this.isFrostModifier(modifier))?.amount,
+        };
+    }
+
+    /**
+     * What the tick's frost update left on the client's attribute (removePowderSnowSlow, addPowderSnowSlowIfNeeded): a
+     * copy of the synced one, as with setSprinting, until the server's next attribute packet replaces it. The engine's
+     * value moved with it: the next tick sends the attribute whatever it holds, a packet taking the modifier off included.
+     */
+    private keepFrost(state: PlayerState, carry: Carry, frost: number): void {
+        const key = this.attributeKey('movementSpeed');
+        const held = key === null ? undefined : state.attributes[key];
+        if (key === null || !held || held.unsynced || !this.clientHoldsFrost()) return;
+        const modifiers = held.modifiers ?? [];
+        const amount = Number.isNaN(frost) ? undefined : frost;
+        if (modifiers.find(modifier => this.isFrostModifier(modifier))?.amount === amount) return;
+        const others = modifiers.filter(modifier => !this.isFrostModifier(modifier));
+        if (amount !== undefined) others.push({ uuid: this.frostModifierId, amount, operation: 0 });
+        state.attributes = { ...state.attributes, [key]: { ...held, modifiers: others } };
+        carry.slow = { ...carry.slow, movementSpeedValue: NaN };
+    }
+
+    /**
+     * Entity.getTicksFrozen, the synced data at 7 from 1.17 (1.17 Entity.java:199, 239): the count the server keeps. A
+     * negative one (a command's) counts as none wherever it is read (1.17 LivingEntity.java:516-517, Entity.java:2066).
+     */
+    private ticksFrozenOf(state: PlayerState): number | undefined {
+        if (this.lt('1.17')) return undefined;
+        const ticks = state.bot?.entity?.metadata?.[7];
+        return typeof ticks === 'number' ? Math.max(0, ticks) : undefined;
     }
 
     /**
@@ -662,6 +1000,7 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         if (entity.sameVehicle) return 'inert';
         if (isBoatName(entity.name)) return 'boat';
         if (entity.name === 'shulker') return 'shulker';
+        if (/(^|_)minecart$/.test(entity.name ?? '')) return 'minecart';
         // an adult on its still timeout collides from every side (HappyGhast.canBeCollidedWith: isOnStillTimeout, the
         // synced STAYS_STILL; 1.21.6 HappyGhast.java:544-553, 1.21.11 :549-558, :523-524)
         if (entity.name === 'happy_ghast') return entity.baby ? 'living' : entity.staysStill ? 'happy_ghast_stays_still' : 'happy_ghast';
@@ -703,6 +1042,24 @@ export class NativePhysics extends NativeEngine implements IPhysics {
 
     // ---- the fluids at the tick start (Entity.baseTick), which the client's decisions read ----
 
+    /** Explicit context only: ordinary boat IN_WATER cannot stand in for the underwater status. */
+    private boatForFluids(state: PlayerState): NativeBoatVehicle | undefined {
+        validateBoatVehicle(state.boatVehicle);
+        return this.isPassenger(state) ? state.boatVehicle ?? undefined : undefined;
+    }
+
+    /** Entity's boat exclusion in the eye query before the shared 26.1 interaction scan. */
+    private boatBlocksEyes(state: PlayerState, boat: NativeBoatVehicle | undefined, eyeY: number): boolean {
+        if (!boat || this.lt('1.9') || !this.lt('26.1')) return false;
+        if (this.lt('1.16')) return true;
+        if (boat.underwater) return false;
+        const { min, max } = boat.boundingBox;
+        // 1.16/1.16.1 use AABB.contains(eye sample); 1.16.2 switches to inclusive Y bounds alone.
+        if (this.lt('1.16.2')) return state.pos.x >= min.x && state.pos.x < max.x
+            && eyeY >= min.y && eyeY < max.y && state.pos.z >= min.z && state.pos.z < max.z;
+        return eyeY >= min.y && eyeY <= max.y;
+    }
+
     /**
      * Whether the player is in water (Entity.updateInWaterStateAndDoFluidPushing) and its eyes are (updateFluidOnEyes,
      * isUnderWater), where the tick starts; the engine pushes it and keeps its own.
@@ -714,29 +1071,53 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         }
         const collider = this.collider(state.pose, state.pos, state.scale);
         const deflated = shrink(collider, 1e-3);
+        const boat = this.boatForFluids(state);
+        const interaction = !this.lt('26.1');
+        if (interaction && boat && !boat.underwater) {
+            // Entity deflates first; AbstractBoat then returns null or raises minY to its top.
+            // Collision dimensions and the original depth origin remain the passenger's own.
+            if (boat.boundingBox.max.y >= deflated.maxY) {
+                state.isInWater = false;
+                state.isInLava = false;
+                state.eyeInWater = false;
+                state.isUnderWater = false;
+                return;
+            }
+            deflated.minY = Math.max(deflated.minY, boat.boundingBox.max.y);
+        }
         // EntityFluidInteraction.hasFluidAndLoaded: from 26.1 no fluid is touched while a chunk under the cells widened by
         // one is not loaded (26.1 EntityFluidInteraction.java:44, 94-110)
         let loaded = true;
-        if (!this.lt('26.1')) {
+        if (interaction) {
             for (let cx = (Math.floor(deflated.minX) - 1) >> 4; cx <= Math.ceil(deflated.maxX) >> 4; cx += 1) {
                 for (let cz = (Math.floor(deflated.minZ) - 1) >> 4; cz <= Math.ceil(deflated.maxZ) >> 4; cz += 1) {
                     if (!sync.chunkLoaded(cx, cz)) loaded = false;
                 }
             }
         }
-        let inWater = false;
-        for (let x = Math.floor(deflated.minX); x <= Math.floor(deflated.maxX) && !inWater; x += 1) {
-            for (let y = Math.floor(deflated.minY); y <= Math.floor(deflated.maxY) && !inWater; y += 1) {
-                for (let z = Math.floor(deflated.minZ); z <= Math.floor(deflated.maxZ) && !inWater; z += 1) {
-                    const block = sync.blockAt(x, y, z);
-                    if (!isWaterish(block)) continue;
-                    const height = isWaterish(sync.blockAt(x, y + 1, z)) && !this.lt('1.14') ? 1 : this.ownFluidHeight(block);
-                    const top = this.lt('26.1') ? f32(y + height) : y + height;
-                    if (top >= deflated.minY) inWater = true;
+        const inFluid = (water: boolean): boolean => {
+            if (!loaded) return false;
+            const matches = (block: DescribedBlock | null): block is DescribedBlock => water
+                ? isWaterish(block) : block?.fluid?.type === FLUID_LAVA;
+            const upper = (value: number) => interaction ? Math.ceil(value) : Math.floor(value) + 1;
+            for (let x = Math.floor(deflated.minX); x < upper(deflated.maxX); x += 1) {
+                for (let y = Math.floor(deflated.minY); y < upper(deflated.maxY); y += 1) {
+                    for (let z = Math.floor(deflated.minZ); z < upper(deflated.maxZ); z += 1) {
+                        const block = sync.blockAt(x, y, z);
+                        if (!matches(block)) continue;
+                        const height = matches(sync.blockAt(x, y + 1, z)) && !this.lt('1.14') ? 1 : this.ownFluidHeight(block);
+                        const top = interaction ? y + height : f32(y + height);
+                        if (top >= deflated.minY && (!interaction || top > collider.minY)) return true;
+                    }
                 }
             }
-        }
-        state.isInWater = inWater && loaded;
+            return false;
+        };
+        // Before 1.19.3 even an underwater boat excludes water. Lava is independent until 26.1.
+        const excludesWater = !!boat && !interaction && (this.lt('1.19.3') || !boat.underwater);
+        state.isInWater = !excludesWater && inFluid(true);
+        // Modern fluid interaction updates both before LocalPlayer makes its decisions (including 26.3 glide eligibility).
+        if (interaction) state.isInLava = inFluid(false);
         // Entity.updateFluidOnEyes: 1.13 - 1.15 compare the eyes with y + (the water height + 0.11111111F) in float and
         // take it at once (1.13.2 and 1.15.2 Entity.isUnderLiquid bytecode: fadd, fadd); 1.16 - 1.20.4 look
         // 0.1111111119389534 below the eyes, 1.20.5+ at them (1.20.4 Entity.java:1222, 1.20.5 :1237), and from 1.16
@@ -750,7 +1131,7 @@ export class NativePhysics extends NativeEngine implements IPhysics {
             ? 1
             : f32((8 - this.renderedDepth(block)) / 9);
         let eyeInWater = false;
-        if (!this.lt('26.1')) {
+        if (interaction) {
             // EntityFluidInteraction.update's eyesInside: a water of the scan in the eyes' column with
             // bottom <= eyeY <= top in double; 26.3 tops a source under a block sturdy below at 1
             // (getHeightForCamera; 26.1 EntityFluidInteraction.java:61, 70, 26.3 :84-87, FluidState.java:53-60)
@@ -762,7 +1143,7 @@ export class NativePhysics extends NativeEngine implements IPhysics {
                 const camera = !this.lt('26.3') && block.fluid?.source && sync.bottomFaceSturdyAt(eyeX, y + 1, eyeZ) ? y + 1 : top;
                 eyeInWater = eyeY <= camera;
             }
-        } else {
+        } else if (!this.boatBlocksEyes(state, boat, eyeY)) {
             const y = Math.floor(eyeY);
             const block = sync.blockAt(eyeX, y, eyeZ);
             if (isWaterish(block)) {
@@ -772,7 +1153,10 @@ export class NativePhysics extends NativeEngine implements IPhysics {
             }
         }
         state.eyeInWater = eyeInWater;
-        state.isUnderWater = (this.lt('1.16') ? eyeInWater : wasEyeInWater) && state.isInWater;
+        // LocalPlayer.isUnderWater from 1.16 is the field Player.tick set before this base tick (1.16
+        // ClientPlayerEntity.java:1025, 1.16.5 PlayerEntity.java:317, 26.3 LocalPlayer.java:1171, Player.java:249-250):
+        // the eyes of the tick before, whatever the water does now, so a fast rise out of it is still under water
+        state.isUnderWater = this.lt('1.16') ? eyeInWater && state.isInWater : wasEyeInWater;
     }
 
     /**
@@ -780,6 +1164,12 @@ export class NativePhysics extends NativeEngine implements IPhysics {
      * when ceil(maxY) reaches its float top; the eyes are in water (isInsideOfMaterial) below its top plus 0.11111111F.
      */
     private updateLegacyFluids(state: PlayerState, sync: NativeWorldSync): void {
+        if (!this.lt('1.9') && this.boatForFluids(state)) {
+            state.isInWater = false;
+            state.eyeInWater = false;
+            state.isUnderWater = false;
+            return;
+        }
         const isWater = (block: DescribedBlock | null): block is DescribedBlock => block?.fluid?.type === 1;
         const heightPercent = (block: DescribedBlock) => f32(((block.fluid!.level >= 8 ? 0 : block.fluid!.level) + 1) / 9);
         const collider = this.collider(state.pose, state.pos, 1);
@@ -821,10 +1211,10 @@ export class NativePhysics extends NativeEngine implements IPhysics {
     /**
      * Entity.updateSwimming (1.13+): sprinting under water starts swimming, from 1.17.1 only with water at the feet
      * block (1.17 Entity.java:1052; 1.17.1 Entity.updateSwimming bytecode 62-79; 1.18 :1032-1034), and sprinting in
-     * water keeps it.
+     * water keeps it. A passenger does neither (1.13.2 Entity.java:1061-1063, 1.20.4 :1187-1189, 26.3 :1679-1681).
      */
     private updateSwimming(state: PlayerState, sync: NativeWorldSync): void {
-        if (this.lt('1.13') || state.flying) {
+        if (this.lt('1.13') || state.flying || this.isPassenger(state)) {
             state.swimming = false;
         } else if (state.swimming) {
             state.swimming = state.sprinting && state.isInWater;
@@ -857,22 +1247,27 @@ export class NativePhysics extends NativeEngine implements IPhysics {
      */
     private inputsToCrouch(state: PlayerState, heading: { forward: number; strafe: number }, sync: NativeWorldSync): boolean {
         if (this.gt('1.13.2')) {
-            const sneakBox = shrink(this.collider(Pose.SNEAKING, state.pos, state.scale), 1e-7);
-            const standBox = shrink(this.collider(Pose.STANDING, state.pos, state.scale), 1e-7);
             // !abilities.flying: a flying (or spectating) player does not crouch (1.14 ClientPlayerEntity.java:582-586,
             // 1.16.4 LocalPlayer.java:603, 1.21.11 :715, 26.3 :764)
             const flying = state.flying || state.gameMode === 'spectator';
-            state.crouching = !flying && !this.swimmingAndNotFlying(state) && this.isFree(sync, sneakBox, state)
-                && (state.prevControl.sneak || !this.isFree(sync, standBox, state));
+            // !isPassenger from 1.20.2 (origin/client1.20.1 LocalPlayer.java:666-669, client1.20.2 :664-668), and a sleeper
+            // is not forced down from 1.15 (origin/client1.14.4 LocalPlayer.java:557-558, 1.15
+            // ClientPlayerEntity.java:593-594)
+            const riding = !this.lt('1.20.2') && this.isPassenger(state);
+            const sleeping = !this.lt('1.15') && this.isSleeping(state);
+            state.crouching = !flying && !this.swimmingAndNotFlying(state) && !riding && this.poseFits(sync, Pose.SNEAKING, state, this.scaleNow)
+                && (state.prevControl.sneak || (!sleeping && !this.poseFits(sync, Pose.STANDING, state, this.scaleNow)));
         } else {
             state.crouching = !this.swimmingAndNotFlying(state) && state.prevControl.sneak;
         }
         const movingSlowly = this.isMovingSlowly(state);
         // 1.21.4 only: LocalPlayer.shouldStopSprinting right after the input's tick (isFallFlying() || hasBlindness() ||
-        // isMovingSlowly() || ..., 1.21.4 ClientPlayerEntity.java:815-820; the passenger term has no place here)
+        // isMovingSlowly() || ..., 1.21.4 ClientPlayerEntity.java:815-820; the vehicle's term is shouldStopRunSprinting's
+        // here, and the item's spares a passenger, :820)
+        const itemSlows = state.isUsingItem && !this.isPassenger(state);
         if (this.gt('1.21.3') && this.lt('1.21.5')) {
             const blind = this.effectAmplifier(state, state.blindness, 'Blindness') !== undefined;
-            if (state.fallFlying || blind || movingSlowly || (state.isUsingItem && !state.isUnderWater)) this.setSprinting(state, false);
+            if (state.fallFlying || blind || movingSlowly || (itemSlows && !state.isUnderWater)) this.setSprinting(state, false);
         }
         if (this.gt('1.21.4')) {
             const length = f32(Math.sqrt(f32(f32(heading.strafe * heading.strafe) + f32(heading.forward * heading.forward))));
@@ -884,17 +1279,19 @@ export class NativePhysics extends NativeEngine implements IPhysics {
             heading.forward = f32(heading.forward * factor);
             heading.strafe = f32(heading.strafe * factor);
         };
+        // the item spares a passenger in every release: isUsingItem() && !hasVehicle() (1.8.9 ClientPlayerEntity.java:540,
+        // 1.13.2 :703, 1.14 :621, 1.20.4 :662, 1.21.4 :667)
         const usingItemFirst = this.gt('1.21.3');
-        if (state.isUsingItem && usingItemFirst) slow(f32(0.2));
+        if (itemSlows && usingItemFirst) slow(f32(0.2));
         if (movingSlowly) slow(this.sneakingSpeedFactor(state));
-        if (state.isUsingItem && !usingItemFirst) slow(f32(0.2));
+        if (itemSlows && !usingItemFirst) slow(f32(0.2));
         return movingSlowly;
     }
 
     /** The sneak slowdown: 0.3 before 1.19, swift sneak's float clamp to 1.20.6, the sneaking speed attribute since. */
     private sneakingSpeedFactor(state: PlayerState): number {
         if (this.lt('1.19')) return 0.3;
-        if (this.lt('1.21')) return Math.min(Math.max(f32(f32(0.3) + f32(state.swiftSneak * f32(0.15))), 0), 1);
+        if (this.lt('1.21')) return Math.min(Math.max(f32(f32(0.3) + f32(this.swiftSneakLevel(state) * f32(0.15))), 0), 1);
         return f32(this.attributeValueOf(state.attributes, 'playerSneakingSpeed') ?? this.attributeValueOf(state.attributes, 'sneakingSpeed') ?? 0.3);
     }
 
@@ -903,8 +1300,8 @@ export class NativePhysics extends NativeEngine implements IPhysics {
     }
 
     /**
-     * LocalPlayer.aiStep's sprint: the sprint key starts one, and so does a double tap of forward (a fresh press opens a
-     * 7-tick window); a sprint stops when the player no longer moves forward enough, hits a wall, hungers, ...
+     * LocalPlayer.aiStep's sprint: the sprint key starts one, and so does a double tap of forward (a fresh press opens the
+     * sprint window); a sprint stops when the player no longer moves forward enough, hits a wall, hungers, ...
      */
     private inputsToSprint(state: PlayerState, heading: { forward: number; strafe: number }): void {
         // 1.8: a sprint lasts 600 ticks at most (EntityPlayerSP.onLivingUpdate, 1.8.9 ClientPlayerEntity.java:487-492)
@@ -915,7 +1312,10 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         }
         if (state.sprintTriggerTime > 0) state.sprintTriggerTime -= 1;
         const prevSneakKey = state.prevControl.sneak;
-        if (this.slowDueToUsingItem(state) || (this.gt('1.15.2') && prevSneakKey) || (this.gt('1.21.4') && state.control.back)) {
+        // the item spares a passenger (the slowdown's own test before 1.21.5, 1.20.4 ClientPlayerEntity.java:662-665; 1.21.5
+        // LocalPlayer.java:718, 26.3 :781)
+        const itemHoldsSprint = this.slowDueToUsingItem(state) && !this.isPassenger(state);
+        if (itemHoldsSprint || (this.gt('1.15.2') && prevSneakKey) || (this.gt('1.21.4') && state.control.back)) {
             state.sprintTriggerTime = 0;
         }
         const canStart = this.canStartSprinting(state, heading);
@@ -925,13 +1325,13 @@ export class NativePhysics extends NativeEngine implements IPhysics {
             if (canStart) {
                 if (!(prevImpulse > 1e-5)) {
                     if (state.sprintTriggerTime > 0) this.setSprinting(state, true);
-                    else state.sprintTriggerTime = 7;
+                    else state.sprintTriggerTime = this.sprintWindow(state);
                 }
                 if (state.control.sprint) this.setSprinting(state, true);
             }
         } else {
             const prevEnough = this.gt('1.13.2') && state.isUnderWater ? prevImpulse > 1e-5 : prevImpulse >= 0.8;
-            const onGroundOrUnderWater = state.onGround || (this.gt('1.12.2') && state.isUnderWater);
+            const onGroundOrUnderWater = this.sprintGround(state) || (this.gt('1.12.2') && state.isUnderWater);
             if (canStart && onGroundOrUnderWater && !prevSneakKey && !prevEnough) {
                 if (state.sprintTriggerTime <= 0 && !state.control.sprint) state.sprintTriggerTime = 7;
                 else this.setSprinting(state, true);
@@ -949,6 +1349,35 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         } else if (this.shouldStopRunSprinting(state, heading)) {
             this.setSprinting(state, false);
         }
+    }
+
+    /**
+     * A landed hit's knockback on the attacker, once: Player.attack runs from the keybinds, before the entities tick (26.3
+     * Minecraft.java:1786, :1797; 1.20.4 MinecraftClient.java:1860, :1879). Any knockback above 0 takes 0.6 of the horizontal
+     * motion and ends the sprint (1.8.9 PlayerEntity.java:1026-1034, 1.20.4 :1175, 1.21.10 Player.java:1011-1025, 26.3
+     * :1052-1053). A sprint adds 1, 0.5 from 1.21.11 (1.21.10 :1011, 1.21.11 :986, 26.3 :922), and from 1.9 only at full
+     * strength, above 0.9 (1.8.9 :997-998, 1.9.4 :998 and :1004, 26.3 :898).
+     */
+    private takeAttackHit(state: PlayerState): void {
+        const hit = state.attackHit;
+        if (hit == null) return;
+        state.attackHit = null;
+        const sprintKnockback = state.sprinting && (this.lt('1.9') || hit.strength > f32(0.9));
+        const sprintBonus = this.lt('1.21.11') ? 1 : 0.5;
+        if ((hit.knockback ?? 0) + (sprintKnockback ? sprintBonus : 0) <= 0) return;
+        state.vel.x *= 0.6;
+        state.vel.z *= 0.6;
+        this.setSprinting(state, false);
+    }
+
+    /**
+     * The double tap's window: the sprintWindow option from 1.21.9 (1.21.9 LocalPlayer.java:731, Options.java:496-505, IntRange
+     * 0 - 10 and 7 by default; 26.3 LocalPlayer.java:790), 7 before (1.21.8 LocalPlayer.java:727). OptionInstance.set takes
+     * an illegal value for the default (26.3 OptionInstance.java:117-121, IntRange.validateValue :434-436).
+     */
+    private sprintWindow(state: PlayerState): number {
+        const value = state.sprintWindow ?? 7;
+        return this.gt('1.21.8') && Number.isInteger(value) && value >= 0 && value <= 10 ? value : 7;
     }
 
     /**
@@ -972,6 +1401,7 @@ export class NativePhysics extends NativeEngine implements IPhysics {
             && this.hasEnoughFoodToSprint(state)
             && !this.slowDueToUsingItem(state)
             && this.effectAmplifier(state, state.blindness, 'Blindness') === undefined
+            && !this.vehicleHoldsSprint(state)
             && terms;
     }
 
@@ -982,8 +1412,24 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         return heading.forward >= (state.isUnderWater ? 1e-5 : 0.8);
     }
 
+    /** A passenger needs no food from 1.19.3 (1.19.2 ClientPlayerEntity.java:767, 1.19.3 :1045-1046). */
     private hasEnoughFoodToSprint(state: PlayerState): boolean {
-        return state.food > 6 || state.mayFly;
+        return (this.gt('1.19.2') && this.isPassenger(state)) || state.food > 6 || state.mayFly;
+    }
+
+    /** A passenger's vehicle that cannot sprint, from 1.19.4 (canVehicleSprint, 1.19.4 ClientPlayerEntity.java:1020-1031). */
+    private vehicleHoldsSprint(state: PlayerState): boolean {
+        return this.gt('1.19.3') && this.isPassenger(state) && !state.vehicleCanSprint;
+    }
+
+    /**
+     * The ground a double tap starts from: the vehicle's also in 1.19.3, only the vehicle's for a passenger from 1.19.4
+     * (1.19.3 ClientPlayerEntity.java:690, 1.19.4 :682).
+     */
+    private sprintGround(state: PlayerState): boolean {
+        if (!this.gt('1.19.2') || !this.isPassenger(state)) return state.onGround;
+        const vehicle = state.vehicleOnGround ?? state.onGround;
+        return this.gt('1.19.3') ? vehicle : state.onGround || vehicle;
     }
 
     private hasForwardImpulseToKeepSprinting(heading: { forward: number }): boolean {
@@ -993,6 +1439,7 @@ export class NativePhysics extends NativeEngine implements IPhysics {
     /** From 1.21.9 a flying player keeps the sprint in shallow water (isSprintingPossible, 1.21.9 LocalPlayer.java:841-845). */
     private shouldStopRunSprinting(state: PlayerState, heading: { forward: number }): boolean {
         return (this.gt('1.21.3') && this.effectAmplifier(state, state.blindness, 'Blindness') !== undefined)
+            || (this.gt('1.21.3') && this.vehicleHoldsSprint(state))
             || !this.hasForwardImpulseToKeepSprinting(heading)
             || !this.hasEnoughFoodToSprint(state)
             || (state.isCollidedHorizontally && !state.isCollidedHorizontallyMinor)
@@ -1010,6 +1457,7 @@ export class NativePhysics extends NativeEngine implements IPhysics {
             return (!state.onGround && !state.control.sneak && (!forward || !this.hasEnoughFoodToSprint(state))) || !state.isInWater;
         }
         return this.effectAmplifier(state, state.blindness, 'Blindness') !== undefined
+            || this.vehicleHoldsSprint(state)
             || !state.isInWater
             || (!forward && !state.onGround && !state.control.sneak)
             || !this.hasEnoughFoodToSprint(state);
@@ -1026,7 +1474,8 @@ export class NativePhysics extends NativeEngine implements IPhysics {
             const synced = state.attributes[key];
             const modifiers = (synced?.modifiers ?? []).filter(modifier => String(modifier.uuid ?? modifier.id).toLowerCase() !== sprintId);
             if (value) modifiers.push({ uuid: sprintId, amount: f32(0.3), operation: 2 });
-            state.attributes = { ...state.attributes, [key]: { value: synced?.value ?? f32(0.1), modifiers } };
+            const unsynced = synced === undefined || synced.unsynced === true;
+            state.attributes = { ...state.attributes, [key]: { value: synced?.value ?? f32(0.1), modifiers, unsynced } };
         }
         // 1.8's EntityPlayerSP.setSprinting (1.8.9 ClientPlayerEntity.java:349-352)
         if (this.lt('1.9')) state.sprintingTicksLeft = value ? 600 : 0;
@@ -1051,7 +1500,7 @@ export class NativePhysics extends NativeEngine implements IPhysics {
             } else if (!wasJumping && jumping && !state.autoJumping) {
                 if (state.flyJumpTriggerTime === 0) {
                     state.flyJumpTriggerTime = 7;
-                } else if (this.lt('1.13') || !state.swimming) {
+                } else if ((this.lt('1.13') || !state.swimming) && !this.vehicleHoldsFlight(state)) {
                     state.flying = !state.flying;
                     if (state.flying && state.onGround && !this.lt('1.20.5')) this.jumpFromGround(state, sync);
                     flyChanged = true;
@@ -1061,26 +1510,69 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         }
         // (Player.tryToStartFallFlying does not start under levitation from 1.16, nor in lava from 26.3: !isInLiquid(),
         // 26.3 Player.java:1351-1352; 26.2 :1366 has !isInWater()); aiStep tests the climbable from 1.15.2 (!onLadder();
-        // none in 1.15 ClientPlayerEntity.java:711-713 nor 1.15.1, 1.16 :742)
+        // none in 1.15 ClientPlayerEntity.java:711-713 nor 1.15.1, 1.16 :742), and no passenger starts a glide (1.15 :711,
+        // 1.16.5 :717, 1.20.4 :733; 26.3 LivingEntity.canGlide :3143)
         const levitating = this.effectAmplifier(state, state.levitation, 'Levitation') !== undefined && !this.lt('1.16');
         const inLava = state.isInLava && !this.lt('26.3');
         const climbing = state.onClimbable && !this.lt('1.15.2');
+        state.validElytraEquipped = this.gliderEquipped(state);
         if (!this.lt('1.15') && jumping && !wasJumping && !flyChanged && !state.flying && !climbing && !state.onGround
-            && !state.isInWater && !inLava && !state.fallFlying && !levitating && state.validElytraEquipped) {
+            && !state.isInWater && !inLava && !state.fallFlying && !levitating && state.validElytraEquipped && !this.isPassenger(state)) {
             state.fallFlying = true;
         }
     }
 
-    /** LivingEntity.jumpFromGround for the flight a player starts on the ground (the engine jumps only on foot). */
+    /**
+     * Whether the equipment lets a glide start, for a state with a bot's inventory; else the state's own validElytraEquipped.
+     * Before 1.21.2 an elytra in the chest slot with a use left (ElytraItem.isUsable, 1.9.4 ElytraItem.java:30-32, 1.20.4
+     * :18-20, client1.21.1 :19-21), which an unbreakable one does not change. From 1.21.2 any slot holding a GLIDER item
+     * equippable to that slot that the next damage would not break (client1.21.2 LivingEntity.java:2889-2900, :3681-3687,
+     * 26.3 :3142-3148, :3999-4006).
+     *
+     * This is the client's prediction. The durability a glide costs and the end of a glide on a glider that stops being
+     * usable are the server's (LivingEntity.updateFallFlying: `!isClientSide`, client1.21.1 :2759-2777, 26.3 :3119-3127,
+     * and 1.9.4 :1741-1756, which only sets the flag on the server): a client tick neither damages the item nor clears
+     * fallFlying, which goes when the server's flags say so.
+     */
+    private gliderEquipped(state: PlayerState): boolean {
+        const bot = state.bot;
+        const inventory = bot?.inventory;
+        if (!inventory || !bot.getEquipmentDestSlot) return state.validElytraEquipped;
+        const worn = (destination: string) => inventory.slots[bot.getEquipmentDestSlot!(destination)];
+        if (this.lt('1.21.2')) {
+            const chest = worn('torso');
+            return chest?.name === 'elytra' && (chest.durabilityUsed ?? 0) < maxDamageOf(chest) - 1;
+        }
+        return canGlideUsing(bot.heldItem, 'main_hand') || canGlideUsing(worn('off-hand'), 'off_hand') || canGlideUsing(worn('feet'), 'feet')
+            || canGlideUsing(worn('legs'), 'legs') || canGlideUsing(worn('torso'), 'chest') || canGlideUsing(worn('head'), 'head');
+    }
+
+    /**
+     * From 1.21.11 a passenger toggles flight only on a vehicle it can jump: getVehicle() == null || jumpableVehicle() != null
+     * (1.21.11 LocalPlayer.java:802, 26.3 :820; no vehicle term in 1.21.10). The press that fails keeps the trigger.
+     */
+    private vehicleHoldsFlight(state: PlayerState): boolean {
+        return !this.lt('1.21.11') && this.isPassenger(state) && !state.vehicleJumpable;
+    }
+
+    /**
+     * LivingEntity.jumpFromGround for the flight a player starts on the ground (the engine jumps only on foot; this path
+     * opens at 1.20.5): getJumpPower, Jump Boost by its amplifier, and from 1.21.2 a faster rise stays (1.20.5
+     * LivingEntity.java:2063-2086, 1.21.1 :2081-2085, 1.21.2 :2160-2164, 26.3 :2294-2315). The block under it is the one
+     * below that affects its movement, at the x and z of the block that supports it (getOnPos).
+     */
     private jumpFromGround(state: PlayerState, sync: NativeWorldSync): void {
         const honey = (x: number, y: number, z: number) => sync.blockAt(Math.floor(x), Math.floor(y), Math.floor(z))?.effect === EFFECT.honey;
-        const below = state.supportingBlockPos ?? { x: state.pos.x, y: state.pos.y - 0.500001, z: state.pos.z };
-        const factor = honey(state.pos.x, state.pos.y, state.pos.z) || honey(below.x, below.y, below.z) ? 0.5 : 1;
-        const jumpBoost = f32(f32(0.1) * state.jumpBoost);
+        const carry = this.carries.get(state);
+        const kept = carry && samePosition(carry.position, state.pos) ? carry.player.state() : undefined;
+        const support = state.supportingBlockPos ?? (kept?.supportingBlockKept ? kept.supportingBlock : undefined) ?? state.pos;
+        const factor = honey(state.pos.x, state.pos.y, state.pos.z) || honey(support.x, state.pos.y - 0.500001, support.z) ? 0.5 : 1;
+        const amplifier = this.effectAmplifier(state, state.jumpBoost, 'JumpBoost');
+        const jumpBoost = amplifier === undefined ? 0 : f32(f32(0.1) * f32(amplifier + 1));
         const strength = f32(this.attributeValueOf(state.attributes, 'jumpStrength') ?? f32(0.42));
-        const power = f32(strength * f32(factor) + jumpBoost);
-        if (!(power > 1e-5)) return;
-        state.vel.y = Math.max(power, state.vel.y);
+        const power = f32(f32(strength * factor) + jumpBoost);
+        if (power <= f32(1.0e-5)) return;
+        state.vel.y = this.lt('1.21.2') ? power : Math.max(power, state.vel.y);
         if (state.sprinting) {
             const yaw = floatRadians(this.yawDegrees(state));
             state.vel.x += -this.mth.sin(yaw) * 0.2;
@@ -1095,8 +1587,7 @@ export class NativePhysics extends NativeEngine implements IPhysics {
      */
     private isAutoSpinAttack(state: PlayerState): boolean {
         if (this.lt('1.13')) return false;
-        const index = this.lt('1.14') ? 6 : this.lt('1.17') ? 7 : 8;
-        const flags = state.bot?.entity?.metadata?.[index];
+        const flags = state.bot?.entity?.metadata?.[livingFlagsSlot(this.version)!];
         return typeof flags === 'number' && (flags & 4) !== 0;
     }
 
@@ -1106,12 +1597,18 @@ export class NativePhysics extends NativeEngine implements IPhysics {
      * 1.20.4 :373-401, 1.21.5 Player.java:449-463, 1.21.11 :352-366).
      */
     private updatePoses(state: PlayerState, sync: NativeWorldSync): void {
-        const fits = (pose: number) => this.isFree(sync, shrink(this.collider(pose, state.pos, state.scale), 1e-7), state);
+        const fits = (pose: number) => this.poseFits(sync, pose, state);
         if (!fits(Pose.SWIMMING)) return;
         const wanted = this.desiredPose(state);
         if (state.gameMode === 'spectator' || this.isPassenger(state) || fits(wanted)) state.pose = wanted;
         else if (fits(Pose.SNEAKING)) state.pose = Pose.SNEAKING;
         else state.pose = Pose.SWIMMING;
+    }
+
+    /** The size the end of Player.tick leaves: its pose's from 1.14, before the box updateSize kept. */
+    private sizeAfterTick(state: PlayerState, moved: Size): Size {
+        if (!this.lt('1.14')) return this.poseSize(state.pose, state.scale);
+        return state.keptBoundingBox ? { width: state.keptBoundingBox.width, height: state.keptBoundingBox.height } : moved;
     }
 
     /**
@@ -1129,7 +1626,11 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         return state.control.sneak && !state.flying ? Pose.SNEAKING : Pose.STANDING;
     }
 
-    /** Entity.isPassenger: the state's passenger flag, else whether mineflayer has the bot riding a vehicle. */
+    /**
+     * Entity.isPassenger: the state's passenger flag, else whether mineflayer has the bot riding a vehicle. A bot's own
+     * riding ticks go through mineflayer's vehicle paths (the boat and mount physics in vehicles.ts) and never reach
+     * simulate; bot.physics.simulatePlayer can, on a riding bot, and gets the ride tick (PlayerState.passenger), not a throw.
+     */
     private isPassenger(state: PlayerState): boolean {
         if (typeof state.passenger === 'boolean') return state.passenger;
         return state.bot?.vehicle != null || state.bot?.entity?.vehicle != null;
@@ -1278,6 +1779,44 @@ export class NativePhysics extends NativeEngine implements IPhysics {
     }
 
     /**
+     * Entity.wouldPoseNotCollide (canPlayerFitWithinBlocksAndEntitiesWhen in 26.3): noCollision for the pose's box at the
+     * player's position, shrunk by 1e-7 from 1.16 (1.14 Entity.java:1641-1643, 1.15 :1657-1659, 1.16 :1695-1697, 26.3
+     * Player.java:364-366), which sees the blocks, the entities that collide and the world border (26.3
+     * CollisionGetter.java:52-54, 74-81).
+     */
+    private poseFits(sync: NativeWorldSync, pose: number, state: PlayerState, scale = state.scale): boolean {
+        const size = this.collider(pose, state.pos, scale);
+        const query = this.lt('1.16') ? size : shrink(size, 1e-7);
+        return this.isFree(sync, query, state) && !this.meetsEntityCollider(state, query) && this.borderLeavesFree(sync, query, state);
+    }
+
+    /** The border's term of poseFits: for 1.14 - 1.17 it reads the box the player has, not the box it asks about. */
+    private borderLeavesFree(sync: NativeWorldSync, query: Box, state: PlayerState): boolean {
+        const now = this.collider(state.pose, state.pos, state.scale);
+        const corners = (b: Box) => [{ x: b.minX, y: b.minY, z: b.minZ }, { x: b.maxX, y: b.maxY, z: b.maxZ }] as const;
+        return sync.world.noBorderCollision(...corners(query), ...corners(now), state.pos.x, state.pos.z, this.version);
+    }
+
+    /**
+     * Whether an entity that collides meets the box grown by 1e-7, as the entities' collisions take it (client1.14.4
+     * EntityGetter.java:54-68, 1.15 EntityView.java:53-67, 1.16.5 :59-76, 26.3 CollisionGetter.java:70-72), where the
+     * player's turn finds it: its own tick done when the client ticks it first. The size update before 1.14 passes no
+     * entity to its query and has no such term (1.12.2 World.java:1225-1227, 1.13.2 PlayerEntity.java:440-443).
+     */
+    private meetsEntityCollider(state: PlayerState, query: Box): boolean {
+        const reach = shrink(query, -1e-7);
+        return (state.nearbyEntities ?? []).some(entity => {
+            const { boundingBox: b } = entity.ticksBeforePlayer ? entity.afterTick ?? entity : entity;
+            const kind = this.entityKind(state, entity);
+            // (HappyGhast.canBeCollidedWith: a player at or above the top of an adult, 26.3 HappyGhast.java:522-532)
+            const collides = kind === 'boat' || kind === 'shulker' || kind === 'happy_ghast_stays_still'
+                || (kind === 'happy_ghast' && state.pos.y >= b.maxY);
+            return collides && b.minX < reach.maxX && b.maxX > reach.minX && b.minY < reach.maxY && b.maxY > reach.minY
+                && b.minZ < reach.maxZ && b.maxZ > reach.minZ;
+        });
+    }
+
+    /**
      * Whether no collision box of the blocks in the box's cells (and the row under them when `underlying`) meets it,
      * the scaffolding and powder snow shaped for the player (EntityCollisionContext).
      */
@@ -1285,9 +1824,18 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         for (let y = Math.floor(query.minY) - Number(underlying); y <= Math.floor(query.maxY); y += 1) {
             for (let z = Math.floor(query.minZ); z <= Math.floor(query.maxZ); z += 1) {
                 for (let x = Math.floor(query.minX); x <= Math.floor(query.maxX); x += 1) {
-                    for (const [minX, minY, minZ, maxX, maxY, maxZ] of this.collisionBoxes(sync, state, x, y, z)) {
-                        if (x + minX < query.maxX && x + maxX > query.minX && y + minY < query.maxY && y + maxY > query.minY
-                            && z + minZ < query.maxZ && z + maxZ > query.minZ) return false;
+                    const boxes = this.collisionBoxes(sync, state, x, y, z);
+                    for (const [minX, minY, minZ, maxX, maxY, maxZ] of boxes) {
+                        if (!(x + minX < query.maxX && x + maxX > query.minX && y + minY < query.maxY && y + maxY > query.minY
+                            && z + minZ < query.maxZ && z + maxZ > query.minZ)) continue;
+                        // (from 1.13 an overlap the shapes' merger drops does not count, 1.14.4 LevelReader.java, 26.3
+                        // BlockCollisions.java:91-104: a thin wall the box lies flush with fits)
+                        const cube = boxes.length === 1 && minX === 0 && minY === 0 && minZ === 0 && maxX === 1 && maxY === 1 && maxZ === 1;
+                        const meets = this.binding.collisionBoxMeetsQuery(
+                            this.version, { x: x + minX, y: y + minY, z: z + minZ }, { x: x + maxX, y: y + maxY, z: z + maxZ }, cube,
+                            { x: query.minX, y: query.minY, z: query.minZ }, { x: query.maxX, y: query.maxY, z: query.maxZ },
+                        );
+                        if (meets) return false;
                     }
                 }
             }
@@ -1311,7 +1859,7 @@ export class NativePhysics extends NativeEngine implements IPhysics {
         }
         if (block.name === 'powder_snow') {
             if (state.fallDistance > 2.5) return [[0, 0, 0, 1, 0.8999999761581421, 1]];
-            return state.canWalkOnPowderSnow && above && !state.control.sneak ? [[0, 0, 0, 1, 1, 1]] : [];
+            return this.canWalkOnPowderSnow(state) && above && !state.control.sneak ? [[0, 0, 0, 1, 1, 1]] : [];
         }
         return sync.boxesAt(x, y, z);
     }

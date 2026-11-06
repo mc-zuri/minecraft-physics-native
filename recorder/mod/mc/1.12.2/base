@@ -1,0 +1,15 @@
+1.13.2
+-java/dev/mcpn/recorder/mc/mixin/LockstepWindowMixin.java
+-java/dev/mcpn/recorder/mc/mixin/LockstepFrameLimitMixin.java
+-java/dev/mcpn/recorder/mc/mixin/MouseHandlerMixin.java
+=level.isClientSide() level.isClientSide
+=mc.getConnection().getLevel() mc.level
+=net.minecraft.tags.FluidTags.WATER net.minecraft.world.level.material.Material.WATER
+=net.minecraft.tags.FluidTags.LAVA net.minecraft.world.level.material.Material.LAVA
+=BuiltInRegistries.ITEM.getByIdentifier BuiltInRegistries.ITEM.get
+=BuiltInRegistries.MOB_EFFECT.getByIdentifier BuiltInRegistries.MOB_EFFECT.get
+=BuiltInRegistries.ENCHANTMENT.getByIdentifier BuiltInRegistries.ENCHANTMENT.get
+=Util.getMillis() net.minecraft.server.MinecraftServer.getTimeMillis()
+=recorder$setNextStep(1.0F) recorder$setNextStep(1)
+="1.13.2" "1.12.2"
+=404; 340;

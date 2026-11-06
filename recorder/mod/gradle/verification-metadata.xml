@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Unimined comes from a snapshot repository, the one input here a publisher can change under its version: its build's
+     bytes are pinned. Everything else is a release resolved by Gradle's own cache and is trusted. -->
+<verification-metadata xmlns="https://schema.gradle.org/dependency-verification" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="https://schema.gradle.org/dependency-verification https://schema.gradle.org/dependency-verification/dependency-verification-1.3.xsd">
+   <configuration>
+      <verify-metadata>false</verify-metadata>
+      <verify-signatures>false</verify-signatures>
+      <trusted-artifacts>
+         <trust group="^(?!xyz\.wagyourtail\.unimined$).*$" regex="true"/>
+      </trusted-artifacts>
+   </configuration>
+   <components>
+      <component group="xyz.wagyourtail.unimined" name="unimined" version="1.3.16-20260511.125954-9">
+         <artifact name="unimined-1.3.16-20260511.125954-9.jar">
+            <sha256 value="b6fb53ac0ea21537fdc4d57990c0c4d187080a00d07cbe39c0c948579ca37c3f" origin="maven.wagyourtail.xyz .jar.sha256, its sha1 the cached snapshot's"/>
+         </artifact>
+      </component>
+   </components>
+</verification-metadata>

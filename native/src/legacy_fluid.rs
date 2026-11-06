@@ -1,6 +1,6 @@
 use std::ops::{Range, RangeInclusive};
 
-use crate::math::{Aabb, Vec3};
+use crate::math::{ceil_i32, floor_i32, Aabb, Vec3};
 use crate::simulation::SimulationState;
 use crate::version::MinecraftVersion;
 use crate::world::{BlockState, CollisionQueryEntity, FluidContact, FluidState, WorldSnapshot};
@@ -20,15 +20,19 @@ pub(crate) fn handle_water_movement(
     pushed_by_water: bool,
     release: MinecraftVersion,
 ) {
+    if state.boat_excludes_water(release) {
+        state.in_water = false;
+        return;
+    }
     let bounds = state.bounds();
     let inset = f64::from(0.4_f32);
     // expand(0.0, -0.4F, 0.0) (1.12.2 Box.java:158-166), then contract(0.001) (1.12.2
     // Box.java:289-291) or increment(0.001, 0.001, 0.001) (1.8.9 Box.java:185-193)
-    let shrunk = ordered(
+    let shrunk = Aabb::ordered(
         Vec3::new(bounds.min.x, bounds.min.y + inset, bounds.min.z),
         Vec3::new(bounds.max.x, bounds.max.y - inset, bounds.max.z),
     );
-    let area = ordered(
+    let area = Aabb::ordered(
         Vec3::new(
             shrunk.min.x + 0.001,
             shrunk.min.y + 0.001,
@@ -40,6 +44,22 @@ pub(crate) fn handle_water_movement(
             shrunk.max.z - 0.001,
         ),
     );
+    let touching = material_acceleration(state, world, area, pushed_by_water, release);
+    state.in_water = touching;
+    if touching {
+        state.fall_distance = 0.0;
+    }
+}
+
+/// World.handleMaterialAcceleration: whether water reaches into `area`, and the push of its flows,
+/// summed and normalized.
+pub(crate) fn material_acceleration(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    area: Aabb,
+    pushed_by_water: bool,
+    release: MinecraftVersion,
+) -> bool {
     let layers = cells(area.min.y, area.max.y, release);
     let top = f64::from(layers.end);
     let mut touching = false;
@@ -58,21 +78,10 @@ pub(crate) fn handle_water_movement(
             }
         }
     }
-    if length(flow) > 0.0 && pushed_by_water {
-        state.velocity = state.velocity + normalize(flow).scale(0.014);
+    if flow.length_in(release) > 0.0 && pushed_by_water {
+        state.velocity = state.velocity + flow.normalized(release).scale(0.014);
     }
-    state.in_water = touching;
-    if touching {
-        state.fall_distance = 0.0;
-    }
-}
-
-/// new AxisAlignedBB(x1, y1, z1, x2, y2, z2): Math.min and Math.max of each pair of corners.
-fn ordered(a: Vec3, b: Vec3) -> Aabb {
-    Aabb::new(
-        Vec3::new(a.x.min(b.x), a.y.min(b.y), a.z.min(b.z)),
-        Vec3::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z)),
-    )
+    touching
 }
 
 /// 1.13's Entity.handleFluidAcceleration: as from 1.14, but a fluid under the same fluid keeps
@@ -85,9 +94,9 @@ pub(crate) fn fluid_contact_1_13(
 ) -> FluidContact {
     let area = bounds.deflate(Vec3::new(0.001, 0.001, 0.001));
     let mut contact = FluidContact::default();
-    for x in area.min.x.floor() as i32..area.max.x.ceil() as i32 {
-        for y in area.min.y.floor() as i32..area.max.y.ceil() as i32 {
-            for z in area.min.z.floor() as i32..area.max.z.ceil() as i32 {
+    for x in floor_i32(area.min.x)..ceil_i32(area.max.x) {
+        for y in floor_i32(area.min.y)..ceil_i32(area.max.y) {
+            for z in floor_i32(area.min.z)..ceil_i32(area.max.z) {
                 let block = world.block((x, y, z));
                 let matches = block.fluid == fluid
                     || (fluid == FluidState::Water && block.fluid == FluidState::Waterlogged);
@@ -113,7 +122,9 @@ pub(crate) fn fluid_contact_1_13(
     contact
 }
 
-/// Entity.isInLava before 1.14: any lava in the box shrunk by 0.1F sideways and 0.4F vertically.
+/// Entity.isInLava before 1.14: any lava in the box shrunk by 0.1F sideways and 0.4F vertically,
+/// whose corners Box's constructor orders (1.8.9 Box.java:22-29, Entity.java:927-929; 1.13.2
+/// Box.java:42-48, Entity.java:1144-1145).
 #[must_use]
 pub(crate) fn touching_lava(
     world: &WorldSnapshot,
@@ -122,7 +133,7 @@ pub(crate) fn touching_lava(
 ) -> bool {
     let side = f64::from(0.1_f32);
     let vertical = f64::from(0.4_f32);
-    let area = Aabb::new(
+    let area = Aabb::ordered(
         Vec3::new(
             bounds.min.x + side,
             bounds.min.y + vertical,
@@ -175,15 +186,15 @@ pub(crate) fn sink_in_water(state: &mut SimulationState) {
 
 fn cells(min: f64, max: f64, release: MinecraftVersion) -> Range<i32> {
     let end = if release.at_least(1, 9, 0) {
-        max.ceil()
+        ceil_i32(max)
     } else {
-        (max + 1.0).floor()
+        floor_i32(max + 1.0)
     };
-    min.floor() as i32..end as i32
+    floor_i32(min)..end
 }
 
 fn liquid_cells(min: f64, max: f64) -> RangeInclusive<i32> {
-    min.floor() as i32..=max.floor() as i32
+    floor_i32(min)..=floor_i32(max)
 }
 
 fn height_percent(block: &BlockState) -> f32 {
@@ -205,22 +216,9 @@ fn own_height(block: &BlockState) -> f32 {
     f32::from(amount) / 9.0
 }
 
-fn length(vector: Vec3) -> f64 {
-    f64::from(vector.length_squared().sqrt() as f32)
-}
-
-fn normalize(vector: Vec3) -> Vec3 {
-    let length = length(vector);
-    if length < 1.0e-4 {
-        Vec3::ZERO
-    } else {
-        Vec3::new(vector.x / length, vector.y / length, vector.z / length)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{cells, is_free};
+    use super::{cells, is_free, touching_lava};
     use crate::math::{Aabb, Vec3};
     use crate::version::MinecraftVersion;
     use crate::world::{
@@ -321,5 +319,107 @@ mod tests {
             assert!(!free(&world, meeting, release));
             assert!(free(&world, beside, release));
         }
+    }
+
+    /// Which of `cells` hold lava that touching_lava finds for a box 0.6 wide and `height` high
+    /// standing at (x, y, z), one lava block in the world at a time.
+    fn lava_found(
+        (x, y, z): (f64, f64, f64),
+        height: f32,
+        cells: &[(i32, i32, i32)],
+        release: MinecraftVersion,
+    ) -> Vec<(i32, i32, i32)> {
+        let bounds = Aabb::new(
+            Vec3::new(x - 0.3, y, z - 0.3),
+            Vec3::new(x + 0.3, y + f64::from(height), z + 0.3),
+        );
+        cells
+            .iter()
+            .copied()
+            .filter(|&cell| {
+                let mut world = WorldSnapshot::new();
+                world.set_block(
+                    cell,
+                    BlockState {
+                        fluid: FluidState::Lava,
+                        fluid_source: true,
+                        ..BlockState::default()
+                    },
+                );
+                touching_lava(&world, bounds, release)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_lava_box_is_turned_the_right_way_up_around_a_contracted_height_of_0_8() {
+        // Entity.isInLava contracts the box by 0.1F, 0.4F, 0.1F; Box's constructor orders the
+        // corners (1.8.9 Entity.java:927-929, Box.java:22-29; 1.9.4 Entity.java:1035-1036, Box.java:
+        // 24-31, 111-119; 1.13.2 Entity.java:1144-1146, Box.java:42-49, 232-234), and
+        // World.containsMaterial reads floor(min) until ceil(max) (1.13.2 World.java:1373-1395)
+        let column = |y: i32| (0, y, 0);
+        let around = [63, 64, 65, 66, 67].map(column);
+        for release in [
+            MinecraftVersion::new(1, 9, 4),
+            MinecraftVersion::new(1, 12, 2),
+            MinecraftVersion::new(1, 13, 2),
+        ] {
+            let found = |y: f64, height: f32, cells: &[(i32, i32, i32)]| {
+                lava_found((0.5, y, 0.5), height, cells, release)
+            };
+            // below 0.8F: 64.9 - 65.1
+            assert_eq!(found(64.7, 0.6, &around), vec![column(64), column(65)]);
+            // at 0.8F: 65.1 twice, in the one cell
+            assert_eq!(found(64.7, 0.8, &around), vec![column(65)]);
+            // above 0.8F: 65.1 - 65.2, and 65.1 - 66.1
+            assert_eq!(found(64.7, 0.9, &around), vec![column(65)]);
+            assert_eq!(found(64.7, 1.8, &around), vec![column(65), column(66)]);
+
+            // on whole coordinates: ceil(65.0) leaves the cell 65 out of 64.8 - 65.0, floor(65.0)
+            // keeps it in 65.0 - 65.2, and 65.0 - 65.0 reads no cell at all
+            let foot_contracted_to_65 = 65.0 - f64::from(0.4_f32);
+            let head_contracted_to_65 = 65.0 - (f64::from(0.6_f32) - f64::from(0.4_f32));
+            assert_eq!(found(foot_contracted_to_65, 0.6, &around), vec![column(64)]);
+            assert_eq!(found(head_contracted_to_65, 0.6, &around), vec![column(65)]);
+            assert_eq!(found(foot_contracted_to_65, 0.8, &around), vec![]);
+        }
+    }
+
+    #[test]
+    fn the_lava_box_is_turned_the_right_way_up_at_negative_coordinates() {
+        let release = MinecraftVersion::new(1, 13, 2);
+        let found = |y: f64, height: f32, cells: &[(i32, i32, i32)]| {
+            lava_found((-0.5, y, -0.5), height, cells, release)
+        };
+        let column = |y: i32| (-1, y, -1);
+        let around = [-6, -5, -4, -3, -2].map(column);
+        // -3.1 - -2.9, floor -4 until ceil -2
+        assert_eq!(found(-3.3, 0.6, &around), vec![column(-4), column(-3)]);
+        // the next column along holds the box no longer: -0.7 - -0.3 reads the cell -1 alone
+        assert_eq!(found(-3.3, 0.6, &[(0, -4, 0), (-2, -4, -2)]), vec![]);
+        // -3.2 - -3.0: ceil(-3.0) leaves the cell -3 out
+        let foot_contracted_to_minus_3 = -3.0 - f64::from(0.4_f32);
+        assert_eq!(found(foot_contracted_to_minus_3, 0.6, &around), vec![column(-4)]);
+        // -3.0 - -3.0 reads no cell
+        assert_eq!(found(foot_contracted_to_minus_3, 0.8, &around), vec![]);
+    }
+
+    #[test]
+    fn a_short_box_reads_one_cell_more_in_1_8() {
+        // 1.8.9 World.containsMaterial reads until floor(max + 1) (generic short entities: no
+        // registered player is this short there; 1.8.8 itself is unavailable, 1.8.9's source stands)
+        let release = MinecraftVersion::new(1, 8, 8);
+        let column = |y: i32| (0, y, 0);
+        let around = [63, 64, 65, 66].map(column);
+        assert_eq!(
+            lava_found((0.5, 64.7, 0.5), 0.6, &around, release),
+            vec![column(64), column(65)]
+        );
+        // 65.0 - 65.0 reads the cell 65 where 1.9.4 reads none
+        let foot_contracted_to_65 = 65.0 - f64::from(0.4_f32);
+        assert_eq!(
+            lava_found((0.5, foot_contracted_to_65, 0.5), 0.8, &around, release),
+            vec![column(65)]
+        );
     }
 }

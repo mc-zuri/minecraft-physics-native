@@ -1,15 +1,20 @@
+use std::borrow::Cow;
+
 use crate::block_traversal::Movement;
 use crate::collision::vanilla_equal;
 use crate::math::{Aabb, Vec3};
 use crate::simulation::{
     apply_block_effects, apply_inside_fire_effects, back_off_from_edge,
     block_below_affecting_movement, block_jump_factor, block_position, block_speed_factor,
-    blocks_inside, blocks_inside_moves, check_fall_damage, check_supporting_block,
-    collide_with_world, displace, entity_collision_context, horizontal_collision_is_minor,
-    kept_supporting_block, movement_speed_attribute, restitute_movement_after_collisions,
-    slowed_by_stuck_speed, update_auto_jump, update_in_lava_after_move, FallCheck, FallDamageRules,
+    block_fall_callback_runs, blocks_inside, blocks_inside_moves, can_simulate_movement,
+    check_fall_damage,
+    check_supporting_block, collide_with_world, displace, entity_collision_context, horizontal_collision_is_minor,
+    kept_supporting_block, landing_bounce, movement_speed_attribute, restitute_movement_after_collisions,
+    simulates_landing, slowed_by_stuck_speed, update_auto_jump, update_in_lava_after_move, FallCheck, FallDamageRules,
     InsideEffects, LandingDamageRounding, PhysicsConfig, SimulationState, VersionPhysicsRules,
 };
+use crate::moving_entity::count_fall;
+use crate::vehicle::{apply_effects_inside, move_vehicle, MoveRules};
 use crate::version::MinecraftVersion;
 use crate::world::{BlockEffect, WorldSnapshot};
 
@@ -22,6 +27,13 @@ const DIRECTIONS: [(i32, i32, i32); 6] = [
     (-1, 0, 0),
     (1, 0, 0),
 ];
+
+/// How what a piston pushes moves itself.
+#[derive(Clone, Copy)]
+enum Mover {
+    Player(PhysicsConfig),
+    Body(MoveRules),
+}
 
 /// A block a piston moves, which the client ticks after its entities (PistonMovingBlockEntity,
 /// TileEntityPiston before 1.13).
@@ -38,6 +50,9 @@ pub struct MovingPiston {
     /// The collision boxes of the block it moves (getCollisionRelatedBlockState) in its cell,
     /// which push from 1.11, and on 1.8 those of a block it pushes (Block.getCollisionBox).
     pub shapes: Vec<Aabb>,
+    /// `shapes` once it has gone on this tick, for the pistons that tick after it: a head is short
+    /// by its progress (26.3 PistonMovingBlockEntity.java:340-344). None: the same.
+    pub next_shapes: Option<Vec<Aabb>>,
     /// The outline boxes of a block it pushes in its cell, whose bounds push on 1.9 - 1.10
     /// (IBlockState.getCollisionBox(BlockView), MCP's getBoundingBox); none: the full cube,
     /// Block.collisionBox's default (1.9.4 Block.java:47, 352).
@@ -85,7 +100,7 @@ impl MovingPiston {
     }
 
     /// getMovementDirection: the facing while it extends, the opposite while it retracts.
-    fn movement_direction(&self) -> (i32, i32, i32) {
+    pub(crate) fn movement_direction(&self) -> (i32, i32, i32) {
         let (fx, fy, fz) = self.facing_step();
         let sign = if self.extending { 1 } else { -1 };
         (fx * sign, fy * sign, fz * sign)
@@ -108,10 +123,97 @@ impl MovingPiston {
     }
 }
 
+/// The collision boxes of a moving block in its cell, the block entity's shape, which the player's
+/// move meets before the block entity ticks. `piston.shapes` are the boxes of the block at this
+/// progress: the head a source piston shows, else the block it moves; `base_shapes` those of the
+/// extended base a source piston leaves as it retracts.
+///
+/// - 1.8: one box whose far side is drawn back by the progress before the last tick, flat for a
+///   full block that has yet to enter its cell, and turned over for a shorter one, as Box orders
+///   its corners (1.8.9 PistonExtensionBlock.java:122-134, 166-197: getAmountExtended(0.0F) is
+///   lastProgress).
+/// - 1.9 - 1.10: the outline box moved to the progress and to the progress before it, joined in
+///   one box (1.9.4 PistonBlockEntity.java method_11701, method_11702).
+/// - From 1.11: the shape moved to the progress, and the base (1.12.2 PistonBlockEntity.java:322-350,
+///   1.14 getCollisionShape, 26.3 PistonMovingBlockEntity.java:327-352).
+#[must_use]
+pub fn moving_block_collision_boxes(
+    piston: &MovingPiston,
+    base_shapes: &[Aabb],
+    release: MinecraftVersion,
+) -> Vec<Aabb> {
+    let (fx, fy, fz) = piston.facing_step();
+    let step = Vec3::new(f64::from(fx), f64::from(fy), f64::from(fz));
+    let extended = |progress: f32| {
+        f64::from(if piston.extending { progress - 1.0 } else { 1.0 - progress })
+    };
+    // (tick: lastProgress = progress, then progress + 0.5F held at 1.0F, from 0.0F)
+    let last_progress = (piston.progress - 0.5).max(0.0);
+    if !release.at_least(1, 9, 0) {
+        let Some(bounds) = piston.shape_bounds() else {
+            return Vec::new();
+        };
+        let left = f64::from(if piston.extending { 1.0 - last_progress } else { last_progress });
+        let (mut min, mut max) = (bounds.min, bounds.max);
+        let stretch = |step: f64, min: &mut f64, max: &mut f64| {
+            if step < 0.0 {
+                *min -= step * left;
+            } else {
+                *max -= step * left;
+            }
+        };
+        stretch(step.x, &mut min.x, &mut max.x);
+        stretch(step.y, &mut min.y, &mut max.y);
+        stretch(step.z, &mut min.z, &mut max.z);
+        let ordered = |a: f64, b: f64| (a.min(b), a.max(b));
+        let (min_x, max_x) = ordered(min.x, max.x);
+        let (min_y, max_y) = ordered(min.y, max.y);
+        let (min_z, max_z) = ordered(min.z, max.z);
+        return vec![Aabb::new(Vec3::new(min_x, min_y, min_z), Vec3::new(max_x, max_y, max_z))];
+    }
+    if !release.at_least(1, 11, 0) {
+        let bounds = legacy_moved_box(piston);
+        let moved = |progress: f32| {
+            let by = extended(progress);
+            bounds.translated(Vec3::new(step.x * by, step.y * by, step.z * by))
+        };
+        return vec![moved(piston.progress).minmax(moved(last_progress))];
+    }
+    let by = extended(piston.progress);
+    let moved = Vec3::new(step.x * by, step.y * by, step.z * by);
+    base_shapes
+        .iter()
+        .copied()
+        .chain(piston.shapes.iter().map(|shape| shape.translated(moved)))
+        .collect()
+}
+
+/// MovingPistonBlock.getCollisionShape in the world: the block at the piston's cell takes the boxes
+/// of its block entity. From 1.11 a push along the way it goes passes through it until it ends,
+/// save for the base a retracting piston leaves (1.10.2 PistonBlockEntity.java has no NOCLIP;
+/// 1.11.2 :322-329, 1.13.2 :326-338, 26.3 PistonMovingBlockEntity.java:327-338).
+pub fn set_moving_block(
+    world: &mut WorldSnapshot,
+    piston: &MovingPiston,
+    base_shapes: &[Aabb],
+    release: MinecraftVersion,
+) {
+    let boxes = moving_block_collision_boxes(piston, base_shapes, release);
+    world.set_moving_block(piston.position, &boxes, release.at_least(1, 15, 0));
+    if release.at_least(1, 11, 0) && piston.progress < 1.0 {
+        world.set_moving_block_noclip(piston.position, piston.movement_direction(), base_shapes);
+    }
+}
+
 /// The pushes of the moving piston blocks, in the order the client ticks them: each goes 0.5F
-/// further this tick and moves the player out of its way. A spectator is not pushed. The pistons
-/// of the tick before these moved the player by `piston_deltas` on each axis (Entity.pistonDeltas),
-/// which are left with these pushes added.
+/// further this tick and moves the player out of its way. A spectator is not among the entities
+/// asked (Level.getEntities' NO_SPECTATORS, 1.8.9 World.java:2185-2187, and no release tests
+/// noPhysics here: 1.20.4 PistonBlockEntity.java:129, 26.3 PistonMovingBlockEntity.java:122), and a
+/// player has noPhysics only as one (1.8.9 PlayerEntity.java:264, 26.3 Player.java:218); any other
+/// entity with noPhysics is pushed, through what is in its way. The pistons of the tick before
+/// these moved the player by `piston_deltas` on each axis (Entity.pistonDeltas), which are left
+/// with these pushes added. One that has ticked stands at its new progress for the ones after it
+/// (26.3 PistonMovingBlockEntity.java tick sets progress as it goes).
 pub fn push_by_moving_pistons(
     state: &mut SimulationState,
     world: &WorldSnapshot,
@@ -120,19 +222,75 @@ pub fn push_by_moving_pistons(
     config: PhysicsConfig,
     release: MinecraftVersion,
 ) {
-    if state.no_physics {
+    push_in_turn(state, world, pistons, piston_deltas, Mover::Player(config), release);
+}
+
+/// The pistons of a tick against an entity that is no player: PistonMovingBlockEntity.moveCollidedEntities
+/// and moveStuckEntities ask every entity of the level, whatever its kind, but those of
+/// PushReaction.IGNORE_ENTITY (26.3 Entity.java:3757, Marker, Display, Interaction,
+/// AreaEffectCloud, OminousItemSpawner, a marker ArmorStand), which the caller does not send. The
+/// block entities tick after the entities on either side (26.3 Level.tickBlockEntities), so
+/// this follows the entity's own tick. `rules` are the entity's Entity.move's.
+pub(crate) fn push_body_by_moving_pistons(
+    body: &mut SimulationState,
+    world: &WorldSnapshot,
+    pistons: &[MovingPiston],
+    piston_deltas: &mut [f64; 3],
+    rules: MoveRules,
+    release: MinecraftVersion,
+) {
+    push_in_turn(body, world, pistons, piston_deltas, Mover::Body(rules), release);
+}
+
+fn push_in_turn(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    pistons: &[MovingPiston],
+    piston_deltas: &mut [f64; 3],
+    mover: Mover,
+    release: MinecraftVersion,
+) {
+    if state.no_physics && state.is_player {
         return;
     }
-    for piston in pistons {
+    let mut ticked = Cow::Borrowed(world);
+    for (index, piston) in pistons.iter().enumerate() {
         if !release.at_least(1, 9, 0) {
-            push_before_1_9(state, world, piston, config, release);
+            push_before_1_9(state, &ticked, piston, mover, release);
         } else if !release.at_least(1, 11, 0) {
-            push_before_1_11(state, world, piston, config, release);
+            push_before_1_11(state, &ticked, piston, mover, release);
         } else {
-            push(state, world, piston, piston_deltas, config, release);
-            carry(state, world, piston, piston_deltas, config, release);
+            // the moves under moveEntityByPiston's and fixEntityWithinPistonBase's NOCLIP (1.11.2
+            // PistonBlockEntity.java:160-162, 244-246; 26.3 PistonMovingBlockEntity.java:163-170)
+            let through = ticked.through_moving_blocks(piston.movement_direction());
+            let world = through.as_ref().unwrap_or(&ticked);
+            push(state, world, piston, piston_deltas, mover, release);
+            carry(state, world, piston, piston_deltas, mover, release);
+        }
+        // (to 1.10 the tick that ends a block pushes too: 1.8.9, 1.9.4 PistonBlockEntity.java tick)
+        if index + 1 < pistons.len() && (piston.progress < 1.0 || !release.at_least(1, 11, 0)) {
+            go_on(ticked.to_mut(), piston, release);
         }
     }
+}
+
+/// The cell of a moving block as its tick left it, for the blocks that tick after it.
+fn go_on(world: &mut WorldSnapshot, piston: &MovingPiston, release: MinecraftVersion) {
+    if !world.is_moving_block(piston.position) {
+        return;
+    }
+    if piston.progress >= 1.0 {
+        // its block entity is gone, and the block it moved stands there
+        world.set_moving_block(piston.position, &piston.shapes, release.at_least(1, 15, 0));
+        return;
+    }
+    let base = world.moving_block_base(piston.position);
+    let after = MovingPiston {
+        progress: (piston.progress + 0.5).min(1.0),
+        shapes: piston.next_shapes.clone().unwrap_or_else(|| piston.shapes.clone()),
+        ..piston.clone()
+    };
+    set_moving_block(world, &after, &base, release);
 }
 
 /// PistonMovingBlockEntity.moveCollidedEntities: the moved block's boxes, placed at the progress
@@ -146,10 +304,21 @@ fn push(
     world: &WorldSnapshot,
     piston: &MovingPiston,
     piston_deltas: &mut [f64; 3],
-    config: PhysicsConfig,
+    mover: Mover,
     release: MinecraftVersion,
 ) {
     if piston.progress >= 1.0 {
+        return;
+    }
+    // 1.16.2 moveCollidedEntities skips the whole ServerPlayer candidate for slime, not
+    // just its impulse (exact 1.16.1/1.16.2 bytecode; 26.2 PistonMovingBlockEntity.java:136).
+    // 26.3 replaces that continue with a bounce-only canSimulateMovement check.
+    if piston.bounces
+        && state.is_player
+        && !state.client_side
+        && release.at_least(1, 16, 2)
+        && !release.at_least(26, 3, 0)
+    {
         return;
     }
     let progress = piston.progress;
@@ -157,7 +326,10 @@ fn push(
     let direction = piston.movement_direction();
     let origin = piston.origin();
     let bounds = state.bounds();
-    if let Some(shape_bounds) = piston.shape_bounds().filter(|_| piston.bounces) {
+    // Only the bounce is conditional in 26.3; a remote entity still receives the piston move
+    // and its callbacks (PistonMovingBlockEntity.java:122-170, MoverType.java:13-14).
+    let simulates = !release.at_least(26, 3, 0) || can_simulate_movement(state, release);
+    if let Some(shape_bounds) = piston.shape_bounds().filter(|_| piston.bounces && simulates) {
         // the entities of getEntities(movementArea.minmax(box)), the box the shape's bounds, from
         // the cell's corners outward before 1.16 (1.15 PistonBlockEntity.java:103-128, 195-213;
         // 1.16 :105-131; 26.3 PistonMovingBlockEntity.java:110-150)
@@ -193,7 +365,7 @@ fn push(
         world,
         along(direction, amount),
         piston_deltas,
-        config,
+        mover,
         release,
     );
     if piston.extending || !piston.source {
@@ -214,7 +386,7 @@ fn push(
             world,
             along(back, out),
             piston_deltas,
-            config,
+            mover,
             release,
         );
     }
@@ -229,7 +401,7 @@ fn push_before_1_11(
     state: &mut SimulationState,
     world: &WorldSnapshot,
     piston: &MovingPiston,
-    config: PhysicsConfig,
+    mover: Mover,
     release: MinecraftVersion,
 ) {
     let before = piston.progress;
@@ -247,15 +419,7 @@ fn push_before_1_11(
         2
     };
     let sign = fx + fy + fz;
-    let shape = if !piston.source {
-        // a block it pushes moves its outline box, pushedBlock.getCollisionBox(BlockView, pos)
-        // (1.9.4 PistonBlockEntity.java:83-88), not its collision boxes
-        piston.outline_bounds()
-    } else if piston.extending {
-        head_plate(axis, sign)
-    } else {
-        Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0))
-    };
+    let shape = legacy_moved_box(piston);
     let (x, y, z) = piston.position;
     // the box offset by the float progress times the step, then by the position (1.9.4
     // PistonBlockEntity.java:83-91)
@@ -300,7 +464,7 @@ fn push_before_1_11(
     let mut movement = [0.0; 3];
     movement[axis] = amount * f64::from(way);
     let movement = Vec3::new(movement[0], movement[1], movement[2]);
-    move_entity(state, world, movement, config, release, false);
+    move_by(state, world, movement, mover, release, false);
 }
 
 /// TileEntityPiston.update on 1.8: only an extending block pushes while it moves, by the
@@ -312,7 +476,7 @@ fn push_before_1_9(
     state: &mut SimulationState,
     world: &WorldSnapshot,
     piston: &MovingPiston,
-    config: PhysicsConfig,
+    mover: Mover,
     release: MinecraftVersion,
 ) {
     let before = piston.progress;
@@ -371,7 +535,7 @@ fn push_before_1_9(
         f64::from(distance * fy as f32),
         f64::from(distance * fz as f32),
     );
-    move_entity(state, world, movement, config, release, false);
+    move_by(state, world, movement, mover, release, false);
 }
 
 /// PistonMovingBlockEntity.moveStuckEntities (1.15+): a honey block that moves horizontally
@@ -384,7 +548,7 @@ fn carry(
     world: &WorldSnapshot,
     piston: &MovingPiston,
     piston_deltas: &mut [f64; 3],
-    config: PhysicsConfig,
+    mover: Mover,
     release: MinecraftVersion,
 ) {
     if !release.at_least(1, 15, 0) || !piston.sticky_for_entities || piston.progress >= 1.0 {
@@ -412,7 +576,7 @@ fn carry(
         return;
     }
     let supported = release.at_least(1, 20, 0)
-        && kept_supporting_block(world, state, None) == Some(piston.position);
+        && kept_supporting_block(world, state, None, release) == Some(piston.position);
     let position = state.position;
     let over = position.x >= area.min.x
         && position.x <= area.max.x
@@ -426,7 +590,7 @@ fn carry(
         world,
         along(direction, distance),
         piston_deltas,
-        config,
+        mover,
         release,
     );
 }
@@ -440,28 +604,28 @@ fn bounce(state: &mut SimulationState, direction: (i32, i32, i32)) {
     }
 }
 
-/// Entity.move(PISTON): at most 0.51 along each axis in a game tick (limitPistonMovement), along
-/// the first axis the movement has.
-fn move_by_piston(
-    state: &mut SimulationState,
-    world: &WorldSnapshot,
+/// Entity.limitPistonMovement: at most 0.51 along each axis in a game tick, along the first axis the
+/// movement has. None: Entity.move stops here, on a movement that is Vec3.ZERO by Vec3.equals, whose
+/// Double.compare tells -0.0 from 0.0 (1.14 Entity.java:545-549, 26.3 :774-779).
+pub(crate) fn limit_piston_movement(
+    state: &SimulationState,
     movement: Vec3,
     piston_deltas: &mut [f64; 3],
-    config: PhysicsConfig,
     release: MinecraftVersion,
-) {
-    let movement = if release.at_least(1, 14, 0) && movement.length_squared() <= 1.0e-7 {
+) -> Option<Vec3> {
+    // (limitPistonMovement is on Entity.move's way past noPhysics, 26.3 Entity.java:766-775)
+    let unlimited = state.no_physics
+        || (release.at_least(1, 14, 0) && movement.length_squared() <= 1.0e-7);
+    let movement = if unlimited {
         movement
     } else {
         let components = [movement.x, movement.y, movement.z];
-        let Some(axis) = components.iter().position(|value| *value != 0.0) else {
-            return;
-        };
+        let axis = components.iter().position(|value| *value != 0.0)?;
         let limited = (components[axis] + piston_deltas[axis]).clamp(-0.51, 0.51);
         let amount = limited - piston_deltas[axis];
         piston_deltas[axis] = limited;
         if amount.abs() <= 9.999999747378752e-6 {
-            return;
+            return None;
         }
         let mut limited_movement = [0.0; 3];
         limited_movement[axis] = amount;
@@ -471,11 +635,24 @@ fn move_by_piston(
             limited_movement[2],
         )
     };
-    if movement == Vec3::ZERO {
+    let zero = [movement.x, movement.y, movement.z].iter().all(|value| value.to_bits() == 0);
+    (state.no_physics || !zero).then_some(movement)
+}
+
+/// Entity.move(PISTON) and what PistonMovingBlockEntity.moveEntityByPiston runs after it.
+fn move_by_piston(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    movement: Vec3,
+    piston_deltas: &mut [f64; 3],
+    mover: Mover,
+    release: MinecraftVersion,
+) {
+    let Some(movement) = limit_piston_movement(state, movement, piston_deltas, release) else {
         return;
-    }
+    };
     let start = state.position;
-    let support = move_entity(state, world, movement, config, release, true);
+    let support = move_by(state, world, movement, mover, release, true);
     if release.at_least(1, 21, 2) {
         // the effects of the blocks the move went through: from 1.21.5 moveEntityByPiston's
         // applyEffectsFromBlocks(previousPos, position()) of this move alone (1.21.5
@@ -525,6 +702,69 @@ fn apply_powder_snow(
     apply_inside_fire_effects(state, world, inside, effects, release);
 }
 
+fn move_by(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    movement: Vec3,
+    mover: Mover,
+    release: MinecraftVersion,
+    by_piston: bool,
+) -> Option<(i32, i32, i32)> {
+    match mover {
+        Mover::Player(config) => move_entity(state, world, movement, config, release, by_piston),
+        Mover::Body(rules) => move_body(state, world, movement, rules, release, by_piston),
+    }
+}
+
+/// Entity.move of what is no player, as move_entity has it: all of the move under noPhysics
+/// (26.3 Entity.java:766-775), a PISTON move unslowed by the stuck multiplier it still uses up from
+/// 1.21.10 (1.21.9 Entity.java:693-696, 1.21.10 :693-699), the flags and support kept on a
+/// level move of what the local instance does not own from 1.21.4 (1.21.4 Entity.java:682-686,
+/// 26.3 :818-823), and no restitution where it cannot simulate from 26.2 (26.2 Entity.java:793, 815;
+/// 26.3 :818, 837).
+fn move_body(
+    state: &mut SimulationState,
+    world: &WorldSnapshot,
+    movement: Vec3,
+    rules: MoveRules,
+    release: MinecraftVersion,
+    by_piston: bool,
+) -> Option<(i32, i32, i32)> {
+    if state.no_physics {
+        state.position = state.position + movement;
+        state.bounding_box = state.bounding_box.map(|bounds| bounds.translated(movement));
+        return kept_supporting_block(world, state, None, release);
+    }
+    if by_piston
+        && release.at_least(1, 21, 10)
+        && state.stuck_speed_multiplier.length_squared() > 1.0e-7
+    {
+        state.stuck_speed_multiplier = Vec3::ZERO;
+        state.velocity = Vec3::ZERO;
+    }
+    let kept = (
+        state.on_ground,
+        state.collided_vertically,
+        state.vertical_collision_below,
+    );
+    let motion = state.velocity;
+    let outcome = move_vehicle(state, world, release, movement, rules, |body, support| {
+        apply_effects_inside(body, world, support, release);
+    });
+    if release.at_least(1, 21, 4) && movement.y == 0.0 && !state.controlled_by_local_instance {
+        (
+            state.on_ground,
+            state.collided_vertically,
+            state.vertical_collision_below,
+        ) = kept;
+    }
+    if release.at_least(26, 2, 0) && !can_simulate_movement(state, release) {
+        state.velocity = motion;
+    }
+    count_fall(state, outcome.moved.y, release);
+    outcome.support
+}
+
 /// Entity.move of the player by a movement it did not make itself: slowed by the stuck speed
 /// multiplier (not a piston's from 1.21.10), collided as its own move (stepping up), the
 /// collision flags and the ground from it, the fall checked (checkFallDamage), the motion stopped
@@ -533,7 +773,7 @@ fn apply_powder_snow(
 /// from the blocks it ends in 1.14 - 1.16.1, and LocalPlayer.updateAutoJump after it. Before 1.11
 /// (moveEntity, `by_piston` false) a sneaking player backs off from edges too. The block the
 /// player stands on after it is returned.
-fn move_entity(
+pub(crate) fn move_entity(
     state: &mut SimulationState,
     world: &WorldSnapshot,
     movement: Vec3,
@@ -541,6 +781,20 @@ fn move_entity(
     release: MinecraftVersion,
     by_piston: bool,
 ) -> Option<(i32, i32, i32)> {
+    // Entity.move's noPhysics: all of the move, through what is in its way (1.8.9 Entity.java:462-464,
+    // 26.3 :766-767), and from 1.21.9 no collision left over from before (1.21.8 Entity.java:670-672,
+    // 1.21.9 :677-684), as the tick's own move
+    if state.no_physics {
+        state.position = state.position + movement;
+        state.bounding_box = state.bounding_box.map(|bounds| bounds.translated(movement));
+        if release.at_least(1, 21, 9) {
+            state.collided_horizontally = false;
+            state.minor_horizontal_collision = false;
+            state.collided_vertically = false;
+            state.vertical_collision_below = false;
+        }
+        return kept_supporting_block(world, state, None, release);
+    }
     // Entity.move(PISTON) steps with maxUpStep(), the STEP_HEIGHT attribute on a LivingEntity from
     // 1.20.5, which reads through RangedAttribute.sanitizeValue as the tick's does: NaN is 0, the
     // rest clamped to 0..10 (1.21.11 RangedAttribute.java:35-37, Attributes.java:86).
@@ -562,6 +816,7 @@ fn move_entity(
         ..VersionPhysicsRules::default()
     };
     let start = state.position;
+    let mut support = kept_supporting_block(world, state, None, release);
     let slowed = slowed_by_stuck_speed(state, movement);
     // from 1.21.10 Entity.move does not slow a PISTON move by the stuck speed multiplier, though
     // it still uses the multiplier up with the motion (1.21.9 Entity.java:693-696; 1.21.10
@@ -593,10 +848,17 @@ fn move_entity(
         && state.is_player
         && state.collided_horizontally
         && horizontal_collision_is_minor(state, displacement, release);
-    state.collided_vertically = y_collision;
-    state.vertical_collision_below = y_collision && movement.y < 0.0;
-    state.on_ground = state.vertical_collision_below;
-    let support = check_supporting_block(world, state, Some(displacement));
+    // Entity.move retains these flags and its support on a purely horizontal move of a
+    // non-authoritative entity (1.21.4 Entity.java:682-686; 26.3 :818-823).
+    if !release.at_least(1, 21, 4)
+        || movement.y.abs() > 0.0
+        || state.controlled_by_local_instance
+    {
+        state.collided_vertically = y_collision;
+        state.vertical_collision_below = y_collision && movement.y < 0.0;
+        state.on_ground = state.vertical_collision_below;
+        support = check_supporting_block(world, state, Some(displacement), release);
+    }
     // Entity.move's checkFallDamage and the landing block's updateEntityMovementAfterFallOn (a
     // slime block's or a bed's bounce), restituteMovementAfterCollisions from 26.2, as the tick's
     // own move (1.8.9 Entity.java:655-666, 1.16.5 :639-651, 1.21.10 :740-758, 26.3 :827-840); the
@@ -619,18 +881,24 @@ fn move_entity(
         y_collision,
         fall,
     );
+    // the callback of Entity.move(PISTON), after the tick's own (1.20.4 Entity.java:668, 26.3 :818, 837);
+    // the tick cleared the flag, so a landing by either move leaves it set
+    state.block_fall_callback |= block_fall_callback_runs(state, y_collision, movement.y, release);
     let collisions = [x_collision, y_collision, z_collision];
     if fall.restitution_enabled {
         // only for a move that went vertically into its vertical collision or hit something
         // sideways: a step up from a sideways push keeps the motion (26.2 Entity.java:793, 815;
         // 26.3 :818, 837)
-        if (movement.y.abs() > 0.0 && y_collision) || x_collision || z_collision {
+        if can_simulate_movement(state, release)
+            && ((movement.y.abs() > 0.0 && state.collided_vertically) || x_collision || z_collision)
+        {
+            let restitution_collisions = [x_collision, state.collided_vertically, z_collision];
             restitute_movement_after_collisions(
                 state,
                 world,
                 support,
                 rules,
-                collisions,
+                restitution_collisions,
                 displacement.y,
             );
         }
@@ -675,8 +943,8 @@ fn move_entity(
     });
     let jump_factor = block_jump_factor(
         world,
-        block_position(state.position),
-        block_below_affecting_movement(state, support, release),
+        block_position(state.position, release),
+        block_below_affecting_movement(world, state, support, release),
     );
     update_auto_jump(
         state,
@@ -716,10 +984,10 @@ fn stop_blocked_motion(
     if stops_z {
         state.velocity.z = 0.0;
     }
-    if y_collision && !landing.bounced {
+    if y_collision && simulates_landing(state, release) && !landing.bounced {
         if landing.landed_on_bed && !state.sneaking {
             if current.y < 0.0 {
-                state.velocity.y = -current.y * 0.6600000262260437;
+                state.velocity.y = -current.y * 0.6600000262260437 * landing_bounce(state, release);
             }
         } else {
             state.velocity.y = if release.at_least(1, 14, 0) {
@@ -779,6 +1047,27 @@ fn movement_out_of(area: Aabb, direction: (i32, i32, i32), entity: Aabb) -> f64 
     }
 }
 
+/// The box TileEntityPiston moves on 1.9 - 1.10: pushedBlock.getCollisionBox(BlockView, pos), the
+/// outline box of a block it pushes, not its collision boxes, the head's plate alone, and the
+/// full cube of a retracting base (1.9.4 PistonBlockEntity.java:83-88, PistonHeadBlock.java:26-31).
+fn legacy_moved_box(piston: &MovingPiston) -> Aabb {
+    let (fx, fy, fz) = piston.facing_step();
+    if !piston.source {
+        return piston.outline_bounds();
+    }
+    if !piston.extending {
+        return Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0));
+    }
+    let axis = if fx != 0 {
+        0
+    } else if fy != 0 {
+        1
+    } else {
+        2
+    };
+    head_plate(axis, fx + fy + fz)
+}
+
 /// PistonHeadBlock's box before 1.11: the plate on the side its facing points to.
 fn head_plate(axis: usize, sign: i32) -> Aabb {
     let mut min = [0.0, 0.0, 0.0];
@@ -812,13 +1101,217 @@ fn component(vector: Vec3, axis: usize) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{push_by_moving_pistons, MovingPiston};
+    use super::{
+        moving_block_collision_boxes, push_body_by_moving_pistons, push_by_moving_pistons,
+        set_moving_block, MovingPiston,
+    };
+    use crate::vehicle::MoveRules;
     use crate::math::{Aabb, Vec3};
     use crate::simulation::{PhysicsConfig, SimulationState};
     use crate::version::MinecraftVersion;
     use crate::world::{BlockEffect, BlockShape, BlockState, FluidState, WorldSnapshot};
 
+    const WEST: u8 = 4;
     const EAST: u8 = 5;
+    const UP: u8 = 1;
+
+    fn cube() -> Aabb {
+        Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0))
+    }
+
+    /// An item's body just east of the cell (0, 100, 0), the side a pushed block comes from.
+    fn item_at(x: f64, y: f64) -> SimulationState {
+        SimulationState {
+            position: Vec3::new(x, y, 0.5),
+            half_width: 0.125,
+            height: 0.25,
+            controlled_by_local_instance: true,
+            ..SimulationState::default()
+        }
+    }
+
+    fn pushed_body(
+        mut body: SimulationState,
+        world: &WorldSnapshot,
+        piston: MovingPiston,
+        release: MinecraftVersion,
+    ) -> (SimulationState, [f64; 3]) {
+        let mut deltas = [0.0; 3];
+        push_body_by_moving_pistons(&mut body, world, &[piston], &mut deltas, MoveRules::MINECART, release);
+        (body, deltas)
+    }
+
+    #[test]
+    fn a_piston_moves_what_is_no_player_out_of_its_way_by_its_own_move() {
+        // 26.3 PistonMovingBlockEntity.java:110-150: every entity of the level's getEntities, by the
+        // same box and the same 0.01 over it
+        let release = MinecraftVersion::new(26, 3, 0);
+        let world = WorldSnapshot::default();
+        let (body, deltas) = pushed_body(item_at(0.3, 100.0), &world, moving(EAST, true, 0.0, cube()), release);
+        // the face comes to x=0.5, which is 0.325 past the body's side at 0.175
+        assert!((body.position.x - (0.3 + 0.325 + 0.01)).abs() < 1.0e-9);
+        assert!(deltas[0] > 0.0);
+        assert_eq!(body.velocity, Vec3::ZERO);
+    }
+
+    #[test]
+    fn slime_throws_a_body_and_honey_carries_one_as_a_player() {
+        let release = MinecraftVersion::new(26, 3, 0);
+        let world = WorldSnapshot::default();
+        let mut slime = moving(EAST, true, 0.0, cube());
+        slime.bounces = true;
+        let (thrown, _) = pushed_body(item_at(0.3, 100.0), &world, slime, release);
+        assert_eq!(thrown.velocity.x, 1.0);
+        // a body on top of a honey block moves with it by the progress alone (moveStuckEntities)
+        let mut honey = moving(EAST, true, 0.0, cube());
+        honey.sticky_for_entities = true;
+        let mut on_top = item_at(-0.5, 101.0);
+        on_top.on_ground = true;
+        let (carried, deltas) = pushed_body(on_top, &world, honey, release);
+        assert_eq!(carried.position.x, 0.0);
+        assert_eq!(deltas[0], 0.5);
+    }
+
+    #[test]
+    fn a_no_physics_body_is_pushed_whole_and_a_stuck_body_unslowed_from_1_21_10() {
+        // 26.3 Entity.java:766-775 goes round limitPistonMovement; 1.21.10 :693-699 uses the
+        // multiplier up on a PISTON move without slowing it, 1.21.9 :693-696 slows it
+        let world = WorldSnapshot::default();
+        let mut ghost = item_at(0.3, 100.0);
+        ghost.no_physics = true;
+        let (ghost, deltas) = pushed_body(ghost, &world, moving(EAST, true, 0.0, cube()), MinecraftVersion::new(26, 3, 0));
+        assert_eq!(deltas, [0.0; 3]);
+        assert!(ghost.position.x > 0.3);
+        let stuck = |release| {
+            let mut body = item_at(0.3, 100.0);
+            body.stuck_speed_multiplier = Vec3::new(0.25, 0.05, 0.25);
+            body.velocity = Vec3::new(0.1, 0.0, 0.0);
+            pushed_body(body, &world, moving(EAST, true, 0.0, cube()), release).0
+        };
+        let (old, new) = (stuck(MinecraftVersion::new(1, 21, 9)), stuck(MinecraftVersion::new(1, 21, 10)));
+        assert_eq!((old.stuck_speed_multiplier, new.stuck_speed_multiplier), (Vec3::ZERO, Vec3::ZERO));
+        assert!(new.position.x > old.position.x);
+    }
+
+    #[test]
+    fn a_level_push_leaves_the_ground_of_what_the_instance_does_not_own_from_1_21_4() {
+        // 1.21.4 Entity.java:682-686, 26.3 :818-823; 1.21.3 takes it from the move
+        let world = WorldSnapshot::default();
+        let moved = |release, owned| {
+            let mut body = item_at(0.3, 100.0);
+            body.on_ground = true;
+            body.controlled_by_local_instance = owned;
+            pushed_body(body, &world, moving(EAST, true, 0.0, cube()), release).0.on_ground
+        };
+        assert!(moved(MinecraftVersion::new(1, 21, 4), false));
+        assert!(!moved(MinecraftVersion::new(1, 21, 4), true));
+        assert!(!moved(MinecraftVersion::parse("1.21.3").unwrap(), false));
+    }
+
+    fn moving(facing: u8, extending: bool, progress: f32, shape: Aabb) -> MovingPiston {
+        MovingPiston {
+            position: (0, 100, 0),
+            facing,
+            extending,
+            source: false,
+            progress,
+            shapes: vec![shape],
+            next_shapes: None,
+            outline_shapes: vec![shape],
+            bounces: false,
+            sticky_for_entities: false,
+        }
+    }
+
+    fn release(major: u16, minor: u16, patch: u16) -> MinecraftVersion {
+        MinecraftVersion::new(major, minor, patch)
+    }
+
+    #[test]
+    fn a_moving_block_is_moved_by_its_progress_from_1_11() {
+        // extending: a block behind its cell by what is left of the way (26.3 :346-350)
+        for at in [release(1, 11, 2), release(1, 20, 4), release(26, 3, 0)] {
+            let boxes = moving_block_collision_boxes(&moving(UP, true, 0.5, cube()), &[], at);
+            assert_eq!(boxes, [Aabb::new(Vec3::new(0.0, -0.5, 0.0), Vec3::new(1.0, 0.5, 1.0))]);
+            // retracting: ahead of its cell, with the base beneath it
+            let plate = Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.75, 1.0));
+            let boxes = moving_block_collision_boxes(&moving(UP, false, 0.0, cube()), &[plate], at);
+            assert_eq!(boxes, [plate, Aabb::new(Vec3::new(0.0, 1.0, 0.0), Vec3::new(1.0, 2.0, 1.0))]);
+        }
+    }
+
+    #[test]
+    fn a_moving_block_joins_its_last_two_places_on_1_9_and_1_10() {
+        for at in [release(1, 9, 4), release(1, 10, 2)] {
+            let boxes = moving_block_collision_boxes(&moving(UP, true, 0.5, cube()), &[], at);
+            assert_eq!(boxes, [Aabb::new(Vec3::new(0.0, -1.0, 0.0), Vec3::new(1.0, 0.5, 1.0))]);
+        }
+    }
+
+    #[test]
+    fn a_moving_head_is_its_plate_alone_on_1_9_and_1_10() {
+        // the outline box of pushedBlock: 1.9.4 PistonHeadBlock.java:26-31, not the full cube a head's
+        // collision boxes do not make, and a retracting base stays one
+        for at in [release(1, 9, 4), release(1, 10, 2)] {
+            let mut head = moving(UP, true, 1.0, cube());
+            head.source = true;
+            let boxes = moving_block_collision_boxes(&head, &[], at);
+            assert_eq!(boxes, [Aabb::new(Vec3::new(0.0, 0.25, 0.0), Vec3::new(1.0, 1.0, 1.0))]);
+            let mut base = moving(UP, false, 1.0, cube());
+            base.source = true;
+            let boxes = moving_block_collision_boxes(&base, &[], at);
+            assert_eq!(boxes, [Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.5, 1.0))]);
+        }
+    }
+
+    #[test]
+    fn a_moving_block_is_drawn_back_by_the_progress_before_on_1_8() {
+        let at = release(1, 8, 8);
+        // flat from the last tick's 0.0F: its progress is 0.5F, lastProgress is not
+        let boxes = moving_block_collision_boxes(&moving(UP, true, 0.5, cube()), &[], at);
+        assert_eq!(boxes, [Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.0, 1.0))]);
+        let boxes = moving_block_collision_boxes(&moving(UP, true, 1.0, cube()), &[], at);
+        assert_eq!(boxes, [Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.5, 1.0))]);
+        // a slab's top goes below its bottom, and Box orders them: a wall over the cell's top half
+        let slab = Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.5, 1.0));
+        let boxes = moving_block_collision_boxes(&moving(UP, true, 0.0, slab), &[], at);
+        assert_eq!(boxes, [Aabb::new(Vec3::new(0.0, -0.5, 0.0), Vec3::new(1.0, 0.0, 1.0))]);
+    }
+
+    #[test]
+    fn a_moving_block_stops_a_move_and_ends_with_its_block_entity() {
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 100, 0), BlockState::default());
+        let moved = [Aabb::new(Vec3::new(0.0, -0.5, 0.0), Vec3::new(1.0, 0.5, 1.0))];
+        world.set_moving_block((0, 100, 0), &moved, true);
+        assert_eq!(world.block_collision_boxes((0, 100, 0)).len(), 1);
+        assert!(!world.is_suffocating((0, 100, 0)));
+        // a cell the world does not hold takes nothing
+        world.set_moving_block((5, 100, 0), &moved, true);
+        assert!(!world.contains_block((5, 100, 0)));
+        // written over, the block keeps its own shape
+        world.set_block_shapes((0, 100, 0), BlockState::default(), vec![BlockShape::full_block()]);
+        world.clear_moving_block((0, 100, 0));
+        assert!(world.has_collision_shape((0, 100, 0)));
+        world.set_moving_block((0, 100, 0), &moved, true);
+        world.clear_moving_block((0, 100, 0));
+        assert!(!world.has_collision_shape((0, 100, 0)));
+    }
+
+    #[test]
+    fn a_moved_shape_reaches_a_box_from_the_cursors_corner_cells_from_1_15() {
+        let context = crate::world::EntityCollisionContext::default();
+        let query = Aabb::new(Vec3::new(1.2, 99.5, 0.2), Vec3::new(1.8, 99.9, 0.8));
+        let found = |edge_cells: bool| {
+            let mut world = WorldSnapshot::new();
+            world.set_block((0, 100, 0), BlockState::default());
+            let shape = [Aabb::new(Vec3::new(0.5, -1.0, 0.0), Vec3::new(1.5, 0.0, 1.0))];
+            world.set_moving_block((0, 100, 0), &shape, edge_cells);
+            world.collision_block_shapes_for_entity(query, &context, MinecraftVersion::new(26, 3, 0)).len()
+        };
+        assert_eq!(found(true), 1);
+        assert_eq!(found(false), 0);
+    }
 
     fn standing_player(x: f64) -> SimulationState {
         SimulationState {
@@ -829,6 +1322,7 @@ mod tests {
             on_ground: true,
             is_player: true,
             controlled_by_local_instance: true,
+            client_side: true,
             ..SimulationState::default()
         }
     }
@@ -847,6 +1341,7 @@ mod tests {
                     Vec3::new(0.75, 0.625, 0.625),
                 ),
             ],
+            next_shapes: None,
             outline_shapes: Vec::new(),
             bounces: false,
             sticky_for_entities: false,
@@ -1039,18 +1534,270 @@ mod tests {
         assert_eq!(pushed(f64::NAN), pushed(0.0));
     }
 
+    /// Each side of the releases where a moving block's push and its NOCLIP change.
+    const NOCLIP_RELEASES: [MinecraftVersion; 6] = [
+        MinecraftVersion::new(1, 8, 9),
+        MinecraftVersion::new(1, 9, 4),
+        MinecraftVersion::new(1, 10, 2),
+        MinecraftVersion::new(1, 11, 0),
+        MinecraftVersion::new(1, 21, 1),
+        MinecraftVersion::new(26, 3, 0),
+    ];
+
     #[test]
     fn a_spectator_is_not_pushed() {
-        let mut state = SimulationState {
-            no_physics: true,
-            ..standing_player(0.5)
-        };
-        push(
-            &mut state,
-            extending_head(0.0),
-            MinecraftVersion::new(1, 21, 1),
+        for release in NOCLIP_RELEASES {
+            let mut state = SimulationState {
+                no_physics: true,
+                ..standing_player(0.5)
+            };
+            push(&mut state, extending_head(0.0), release);
+            assert_eq!(state.position.x, 0.5, "{release}");
+        }
+    }
+
+    #[test]
+    fn an_entity_with_no_physics_is_pushed_through_what_is_in_its_way() {
+        for release in NOCLIP_RELEASES {
+            let mut world = WorldSnapshot::new();
+            world.set_block(
+                (1, 101, 0),
+                BlockState {
+                    id: 1,
+                    shape: Some(BlockShape::full_block()),
+                    ..BlockState::default()
+                },
+            );
+            let pushed = |no_physics: bool| {
+                let mut state = SimulationState {
+                    no_physics,
+                    is_player: false,
+                    ..standing_player(0.5)
+                };
+                push_by_moving_pistons(
+                    &mut state,
+                    &world,
+                    &[extending_head(0.0)],
+                    &mut [0.0; 3],
+                    PhysicsConfig::default(),
+                    release,
+                );
+                state.position.x
+            };
+            let (through, stopped) = (pushed(true), pushed(false));
+            assert!(through > stopped, "{release}: {through} {stopped}");
+        }
+    }
+
+    /// The player pushed east from 0.5 by a head, with a cell at x = 1 moving as `beside` says.
+    fn pushed_beside(beside: &MovingPiston, base: &[Aabb], release: MinecraftVersion) -> f64 {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            beside.position,
+            BlockState {
+                id: 1,
+                ..BlockState::default()
+            },
         );
-        assert_eq!(state.position.x, 0.5);
+        set_moving_block(&mut world, beside, base, release);
+        let mut state = standing_player(0.5);
+        push_by_moving_pistons(
+            &mut state,
+            &world,
+            &[extending_head(0.0)],
+            &mut [0.0; 3],
+            PhysicsConfig::default(),
+            release,
+        );
+        state.position.x
+    }
+
+    /// A cube moving at x = 1, its box in the cell at this progress.
+    fn moving_cube(extending: bool, progress: f32) -> MovingPiston {
+        let back = f64::from(if extending { 1.0 - progress } else { 0.0 });
+        MovingPiston {
+            progress,
+            ..moved_block(
+                (1, 101, 0),
+                extending,
+                Aabb::new(Vec3::new(back, 0.0, 0.0), Vec3::new(1.0 + back, 1.0, 1.0)),
+            )
+        }
+    }
+
+    #[test]
+    fn a_push_goes_through_a_block_moving_its_way_from_1_11() {
+        for release in NOCLIP_RELEASES {
+            let along = moving_cube(true, 0.5);
+            let mut world = WorldSnapshot::new();
+            world.set_block(along.position, BlockState::default());
+            set_moving_block(&mut world, &along, &[], release);
+            let noclip = release.at_least(1, 11, 0);
+            assert_eq!(world.through_moving_blocks((1, 0, 0)).is_some(), noclip, "{release}");
+            if noclip {
+                let pushed = pushed_beside(&along, &[], release);
+                assert_eq!(pushed, 0.810000011920929, "{release}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_push_stops_at_a_block_going_the_other_way_or_ended() {
+        let blocked = 1.0 - f64::from(0.3_f32);
+        for release in [MinecraftVersion::new(1, 11, 0), MinecraftVersion::new(26, 3, 0)] {
+            // (halfway west: its box, half a block back in its shape, is at rest in the cell)
+            let west = MovingPiston {
+                facing: WEST,
+                progress: 0.5,
+                ..moved_block(
+                    (1, 101, 0),
+                    true,
+                    Aabb::new(Vec3::new(-0.5, 0.0, 0.0), Vec3::new(0.5, 1.0, 1.0)),
+                )
+            };
+            assert_eq!(pushed_beside(&west, &[], release), blocked, "{release}");
+            let ended = pushed_beside(&moving_cube(true, 1.0), &[], release);
+            assert_eq!(ended, blocked, "{release}");
+        }
+    }
+
+    #[test]
+    fn a_push_stops_at_the_base_a_retracting_piston_leaves() {
+        // (26.3 PistonMovingBlockEntity.java:329-338: under NOCLIP the shape is the base alone)
+        let retracting = MovingPiston {
+            facing: WEST,
+            source: true,
+            ..moving_cube(false, 0.0)
+        };
+        let base = [Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0))];
+        let release = MinecraftVersion::new(26, 3, 0);
+        assert_eq!(retracting.movement_direction(), (1, 0, 0));
+        let stopped = pushed_beside(&retracting, &base, release);
+        assert_eq!(stopped, 1.0 - f64::from(0.3_f32));
+        assert_eq!(pushed_beside(&retracting, &[], release), 0.810000011920929);
+    }
+
+    /// A head in its cell: the plate at the end `facing` and the arm behind it, short or not.
+    fn head(facing: u8, short: bool) -> Vec<Aabb> {
+        let arm = if short { 0.75 } else { 1.0 };
+        let (plate, arm) = if facing == EAST {
+            ((0.75, 1.0), (0.75 - arm, 0.75))
+        } else {
+            ((0.0, 0.25), (0.25, 0.25 + arm))
+        };
+        vec![
+            Aabb::new(Vec3::new(plate.0, 0.0, 0.0), Vec3::new(plate.1, 1.0, 1.0)),
+            Aabb::new(Vec3::new(arm.0, 0.375, 0.375), Vec3::new(arm.1, 0.625, 0.625)),
+        ]
+    }
+
+    #[test]
+    fn a_piston_that_has_ticked_stands_at_its_new_progress_for_the_next() {
+        // physrec/pm_opposed_same_tick on 26.3. The east head pushes the player into the west one,
+        // still at 0.5, and ends at 1; the west head's push then goes through the plate the box
+        // is in, as far as the east head's arm, whose end is at 0.75
+        let release = MinecraftVersion::new(26, 3, 0);
+        let piston = |position, facing| MovingPiston {
+            position,
+            facing,
+            source: true,
+            shapes: head(facing, true),
+            next_shapes: Some(head(facing, false)),
+            ..moving(facing, true, 0.5, cube())
+        };
+        let pistons = [piston((0, 101, 0), EAST), piston((1, 101, 0), WEST)];
+        let mut world = WorldSnapshot::new();
+        for piston in &pistons {
+            world.set_block(
+                piston.position,
+                BlockState {
+                    id: 1,
+                    ..BlockState::default()
+                },
+            );
+            set_moving_block(&mut world, piston, &[], release);
+        }
+        let mut state = standing_player(0.9);
+        push_by_moving_pistons(
+            &mut state,
+            &world,
+            &pistons,
+            &mut [0.0; 3],
+            PhysicsConfig::default(),
+            release,
+        );
+        assert!((state.position.x - 1.05).abs() < 1.0e-6, "{}", state.position.x);
+    }
+
+    #[test]
+    fn on_1_8_a_block_at_the_start_of_its_way_stops_the_player_with_no_depth() {
+        // physrec/pm_sticky_stand_on_block on 1.8.8: the moved block ticks first, drawn in to
+        // nothing at x = 1, and the head's 0.5625 ends the box there
+        let release = MinecraftVersion::new(1, 8, 8);
+        let block = MovingPiston {
+            position: (1, 101, 0),
+            ..moving(EAST, true, 0.0, cube())
+        };
+        let head = MovingPiston {
+            position: (0, 101, 0),
+            ..moving(EAST, true, 0.0, cube())
+        };
+        let mut world = WorldSnapshot::new();
+        for piston in [&block, &head] {
+            world.set_block(
+                piston.position,
+                BlockState {
+                    id: 1,
+                    ..BlockState::default()
+                },
+            );
+            set_moving_block(&mut world, piston, &[], release);
+        }
+        let mut state = standing_player(0.5);
+        push_by_moving_pistons(
+            &mut state,
+            &world,
+            &[block, head],
+            &mut [0.0; 3],
+            PhysicsConfig::default(),
+            release,
+        );
+        assert!((state.position.x - 0.7).abs() < 1.0e-6, "{}", state.position.x);
+    }
+
+    #[test]
+    fn to_1_10_a_block_that_ended_is_the_block_it_moved_for_the_next() {
+        // physrec/pm_opposed_same_tick on 1.8.8: the east head pushes 0.25 on its last tick and is
+        // a head again; the west head's 0.25 goes through the plate the box is in, to the arm
+        let release = MinecraftVersion::new(1, 8, 8);
+        let piston = |position, facing| MovingPiston {
+            position,
+            facing,
+            shapes: head(facing, false),
+            ..moving(facing, true, 1.0, cube())
+        };
+        let pistons = [piston((0, 101, 0), EAST), piston((1, 101, 0), WEST)];
+        let mut world = WorldSnapshot::new();
+        for piston in &pistons {
+            world.set_block(
+                piston.position,
+                BlockState {
+                    id: 1,
+                    ..BlockState::default()
+                },
+            );
+            set_moving_block(&mut world, piston, &[], release);
+        }
+        let mut state = standing_player(0.9);
+        push_by_moving_pistons(
+            &mut state,
+            &world,
+            &pistons,
+            &mut [0.0; 3],
+            PhysicsConfig::default(),
+            release,
+        );
+        assert!((state.position.x - 1.05).abs() < 1.0e-6, "{}", state.position.x);
     }
 
     fn moved_block(position: (i32, i32, i32), extending: bool, shape: Aabb) -> MovingPiston {
@@ -1061,6 +1808,7 @@ mod tests {
             source: false,
             progress: 0.0,
             shapes: vec![shape],
+            next_shapes: None,
             outline_shapes: vec![shape],
             bounces: false,
             sticky_for_entities: false,
@@ -1382,6 +2130,72 @@ mod tests {
     }
 
     #[test]
+    fn a_piston_landing_gives_an_entity_that_is_not_living_less_of_the_bounce() {
+        // The living side is above. Slime: SlimeBlock.bounceUp's 0.8 from 1.9, none in 1.8.9 (1.8.9
+        // SlimeBlock.java:33-39, 1.9.4 :34-44, 1.21.11 :44). From 26.2 Entity.getBlockBounciness
+        // takes 0.8F of the float restitution (26.2 Entity.java:874-881, 26.3 :905-911), the
+        // product rounded as a float: 0.75F gives 0.6F.
+        let moved = |world: &WorldSnapshot, version, entity: SimulationState| {
+            let release = MinecraftVersion::parse(version).unwrap();
+            let mut state = SimulationState {
+                velocity: Vec3::new(0.0, -0.5, 0.0),
+                ..entity
+            };
+            push_in(&mut state, world, pressing_block(), release);
+            assert!(state.on_ground, "{version}");
+            state.velocity.y
+        };
+        let living = standing_player(0.5);
+        let not_living = SimulationState {
+            non_living: true,
+            is_player: false,
+            ..living
+        };
+        let slime = floor_of(BlockEffect::Slime, 1.0);
+        for (version, kept) in [
+            ("1.8.9", 0.5),
+            ("1.9.4", 0.4),
+            ("1.12.2", 0.4),
+            ("1.20.4", 0.4),
+            ("26.1", 0.4),
+            ("26.2", 0.5 * 0.800000011920929),
+            ("26.3", 0.5 * 0.800000011920929),
+        ] {
+            assert_eq!(moved(&slime, version, not_living), kept, "{version}");
+            assert_eq!(moved(&slime, version, living), 0.5, "{version}");
+        }
+        let lesser = floor_of(BlockEffect::Slime, 0.75);
+        assert_eq!(moved(&lesser, "26.3", not_living), 0.5 * 0.6000000238418579);
+        assert_eq!(moved(&lesser, "26.3", living), 0.5 * 0.75);
+
+        // the 26.3 restitution stays the movement's own to simulate (26.3 Entity.java:839), and
+        // the entity's own bounciness is not scaled (:878)
+        let remote = SimulationState {
+            controlled_by_local_instance: false,
+            ..not_living
+        };
+        assert_eq!(moved(&slime, "26.3", remote), -0.5);
+        let springy = SimulationState {
+            entity_bounciness: 0.9,
+            ..not_living
+        };
+        assert_eq!(moved(&slime, "26.3", springy), 0.5 * 0.9);
+
+        // A bed bounces from 1.12, by 0.66F and 0.8 for what is not living (1.12.2
+        // BedBlock.java:155-159, 1.21.11 :149-150); a stone lands either
+        let bed = floor_of(BlockEffect::Bed, 0.0);
+        assert_eq!(moved(&bed, "1.11.2", not_living), 0.0);
+        assert_eq!(moved(&bed, "1.11.2", living), 0.0);
+        let bounced = 0.5 * f64::from(0.66_f32);
+        assert_eq!(moved(&bed, "1.12.2", not_living), bounced * 0.8);
+        assert_eq!(moved(&bed, "1.12.2", living), bounced);
+        assert_eq!(moved(&bed, "1.20.4", not_living), bounced * 0.8);
+        assert_eq!(moved(&bed, "1.20.4", living), bounced);
+        let stone = floor_of(BlockEffect::None, 0.0);
+        assert_eq!(moved(&stone, "1.20.4", not_living), -0.0);
+    }
+
+    #[test]
     fn a_piston_push_counts_into_the_fall_and_its_landing_deals_the_damage() {
         // checkFallDamage after Entity.move(PISTON): the drop adds to the fall distance (1.21.5+
         // `fallDistance -= (double)(float)dy`, 1.21.5 Entity.java:1286), a landing deals
@@ -1410,6 +2224,75 @@ mod tests {
         assert_eq!(landing.fall_damage, 2.0);
         assert_eq!(landing.fall_distance, 0.0);
         assert_eq!(landing.velocity.y, -0.0784000015258789 * 0.0);
+        assert!(!airborne.block_fall_callback);
+        assert!(landing.block_fall_callback);
+        // only for a player this client moves from 1.21.2 (1.21.3 Entity.java:698-703)
+        let mut other = SimulationState {
+            controlled_by_local_instance: false,
+            ..standing_player(0.5)
+        };
+        push_in(&mut other, &world, pressing_block(), release);
+        assert!(!other.block_fall_callback);
+    }
+
+    #[test]
+    fn a_piston_after_the_landing_leaves_the_landing_damage_of_the_tick() {
+        // One tick, two moves: the player's own lands and Block.fallOn deals the damage; the piston
+        // after it finds the fall ended, a fall distance of 0 that calls no fallOn (1.20.4
+        // Entity.java:1118, 26.3 :1602), and has nothing to say about the damage
+        let world = floor_of(BlockEffect::None, 0.0);
+        for (version, release) in [
+            ("1.20.4", MinecraftVersion::new(1, 20, 4)),
+            ("26.3", MinecraftVersion::new(26, 3, 0)),
+        ] {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 101.05, 0.5),
+                velocity: Vec3::new(0.0, -0.1, 0.0),
+                on_ground: false,
+                fall_distance: 5.0,
+                safe_fall_distance: 3.0,
+                ..standing_player(0.5)
+            };
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            assert_eq!(state.fall_damage, 2.0, "{version}");
+            assert_eq!(state.fall_distance, 0.0, "{version}");
+            push_in(&mut state, &world, pressing_block(), release);
+            assert!(state.on_ground, "{version}");
+            assert_eq!(state.fall_damage, 2.0, "{version}");
+        }
+    }
+
+    #[test]
+    fn the_moves_of_a_tick_count_into_one_fall_in_the_order_they_ran() {
+        // The tick's own move, then Entity.move(PISTON): each drop goes through checkFallDamage on
+        // what the last left (1.20.4 Entity.java:1130 float, 1.21.5 :1286 double)
+        let world = WorldSnapshot::new();
+        let top = 101.0 + f64::from(1.8_f32);
+        for (version, release, count) in [
+            (
+                "1.20.4",
+                MinecraftVersion::new(1, 20, 4),
+                (|fd, dy| f64::from(fd as f32 - dy as f32)) as fn(f64, f64) -> f64,
+            ),
+            ("26.3", MinecraftVersion::new(26, 3, 0), |fd, dy| fd - f64::from(dy as f32)),
+        ] {
+            let mut state = SimulationState {
+                velocity: Vec3::new(0.0, -0.1, 0.0),
+                on_ground: false,
+                fall_distance: 1.0,
+                ..standing_player(0.5)
+            };
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            let own = count(1.0, -0.1);
+            assert_eq!(state.fall_distance, own, "{version}");
+            let before = state.position.y;
+            let pushed = top - 0.1 - 102.5 + 0.01;
+            push_in(&mut state, &world, pressing_block(), release);
+            assert_eq!(state.position.y, before - pushed, "{version}");
+            assert_eq!(state.fall_distance, count(own, -pushed), "{version}");
+        }
     }
 
     #[test]
@@ -1703,6 +2586,489 @@ mod tests {
                 state.velocity.y.to_bits(),
                 velocity_y.to_bits(),
                 "{release}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_slime_block_bounces_only_what_simulates_its_movement_from_26_3() {
+        // 26.3 PistonMovingBlockEntity.java:122, Entity.java:3721-3727; 26.2 :132-137 has no such test
+        let bounced = |client_side, controlled_by_local_instance, release| {
+            let mut state = SimulationState {
+                client_side,
+                controlled_by_local_instance,
+                ..standing_player(1.2)
+            };
+            push(&mut state, slime_block((1, 101, 0), true), release);
+            state.velocity.x == 1.0
+        };
+        let new = MinecraftVersion::new(26, 3, 0);
+        assert!(bounced(true, true, new));
+        assert!(!bounced(true, false, new));
+        assert!(bounced(false, false, new));
+        assert!(bounced(true, false, MinecraftVersion::new(26, 2, 0)));
+    }
+
+    fn player_in_slime_sweep(
+        facing: u8,
+        extending: bool,
+        client_side: bool,
+    ) -> (SimulationState, MovingPiston) {
+        let piston = MovingPiston {
+            facing,
+            ..slime_block((0, 100, 0), extending)
+        };
+        let center = piston.origin()
+            + Vec3::new(0.5, 0.5, 0.5)
+            + super::along(piston.movement_direction(), 0.7);
+        let radius = Vec3::new(0.3, 0.3, 0.3);
+        let state = SimulationState {
+            position: Vec3::new(center.x, center.y - 0.3, center.z),
+            bounding_box: Some(Aabb::new(center - radius, center + radius)),
+            half_width: 0.3,
+            height: 0.6,
+            velocity: Vec3::ZERO,
+            on_ground: false,
+            client_side,
+            controlled_by_local_instance: client_side,
+            ..standing_player(center.x)
+        };
+        (state, piston)
+    }
+
+    #[test]
+    fn server_players_are_excluded_from_slime_moves_from_1_16_2_until_26_3() {
+        // Exact 1.16.1 bytecode sets velocity then sends a motion packet to ServerPlayer;
+        // 1.16.2/.3/.4 jump to the next entity before either bounce or displacement. The
+        // same exclusion remains at 26.2 PistonMovingBlockEntity.java:136, removed in 26.3.
+        let world = WorldSnapshot::new();
+        for version in [
+            "1.16.1", "1.16.2", "1.16.3", "1.16.4", "1.16.5", "1.21.11", "26.1", "26.2", "26.3",
+        ] {
+            let release = MinecraftVersion::parse(version).unwrap();
+            for facing in 0..6 {
+                for extending in [false, true] {
+                    for client_side in [false, true] {
+                        let (mut state, piston) =
+                            player_in_slime_sweep(facing, extending, client_side);
+                        let before = state;
+                        let direction = piston.movement_direction();
+                        let mut deltas = [0.0; 3];
+                        push_by_moving_pistons(
+                            &mut state,
+                            &world,
+                            &[piston],
+                            &mut deltas,
+                            PhysicsConfig::default(),
+                            release,
+                        );
+                        let excluded = !client_side
+                            && release.at_least(1, 16, 2)
+                            && !release.at_least(26, 3, 0);
+                        if excluded {
+                            assert_eq!(
+                                state, before,
+                                "{version}, facing={facing}, extending={extending}"
+                            );
+                            assert_eq!(deltas, [0.0; 3]);
+                        } else {
+                            let expected = before.position + super::along(direction, 0.51);
+                            assert!(
+                                (state.position - expected).length_squared() < 1.0e-24,
+                                "{version}, facing={facing}, extending={extending}: {:?}",
+                                state.position
+                            );
+                            assert_eq!(
+                                state.velocity,
+                                super::along(direction, 1.0),
+                                "{version}: bounce"
+                            );
+                            assert_eq!(
+                                deltas,
+                                [
+                                    f64::from(direction.0) * 0.51,
+                                    f64::from(direction.1) * 0.51,
+                                    f64::from(direction.2) * 0.51
+                                ]
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn modern_slime_authority_override_and_default_modes_only_control_the_bounce() {
+        // Player uses AUTHORITATIVE_SIDE_AND_SERVER; Entity defaults AUTHORITATIVE_SIDE.
+        // An exact result also represents SERVER_AND_CLIENT and custom modes without guessing.
+        let release = MinecraftVersion::new(26, 3, 0);
+        for (is_player, client_side, local, exact, bounced) in [
+            (true, false, false, None, true),
+            (true, true, true, None, true),
+            (true, true, false, None, false),
+            (false, false, true, None, true),
+            (false, false, false, None, false),
+            (false, true, true, None, true),
+            (false, true, false, None, false),
+            (true, false, false, Some(false), false),
+            (true, true, true, Some(false), false),
+            (false, false, true, Some(false), false),
+            (false, true, false, Some(true), true),
+            (true, true, false, Some(true), true),
+        ] {
+            let mut state = SimulationState {
+                is_player,
+                client_side,
+                controlled_by_local_instance: local,
+                can_simulate_movement: exact,
+                ..standing_player(1.2)
+            };
+            push(&mut state, slime_block((1, 101, 0), true), release);
+            assert_eq!(
+                state.velocity.x,
+                if bounced { 1.0 } else { 0.0 },
+                "player={is_player}, client={client_side}, local={local}, exact={exact:?}"
+            );
+            assert_eq!(
+                state.position.x,
+                1.2 + 0.51,
+                "authority must not suppress displacement"
+            );
+        }
+
+        for version in ["1.16.1", "1.16.2", "26.2"] {
+            for exact in [None, Some(false), Some(true)] {
+                let release = MinecraftVersion::parse(version).unwrap();
+                // Neither local client players nor generic remote entities had a bounce
+                // authority check; the new exact result must not backport it.
+                for is_player in [false, true] {
+                    let mut state = SimulationState {
+                        is_player,
+                        controlled_by_local_instance: false,
+                        can_simulate_movement: exact,
+                        ..standing_player(1.2)
+                    };
+                    push(&mut state, slime_block((1, 101, 0), true), release);
+                    assert_eq!(state.velocity.x, 1.0, "{version}, exact={exact:?}");
+                    assert_eq!(state.position.x, 1.2 + 0.51);
+                }
+                let mut server = SimulationState {
+                    client_side: false,
+                    can_simulate_movement: exact,
+                    ..standing_player(1.2)
+                };
+                let before = server;
+                push(&mut server, slime_block((1, 101, 0), true), release);
+                assert_eq!(
+                    server == before,
+                    release.at_least(1, 16, 2),
+                    "{version}: exact override cannot bypass old ServerPlayer exclusion"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn historical_server_slime_exclusion_does_not_skip_other_pistons_or_honey() {
+        for version in ["1.16.1", "1.16.2", "26.2", "26.3"] {
+            let release = MinecraftVersion::parse(version).unwrap();
+            let stone = moved_block(
+                (1, 101, 0),
+                true,
+                Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0)),
+            );
+            let mut server = SimulationState {
+                client_side: false,
+                ..standing_player(1.2)
+            };
+            push(&mut server, stone.clone(), release);
+            assert_eq!(server.position.x, 1.2 + 0.51, "{version}: ordinary piston");
+            assert_eq!(server.velocity.x, 0.0);
+
+            let mut carried = SimulationState {
+                client_side: false,
+                ..standing_player(0.5)
+            };
+            push(&mut carried, honey_block((1, 100, 0), true), release);
+            assert_eq!(carried.position.x, 1.0, "{version}: honey carry");
+
+            if release.at_least(1, 16, 2) && !release.at_least(26, 3, 0) {
+                let mut listed = SimulationState {
+                    client_side: false,
+                    ..standing_player(1.2)
+                };
+                let mut deltas = [0.0; 3];
+                push_by_moving_pistons(
+                    &mut listed,
+                    &WorldSnapshot::new(),
+                    &[slime_block((1, 101, 0), true), stone],
+                    &mut deltas,
+                    PhysicsConfig::default(),
+                    release,
+                );
+                assert_eq!(
+                    listed.position.x, server.position.x,
+                    "later piston still runs"
+                );
+                assert_eq!(listed.velocity.x, 0.0);
+                assert_eq!(deltas, [0.51, 0.0, 0.0]);
+            }
+        }
+    }
+
+    #[test]
+    fn server_slime_exclusion_also_prevents_bounce_outside_the_swept_face() {
+        for version in ["1.16.1", "1.16.2", "26.2", "26.3"] {
+            let release = MinecraftVersion::parse(version).unwrap();
+            let mut state = SimulationState {
+                client_side: false,
+                ..standing_player(0.5)
+            };
+            push(&mut state, slime_block((1, 101, 0), true), release);
+            assert_eq!(state.position.x, 0.5);
+            let eligible = !release.at_least(1, 16, 2) || release.at_least(26, 3, 0);
+            assert_eq!(
+                state.velocity.x,
+                if eligible { 1.0 } else { 0.0 },
+                "{version}"
+            );
+        }
+    }
+
+    #[test]
+    fn remote_horizontal_piston_moves_preserve_ground_support_and_run_block_callbacks() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (2, 101, 0),
+            BlockState {
+                shape: Some(BlockShape {
+                    effect: BlockEffect::Web,
+                    bounds: Aabb::new(Vec3::ZERO, Vec3::ZERO),
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        for version in ["1.21.3", "1.21.4", "26.2", "26.3"] {
+            let release = MinecraftVersion::parse(version).unwrap();
+            let mut state = SimulationState {
+                controlled_by_local_instance: false,
+                collided_horizontally: true,
+                collided_vertically: true,
+                vertical_collision_below: true,
+                supporting_block: Some((1, 100, 0)),
+                supporting_block_kept: true,
+                on_ground_no_blocks: false,
+                ..standing_player(1.2)
+            };
+            push_in(&mut state, &world, slime_block((1, 101, 0), true), release);
+            assert_eq!(state.position.x, 1.2 + 0.51, "{version}: displacement");
+            assert!(!state.collided_horizontally);
+            if release.at_least(1, 21, 4) {
+                assert!(
+                    state.collided_vertically && state.vertical_collision_below && state.on_ground,
+                    "{version}: retained vertical flags"
+                );
+                assert_eq!(state.supporting_block, Some((1, 100, 0)));
+                assert!(state.supporting_block_kept);
+                assert!(!state.on_ground_no_blocks);
+            } else {
+                assert!(
+                    !state.collided_vertically
+                        && !state.vertical_collision_below
+                        && !state.on_ground
+                );
+                assert_eq!(state.supporting_block, None);
+            }
+            assert_eq!(
+                state.stuck_speed_multiplier,
+                Vec3::new(0.25, f64::from(0.05_f32), 0.25),
+                "{version}: callback still runs"
+            );
+            assert_eq!(
+                state.velocity.x,
+                if release.at_least(26, 3, 0) { 0.0 } else { 1.0 }
+            );
+        }
+    }
+
+    #[test]
+    fn piston_collision_restitution_uses_simulation_authority_from_26_2() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (2, 101, 0),
+            BlockState {
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        let stone = moved_block(
+            (1, 101, 0),
+            true,
+            Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0)),
+        );
+        for version in ["26.2", "26.3"] {
+            let release = MinecraftVersion::parse(version).unwrap();
+            for (is_player, client_side, local, exact, stops_26_2, stops_26_3) in [
+                (true, true, false, None, false, false),
+                (true, true, true, Some(false), true, false),
+                (true, false, false, None, true, true),
+                (true, false, false, Some(false), true, false),
+                (false, false, false, None, false, false),
+                (false, false, true, Some(false), true, false),
+                (false, true, false, Some(true), false, true),
+            ] {
+                let mut state = SimulationState {
+                    is_player,
+                    client_side,
+                    controlled_by_local_instance: local,
+                    can_simulate_movement: exact,
+                    velocity: Vec3::new(0.25, 0.0, 0.0),
+                    ..standing_player(1.2)
+                };
+                push_in(&mut state, &world, stone.clone(), release);
+                assert!(
+                    state.collided_horizontally,
+                    "{version}: remote collision still detected"
+                );
+                assert!((state.position.x - (2.0 - f64::from(0.3_f32))).abs() < 1.0e-12);
+                let stops = if release.at_least(26, 3, 0) {
+                    stops_26_3
+                } else {
+                    stops_26_2
+                };
+                assert_eq!(state.velocity.x, if stops { 0.0 } else { 0.25 }, "{version}, player={is_player}, client={client_side}, local={local}, exact={exact:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_piston_pushes_through_a_bubble_column_only_a_simulating_entity_is_moved_by_in_26_3() {
+        // BubbleColumnBlock.entityInside by the piston move's applyEffectsFromBlocks (26.3
+        // PistonMovingBlockEntity.java:163-170): 26.3 asks canSimulateMovement before the motion
+        // and not before resetFallDistance, which only a column with something above it does
+        // (26.3 Entity.java:2973-2983, 3005-3017); 26.2 asks nothing (26.2 Entity.java:2882-2922)
+        let column = |effect| BlockState {
+            id: 2,
+            fluid: FluidState::Water,
+            fluid_source: true,
+            shape: Some(BlockShape {
+                bounds: Aabb::new(Vec3::ZERO, Vec3::ZERO),
+                effect,
+                ..BlockShape::full_block()
+            }),
+            ..BlockState::default()
+        };
+        let water = BlockState {
+            id: 3,
+            fluid: FluidState::Water,
+            fluid_source: true,
+            ..BlockState::default()
+        };
+        let stone = moved_block(
+            (1, 101, 0),
+            true,
+            Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0)),
+        );
+        for (effect, covered, push) in [
+            (BlockEffect::BubbleUp, true, 0.06),
+            (BlockEffect::BubbleDown, true, -0.03),
+            (BlockEffect::BubbleUp, false, 0.1),
+            (BlockEffect::BubbleDown, false, -0.03),
+        ] {
+            let mut world = WorldSnapshot::new();
+            world.set_block((1, 101, 0), column(effect));
+            if covered {
+                world.set_block((1, 102, 0), water);
+            }
+            for (version, is_player, client_side, local, exact, pushed) in [
+                ("26.2", false, false, false, Some(false), true),
+                ("26.2", false, false, false, None, true),
+                ("26.2", true, true, false, None, true),
+                ("26.3", false, false, false, Some(false), false),
+                ("26.3", false, false, false, None, false),
+                ("26.3", true, true, false, None, false),
+                ("26.3", true, true, true, Some(false), false),
+                ("26.3", true, true, true, None, true),
+                ("26.3", true, false, false, None, true),
+                ("26.3", false, false, true, None, true),
+                ("26.3", false, true, false, Some(true), true),
+            ] {
+                let release = MinecraftVersion::parse(version).unwrap();
+                let mut state = SimulationState {
+                    is_player,
+                    client_side,
+                    controlled_by_local_instance: local,
+                    can_simulate_movement: exact,
+                    height: 0.5,
+                    on_ground: false,
+                    velocity: Vec3::ZERO,
+                    fall_distance: 3.0,
+                    ..standing_player(1.2)
+                };
+                push_in(&mut state, &world, stone.clone(), release);
+                let case = format!("{version} {effect:?} covered={covered} player={is_player} client={client_side} local={local} exact={exact:?}");
+                assert_eq!(state.position.x, 1.2 + 0.51, "{case}");
+                assert_eq!(state.velocity.y, if pushed { push } else { 0.0 }, "{case}");
+                assert_eq!(
+                    state.fall_distance,
+                    if covered { 0.0 } else { 3.0 },
+                    "{case}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn piston_restitution_reads_the_retained_vertical_collision() {
+        // A horizontal collision can trigger restitution using verticalCollision retained by
+        // an entity that simulates movement without being locally authoritative (26.2
+        // Entity.java:815,845; 26.3 :839,877). Use an ordinary piston to isolate restitution.
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (2, 101, 0),
+            BlockState {
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        world.set_block(
+            (1, 100, 0),
+            BlockState {
+                shape: Some(BlockShape::full_block()),
+                bounce_restitution: 0.8,
+                ..BlockState::default()
+            },
+        );
+        let stone = moved_block(
+            (1, 101, 0),
+            true,
+            Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0)),
+        );
+        for version in ["26.2", "26.3"] {
+            let release = MinecraftVersion::parse(version).unwrap();
+            let mut state = SimulationState {
+                client_side: false,
+                controlled_by_local_instance: false,
+                collided_vertically: true,
+                vertical_collision_below: true,
+                supporting_block: Some((1, 100, 0)),
+                supporting_block_kept: true,
+                velocity: Vec3::new(0.25, -0.5, 0.0),
+                ..standing_player(1.2)
+            };
+            push_in(&mut state, &world, stone.clone(), release);
+            assert!(
+                state.collided_horizontally
+                    && state.collided_vertically
+                    && state.vertical_collision_below
+            );
+            assert!(state.on_ground);
+            assert_eq!(state.supporting_block, Some((1, 100, 0)));
+            assert_eq!(
+                state.velocity.y, 0.4,
+                "{version}: retained vertical collision reaches floor restitution"
             );
         }
     }

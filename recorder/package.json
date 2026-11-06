@@ -1,0 +1,13 @@
+{
+    "name": "@minecraft-physics-native/recorder",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Vanilla recorder (Fabric client + integrated server in lockstep), TypeScript scenarios and replay of the recordings through the native engine and mineflayer.",
+    "type": "module",
+    "scripts": {
+        "typecheck": "tsc --noEmit -p .",
+        "test": "tsc --noEmit -p . && node --test \"schema/test/*.test.ts\" \"scenarios/test/*.test.ts\" \"runner/test/*.test.ts\" \"replay/test/*.test.ts\"",
+        "gen:java": "node schema/gen-java.ts",
+        "scenarios": "node scenarios/build.ts"
+    }
+}

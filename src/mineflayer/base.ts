@@ -1,10 +1,18 @@
+import { ShulkerBoxTracker } from './shulkers';
+import type { BlockActionPacket } from './shulkers';
 // What the adapter's engines share: the registry they were made for, the native binding, the NativeWorld kept in step
 // with the caller's world, and the rest of mineflayer-physics-utils' IPhysics, which its states and EPhysicsCtx call
 // (effect and enchantment levels, supportFeature).
 import type { IPhysics } from '@nxg-org/mineflayer-physics-util/dist/physics/engines/IPhysics';
 
-import { LoadNativePhysics, type NativePhysicsBinding } from '../native';
+import { LoadNativePhysics, type NativeAabb, type NativePhysicsBinding } from '../native';
+import { assertReleaseAdmitted } from '../release-status';
+import { compareReleases } from './blocks';
+import { attributesWearNamespace, physicsFeature } from './physics-features';
+import { resolveRegistryRelease } from './registry-release';
 import type { Attribute, AttributeModifier, Attributes } from './types';
+import { DIRECTIONS, MovingBlockTracker, type MovableWorld, type MovingRegistry } from './moving';
+import type { MovingPiston } from './player';
 import { NativeWorldSync, type PrismarineWorld, type SyncRegistry } from './world';
 
 /** The parts of a prismarine registry (minecraft-data) the adapter reads. */
@@ -22,8 +30,10 @@ type AABBClass = new (minX: number, minY: number, minZ: number, maxX: number, ma
 export interface NativeEngineOptions {
     /** The native binding (LoadNativePhysics() by default). */
     binding?: NativePhysicsBinding;
-    /** The release the engine runs (the registry's by default); the engine refuses one it has no module for. */
+    /** The exact release to run (the registry's by default); it must match registry.version.minecraftVersion. */
     version?: string;
+    /** Refuse a release that has not been admitted for parity (releaseStatus), rather than run what is registered. */
+    requireParity?: boolean;
 }
 
 /** mineflayer-physics-utils' CheapEffects and CheapEnchantments, by their numbers. */
@@ -32,17 +42,91 @@ const EFFECT_NAMES: IPhysics['statusEffectNames'] = Object.freeze({
 });
 const ENCHANTMENT_NAMES: IPhysics['enchantmentNames'] = Object.freeze({ 0: 'depth_strider', 1: 'swift_sneak', 2: 'soul_speed', 3: 'riptide' });
 
-/** A comparison of releases, or `unknown` when minecraft-data does not know the other release (it throws). */
-function compared(compare: () => boolean, unknown: boolean): boolean {
-    try {
-        return compare();
-    } catch {
-        return unknown;
-    }
-}
-
 /** A prismarine registry (minecraft-data's IndexedData of a release). */
 export type PhysicsRegistry = IPhysics['data'];
+
+type PistonBlock = { name: string; position?: { x: number; y: number; z: number } } | null | undefined;
+
+type BotListener = (...args: never[]) => void;
+
+/** The events of a mineflayer bot that say what its pistons do, and that it left. */
+export interface PistonBot {
+    on?(event: 'pistonMove', listener: (block: PistonBlock, event: number, param: number) => void): unknown;
+    on?(event: 'blockUpdate', listener: (old: PistonBlock, block: PistonBlock) => void): unknown;
+    on?(event: 'physicsTick', listener: () => void): unknown;
+    on?(event: 'end', listener: () => void): unknown;
+    removeListener?(event: string, listener: BotListener): unknown;
+}
+
+/**
+ * What an engine keeps for a world: its sync, and the moving blocks of the bot that tells the world's piston events,
+ * with the listeners that feed them. The engine owns all of it, and `release` undoes it.
+ */
+class WorldLink {
+    tracker?: MovingBlockTracker;
+    shulkers?: ShulkerBoxTracker;
+    private client?: PistonBot;
+    private clientListener?: BotListener;
+    private lidBot?: PistonBot;
+    private lidListeners: [string, BotListener][] = [];
+
+    private lidWorld?: PistonBot;
+    private lidWorldListener?: BotListener;
+
+    /** A column's unloading, which the world tells. */
+    listenWorld(world: PistonBot, listener: BotListener): void {
+        this.lidWorld = world;
+        this.lidWorldListener = listener;
+        (world.on as ((event: string, listener: BotListener) => unknown) | undefined)?.call(world, 'chunkColumnUnload', listener);
+    }
+
+    listenBot(bot: PistonBot | undefined, listeners: [string, BotListener][]): void {
+        this.lidBot = bot;
+        this.lidListeners = listeners;
+        for (const [event, listener] of listeners) (bot?.on as (event: string, listener: BotListener) => unknown)?.call(bot, event, listener);
+    }
+
+    listenClient(client: PistonBot, listener: BotListener): void {
+        this.client = client;
+        this.clientListener = listener;
+        (client.on as (event: string, listener: BotListener) => unknown).call(client, 'block_action', listener);
+    }
+
+    private dropClient(): void {
+        if (this.client && this.clientListener) {
+            (this.client as unknown as { removeListener?(event: string, listener: BotListener): void }).removeListener?.('block_action', this.clientListener);
+        }
+        for (const [event, listener] of this.lidListeners) this.lidBot?.removeListener?.(event, listener);
+        this.lidListeners = [];
+        this.lidBot = undefined;
+        if (this.lidWorldListener) this.lidWorld?.removeListener?.('chunkColumnUnload', this.lidWorldListener);
+        this.lidWorld = undefined;
+        this.client = undefined;
+        this.shulkers = undefined;
+    }
+
+    private bot?: PistonBot;
+    private listeners: [string, BotListener][] = [];
+
+    constructor(readonly world: PrismarineWorld, readonly sync: NativeWorldSync) {}
+
+    /** Listens on the bot for as long as this link lasts. */
+    listen(bot: PistonBot, tracker: MovingBlockTracker, listeners: [string, BotListener][]): void {
+        this.tracker = tracker;
+        this.bot = bot;
+        this.listeners = listeners;
+        for (const [event, listener] of listeners) (bot.on as (event: string, listener: BotListener) => unknown).call(bot, event, listener);
+    }
+
+    release(): void {
+        this.sync.dispose();
+        const bot = this.bot;
+        if (bot?.removeListener) for (const [event, listener] of this.listeners) bot.removeListener(event, listener);
+        this.dropClient();
+        this.listeners = [];
+        this.bot = undefined;
+    }
+}
 
 export class NativeEngine implements Omit<IPhysics, 'simulate'> {
     readonly data: PhysicsRegistry;
@@ -51,36 +135,54 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
     readonly statusEffectNames = EFFECT_NAMES;
     readonly enchantmentNames = ENCHANTMENT_NAMES;
     private readonly registry: Registry;
-    private readonly syncs = new WeakMap<object, NativeWorldSync>();
+    /** The links by world, the link each bot's piston events feed, and every link, none of which keeps a world alive. */
+    private readonly links = new WeakMap<object, WorldLink>();
+    private readonly linkOfBot = new WeakMap<object, WorldLink>();
+    private readonly allLinks = new Set<WeakRef<WorldLink>>();
     private attributeRanges?: Map<string, { min: number; max: number }>;
     private readonly attributeKeys = new Map<string, string | null>();
-    private readonly older = new Map<string, boolean>();
-    private readonly newer = new Map<string, boolean>();
+    private readonly releaseOrder = new Map<string, number>();
 
     constructor(registry: PhysicsRegistry, options: NativeEngineOptions = {}) {
+        this.version = resolveRegistryRelease(registry, options.version);
+        if (options.requireParity) assertReleaseAdmitted(this.version);
+        // an engine runs the one release it was made for, for as long as it lives
+        Object.defineProperty(this, 'version', { writable: false, configurable: false });
         this.data = registry;
         this.registry = registry as unknown as Registry;
         this.binding = options.binding ?? LoadNativePhysics();
-        this.version = options.version ?? this.registry.version.minecraftVersion;
-        // a binding built before isSupportedVersion (the prebuilt wasm one) refuses the release at its first tick
+        // A binding may support fewer releases than this package's TypeScript manifest.
         if (this.binding.isSupportedVersion && !this.binding.isSupportedVersion(this.version)) {
             throw new Error(`unsupported decompiled Minecraft version: ${this.version}`);
         }
     }
 
-    readonly supportFeature = (feature: string): boolean => !!this.registry.supportFeature?.(feature);
+    /**
+     * mineflayer-physics-utils' catalog, against the release this engine runs (physics-features.ts); every other name is
+     * minecraft-data's, as a yes or no: a feature with a value (metadataIxOfItem) is asked of the registry.
+     */
+    readonly supportFeature = (feature: string): boolean => physicsFeature(this.version, feature) ?? !!this.registry.supportFeature?.(feature);
 
-    /** Whether the registry's release is older than `version` (one its minecraft-data does not know yet is newer). */
+    /** Whether the selected release, the one the engine runs, is older than `version`. */
     protected lt(version: string): boolean {
-        let older = this.older.get(version);
-        if (older === undefined) this.older.set(version, (older = compared(() => this.registry.version['<'](version), true)));
-        return older;
+        return this.againstRelease(version) < 0;
     }
 
     protected gt(version: string): boolean {
-        let newer = this.newer.get(version);
-        if (newer === undefined) this.newer.set(version, (newer = compared(() => this.registry.version['>'](version), false)));
-        return newer;
+        return this.againstRelease(version) > 0;
+    }
+
+    /**
+     * The selected release against `version`, kept: a tick asks about a hundred times, and each fresh comparison splits two
+     * strings (docs/benchmarks.md). An engine's release never changes, and the versions asked are the code's few literals.
+     */
+    private againstRelease(version: string): number {
+        let compared = this.releaseOrder.get(version);
+        if (compared === undefined) {
+            compared = compareReleases(this.version, version);
+            this.releaseOrder.set(version, compared);
+        }
+        return compared;
     }
 
     /**
@@ -94,14 +196,131 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
         return (state.entity ?? entity)?.metadata?.[5] === true;
     }
 
+    /** Entity.getSharedFlag(0): bit 0 of the entity's synced data at 0. */
+    protected onFireFlagOf(entity?: { metadata?: unknown[] }): boolean {
+        const flags = entity?.metadata?.[0];
+        return typeof flags === 'number' && (flags & 1) !== 0;
+    }
+
     /** The NativeWorld kept in step with a prismarine world. */
     syncOf(world: PrismarineWorld): NativeWorldSync {
-        let sync = this.syncs.get(world);
-        if (!sync) {
-            sync = new NativeWorldSync(this.binding, this.registry);
-            this.syncs.set(world, sync);
+        return this.linkOf(world).sync;
+    }
+
+    /**
+     * The blocks pistons are moving in a world, as a bot's block events make them: undefined until a tick of a state with a bot
+     * has started it (syncMovingBlocks), and for a world that has no such bot.
+     */
+    movingBlockTrackerOf(world: PrismarineWorld): MovingBlockTracker | undefined {
+        return this.links.get(world)?.tracker;
+    }
+
+    /**
+     * The moving blocks of a world as pushByMovingPistons takes them, in the order they tick, whole: their boxes as the cells
+     * have them, with the outline boxes that push on 1.9 - 1.10 and the boxes of their next tick. Undefined as movingBlockTrackerOf.
+     */
+    movingPistonsOf(world: PrismarineWorld): MovingPiston[] | undefined {
+        const link = this.links.get(world);
+        if (!link?.tracker) return undefined;
+        const blocks = link.tracker.blocks();
+        const lists = (boxes: readonly NativeAabb[]) => boxes.map(({ min, max }) => [min.x, min.y, min.z, max.x, max.y, max.z]);
+        return link.sync.movingPistonsOf(blocks).map((piston, i) => ({
+            pos: [piston.x, piston.y, piston.z],
+            direction: DIRECTIONS[piston.facing]!,
+            extending: piston.extending,
+            source: piston.source,
+            progress: piston.progress,
+            shapes: lists(piston.shapes),
+            ...(piston.outlineShapes ? { outlineShapes: lists(piston.outlineShapes) } : {}),
+            ...(piston.nextShapes ? { nextShapes: lists(piston.nextShapes) } : {}),
+            movedBlock: blocks[i]!.block.name,
+        }));
+    }
+
+    private linkOf(world: PrismarineWorld): WorldLink {
+        let link = this.links.get(world);
+        if (!link) {
+            link = new WorldLink(world, new NativeWorldSync(this.binding, this.registry, this.version));
+            this.links.set(world, link);
+            for (const known of this.allLinks) if (!known.deref()) this.allLinks.delete(known);
+            this.allLinks.add(new WeakRef(link));
         }
-        return sync;
+        return link;
+    }
+
+    /**
+     * Lets go of a world the bot left: its sync is disposed and the listeners on it and on its bot leave. The world's
+     * next tick, if it gets one, starts over from its blocks. A world the engine does not know is left alone.
+     */
+    releaseWorld(world: PrismarineWorld): void {
+        const link = this.links.get(world);
+        if (!link) return;
+        this.links.delete(world);
+        link.release();
+    }
+
+    /**
+     * Lets go of every world (plugin shutdown): as releaseWorld for each, which a bot's 'end' does for its own. The engine
+     * stays usable, and a second call does nothing.
+     */
+    dispose(): void {
+        for (const known of this.allLinks) {
+            const link = known.deref();
+            if (link) this.releaseWorld(link.world);
+        }
+        this.allLinks.clear();
+    }
+
+    /**
+     * Gives a synced world the moving blocks of a bot that tells its piston events (mineflayer's pistonMove): the server
+     * sends no moving_piston block, so the tracker keeps them, and the bot's ticks end them. A state made without a bot
+     * has none to give. A bot in another world than its last has left that one, whose link is released.
+     */
+    syncMovingBlocks(sync: NativeWorldSync, world: PrismarineWorld, bot: PistonBot | undefined): void {
+        const link = this.linkOf(world);
+        if (!link.tracker && bot?.on) {
+            const last = this.linkOfBot.get(bot);
+            if (last && last.world !== world) this.releaseWorld(last.world);
+            this.linkOfBot.set(bot, link);
+            // (the bot's own world: what mineflayer hands the engine may read blocks only, and a tracker that sets none has no
+            // moving block in its cell for setMovingBlocks to collide with)
+            const made = new MovingBlockTracker(this.registry as unknown as MovingRegistry, this.version, ((bot as { world?: MovableWorld }).world ?? world) as MovableWorld);
+            link.listen(bot, made, [
+                ['pistonMove', ((block: PistonBlock, event: number, param: number) => {
+                    if (block?.position) made.trigger(block.name, [block.position.x, block.position.y, block.position.z], event, param);
+                }) as BotListener],
+                ['blockUpdate', ((old: PistonBlock, block: PistonBlock) => {
+                    const at = block?.position ?? old?.position;
+                    if (at) made.blockChanged([at.x, at.y, at.z], block?.name);
+                }) as BotListener],
+                ['physicsTick', () => made.tick()],
+                ['end', () => this.releaseWorld(world)],
+            ]);
+        }
+        if (link.tracker) sync.setMovingBlocks(link.tracker.blocks());
+        const client = (bot as (PistonBot & { _client?: PistonBot }) | undefined)?._client;
+        if (!link.shulkers && client?.on) {
+            const lids = new ShulkerBoxTracker(this.binding, this.version);
+            link.shulkers = lids;
+            link.listenClient(client, ((packet: BlockActionPacket) => {
+                const { x, y, z } = packet.location;
+                const block = (world as unknown as { getBlock(at: unknown): { name?: string; getProperties?(): { facing?: string } } | null }).getBlock({ x, y, z, floored: () => ({ x, y, z }) });
+                if (packet.byte1 === 1 && block?.name?.endsWith('shulker_box')) {
+                    lids.event(x, y, z, ['down', 'up', 'north', 'south', 'west', 'east'].indexOf(block.getProperties?.().facing ?? 'up'), packet.byte2);
+                }
+            }) as BotListener);
+            link.listenBot(bot, [
+                ['physicsTick', (() => lids.tick()) as BotListener],
+                ['blockUpdate', ((old: PistonBlock, block: PistonBlock) => {
+                    const at = block?.position ?? old?.position;
+                    if (at && !block?.name?.endsWith('shulker_box')) lids.forget(at.x, at.y, at.z);
+                }) as BotListener],
+            ]);
+            link.listenWorld(world as unknown as PistonBot, ((corner: { x: number; z: number }) => {
+                lids.forgetColumn(Math.floor(corner.x / 16), Math.floor(corner.z / 16));
+            }) as BotListener);
+        }
+        if (link.shulkers) sync.setShulkerBoxes(link.shulkers.boxes());
     }
 
     /** The level of an effect (its amplifier + 1, 0 without it), as mineflayer-physics-utils counts it. */
@@ -159,8 +378,8 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
         let attributeKey = this.attributeKeys.get(name);
         if (attributeKey === undefined) {
             const data = this.registry.attributesByName?.[name];
-            const namespaced = !this.lt('1.16') && this.lt('1.20.5');
-            attributeKey = !data ? null : namespaced && !data.resource.startsWith('minecraft:') ? `minecraft:${data.resource}` : data.resource;
+            const namespaced = attributesWearNamespace(this.version) && !data?.resource.startsWith('minecraft:');
+            attributeKey = !data ? null : namespaced ? `minecraft:${data.resource}` : data.resource;
             this.attributeKeys.set(name, attributeKey);
         }
         return attributeKey;
@@ -208,7 +427,7 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
      * (1.20.5 EntityAttributeInstance.java:21, 53-54), by the Identifier from 1.21 (1.21 :24, 56-57; 26.3
      * AttributeInstance.java:23, 54-55): linear probing from mix(hash), iterated from the last slot down.
      */
-    private iterationOrder(modifiers: AttributeModifier[]): AttributeModifier[] {
+    protected iterationOrder(modifiers: AttributeModifier[]): AttributeModifier[] {
         if (modifiers.length < 2) return modifiers;
         const hashes = modifiers.map(modifier => this.modifierIdHash(String(modifier.uuid ?? modifier.id ?? '')));
         if (this.lt('1.20.5')) {

@@ -1,4 +1,4 @@
-use crate::collision::{collide_over_grid, grid_lines, Axis};
+use crate::collision::{collide_over_grid, grid_lines, Axis, GridTest};
 use crate::math::{Aabb, Vec3};
 use crate::version::MinecraftVersion;
 
@@ -54,7 +54,8 @@ impl VoxelShape {
                     .zip(other.grid_origins.iter().copied()),
             )
             .collect();
-        let grids = [Axis::X, Axis::Y, Axis::Z].map(|axis| grid_lines(parts.iter().copied(), axis));
+        let test = GridTest::of(Some(release));
+        let grids = [Axis::X, Axis::Y, Axis::Z].map(|axis| grid_lines(parts.iter().copied(), axis, test));
         let size = grids.each_ref().map(|grid| grid.len().saturating_sub(1));
         let center = |grid: &[f64], cell: usize| (grid[cell] + grid[cell + 1]) / 2.0;
         let mut cells = vec![false; size[0] * size[1] * size[2]];
@@ -117,6 +118,16 @@ impl VoxelShape {
     /// from 1.13.2).
     #[must_use]
     pub fn collide(&self, axis: Axis, entity: Aabb, delta: f64) -> f64 {
+        self.collide_with_test(axis, entity, delta, GridTest::Round)
+    }
+
+    /// `collide` by the grid test of a release, whose lines differ before 1.17 (GridTest).
+    #[must_use]
+    pub fn collide_in(&self, release: MinecraftVersion, axis: Axis, entity: Aabb, delta: f64) -> f64 {
+        self.collide_with_test(axis, entity, delta, GridTest::of(Some(release)))
+    }
+
+    fn collide_with_test(&self, axis: Axis, entity: Aabb, delta: f64, test: GridTest) -> f64 {
         if self.is_empty() {
             return delta;
         }
@@ -127,6 +138,7 @@ impl VoxelShape {
                     .copied()
                     .zip(self.grid_origins.iter().copied()),
                 axis,
+                test,
             )
         });
         collide_over_grid(&grids, &self.boxes, axis, entity, delta)
@@ -295,7 +307,7 @@ fn rotate_z_quarter(bounds: Aabb) -> Aabb {
 #[cfg(test)]
 mod tests {
     use super::VoxelShape;
-    use crate::collision::{grid_lines, Axis};
+    use crate::collision::{grid_lines, Axis, GridTest};
     use crate::math::{Aabb, Vec3};
     use crate::version::MinecraftVersion;
 
@@ -313,6 +325,7 @@ mod tests {
                 .copied()
                 .zip(shape.grid_origins.iter().copied()),
             axis,
+            GridTest::Round,
         )
     }
 

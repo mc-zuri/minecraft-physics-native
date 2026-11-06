@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "mcpn_recorder",
+  "version": "${version}",
+  "name": "Physics Recorder (minecraft-physics-native)",
+  "description": "Records vanilla client physics, phases and packets tick by tick in lockstep with the integrated server",
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["dev.mcpn.recorder.mc.RecorderClient"]
+  },
+  "mixins": ["recorder.mixins.json"],
+  "depends": {
+    "fabricloader": "*",
+    "minecraft": "${minecraft}"
+  }
+}

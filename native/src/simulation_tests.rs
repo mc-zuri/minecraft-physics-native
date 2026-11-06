@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod tests {
     use crate::math::java_float;
-    use crate::simulation::{
-        back_off_from_edge, entity_collision_context, landing_damage, movement_speed_attribute,
-        tick, tick_with_rules, LandingDamageRounding, PhysicsConfig, SimulationState,
+    use crate::simulation::{ServerFireDraws, 
+        apply_inside_fire_effects, back_off_from_edge, entity_collision_context, landing_damage,
+        movement_speed_attribute, tick, tick_with_rules, InsideEffectStep, InsideEffects, LandingDamageRounding, PhysicsConfig, SimulationState,
         TickInputSnapshot, TickResult, VersionPhysicsProfile, VersionPhysicsRules,
-        update_auto_jump,
+        update_auto_jump, BoatVehicle, entity_fluid_contact, entity_eyes_in_fluid,
     };
     use crate::version::MinecraftVersion;
     use crate::world::{
@@ -595,6 +595,39 @@ mod tests {
     }
 
     #[test]
+    fn only_the_client_sinks_over_a_column_not_loaded_and_a_column_that_loads_ends_it() {
+        // world.isClient && !loaded (1.8.9 LivingEntity.java:1186-1190): the server takes gravity.
+        // Leaving a loaded column, an unloaded destination and a re-entry differ by the column alone.
+        let mut world = WorldSnapshot::new();
+        world.set_chunk_loaded(0, 0, true);
+        let fall = |world: &WorldSnapshot, version: &str, x: f64, client_side: bool| {
+            let mut state = SimulationState {
+                position: Vec3::new(x, 5.0, 0.5),
+                half_width: 0.3,
+                height: 1.8,
+                is_player: true,
+                client_side,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch(version, &mut state, world, PhysicsConfig::default()).unwrap();
+            (state.velocity.y, state.tick_count)
+        };
+        let sinking = -0.1 * java_float(0.98);
+        let falling = -0.08 * java_float(0.98);
+        for version in ["1.8.8", "1.9.4", "1.13.2"] {
+            assert_eq!(fall(&world, version, 20.5, true), (sinking, 1), "{version}");
+            assert_eq!(fall(&world, version, 20.5, false), (falling, 1), "{version}");
+            assert_eq!(fall(&world, version, 0.5, true), (falling, 1), "{version}");
+        }
+        // the client's own player keeps ticking over the empty column in every release, counters too
+        for version in ["1.14.4", "1.16.5", "1.21.1", "1.21.2", "26.3"] {
+            assert_eq!(fall(&world, version, 20.5, true).1, 1, "{version}");
+        }
+        world.set_chunk_loaded(1, 0, true);
+        assert_eq!(fall(&world, "1.13.2", 20.5, true), (falling, 1));
+    }
+
+    #[test]
     fn a_player_over_a_column_not_loaded_sinks_at_a_tenth_before_1_14() {
         let mut world = WorldSnapshot::new();
         world.set_chunk_loaded(0, 0, true);
@@ -604,6 +637,7 @@ mod tests {
                 half_width: 0.3,
                 height: 1.8,
                 is_player: true,
+                client_side: true,
                 ..SimulationState::default()
             };
             crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
@@ -2571,6 +2605,38 @@ mod tests {
     }
 
     #[test]
+    fn a_ground_jump_too_weak_to_lift_still_starts_the_delay() {
+        // LivingEntity.aiStep sets noJumpDelay after jumpFromGround, whatever the power: the
+        // refusal is inside jumpFromGround (1.20.5 LivingEntity.java:2074-2086, 26.3 :2303-2315,
+        // :3024-3027)
+        for strength in [0.0, 1.0e-6] {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 1.0, 0.5),
+                on_ground: true,
+                jump_requested: true,
+                jump_strength: Some(strength),
+                no_gravity: true,
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            let rules = VersionPhysicsRules {
+                release: MinecraftVersion::new(1, 21, 1),
+                ..VersionPhysicsRules::default()
+            };
+            tick_with_rules(
+                &mut state,
+                &WorldSnapshot::new(),
+                PhysicsConfig::default(),
+                rules,
+            );
+
+            assert_eq!(state.jump_ticks, 10);
+            assert_eq!(state.velocity.y, 0.0);
+        }
+    }
+
+    #[test]
     fn releasing_jump_clears_the_jump_delay() {
         let mut state = SimulationState {
             jump_ticks: 5,
@@ -2778,6 +2844,7 @@ mod tests {
                 velocity: Vec3::new(0.0, -0.5, 0.0),
                 half_width: 0.3,
                 height: 1.8,
+                client_side: true,
                 controlled_by_local_instance,
                 ..SimulationState::default()
             };
@@ -2829,7 +2896,7 @@ mod tests {
 
         let mut state = walked_off;
         assert_eq!(
-            check_supporting_block(&world, &mut state, moved),
+            check_supporting_block(&world, &mut state, moved, MinecraftVersion::new(26, 3, 0)),
             Some((0, 0, 0))
         );
         assert!(!state.on_ground_no_blocks);
@@ -2839,7 +2906,7 @@ mod tests {
             on_ground_no_blocks: true,
             ..walked_off
         };
-        assert_eq!(check_supporting_block(&world, &mut state, moved), None);
+        assert_eq!(check_supporting_block(&world, &mut state, moved, MinecraftVersion::new(26, 3, 0)), None);
         assert!(state.on_ground_no_blocks);
 
         let mut state = SimulationState {
@@ -2848,7 +2915,7 @@ mod tests {
             ..walked_off
         };
         assert_eq!(
-            check_supporting_block(&world, &mut state, None),
+            check_supporting_block(&world, &mut state, None, MinecraftVersion::new(26, 3, 0)),
             Some((5, 5, 5))
         );
         assert!(state.on_ground_no_blocks);
@@ -2860,7 +2927,7 @@ mod tests {
             on_ground_no_blocks: true,
             ..walked_off
         };
-        assert_eq!(check_supporting_block(&world, &mut state, moved), None);
+        assert_eq!(check_supporting_block(&world, &mut state, moved, MinecraftVersion::new(26, 3, 0)), None);
         assert!(!state.on_ground_no_blocks);
     }
 
@@ -2934,7 +3001,7 @@ mod tests {
                 powder_snow_walkable,
                 ..SimulationState::default()
             };
-            check_supporting_block(&world, &mut state, None)
+            check_supporting_block(&world, &mut state, None, MinecraftVersion::new(26, 3, 0))
         };
 
         assert_eq!(supported(true), Some((0, 0, 0)));
@@ -3114,6 +3181,68 @@ mod tests {
     }
 
     #[test]
+    fn the_eyes_count_from_after_the_move_from_26_1() {
+        let mut world = WorldSnapshot::new();
+        load_chunks_around_origin(&mut world);
+        world.set_block(
+            (0, 1, 0),
+            BlockState {
+                fluid: FluidState::Lava,
+                fluid_level: 0,
+                ..BlockState::default()
+            },
+        );
+        let sinking = |release| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 0.5, 0.5),
+                velocity: Vec3::new(0.0, -0.3, 0.0),
+                is_player: true,
+                half_width: 0.3,
+                height: 1.8,
+                eye_height: Some(1.62),
+                controlled_by_local_instance: true,
+                ..SimulationState::default()
+            };
+            tick_release(&mut state, &world, release);
+            state.eye_in_lava
+        };
+
+        assert!(sinking(MinecraftVersion::new(26, 1, 0)));
+        assert!(!sinking(MinecraftVersion::new(1, 21, 11)));
+    }
+
+    #[test]
+    fn the_eyes_count_from_after_the_move_before_1_16() {
+        let mut world = WorldSnapshot::new();
+        load_chunks_around_origin(&mut world);
+        world.set_block(
+            (0, 1, 0),
+            BlockState {
+                fluid: FluidState::Water,
+                fluid_level: 0,
+                ..BlockState::default()
+            },
+        );
+        let sinking = |release| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 0.5, 0.5),
+                velocity: Vec3::new(0.0, -0.3, 0.0),
+                is_player: true,
+                half_width: 0.3,
+                height: 1.8,
+                eye_height: Some(1.62),
+                controlled_by_local_instance: true,
+                ..SimulationState::default()
+            };
+            tick_release(&mut state, &world, release);
+            state.eye_in_water
+        };
+
+        assert!(sinking(MinecraftVersion::new(1, 15, 2)));
+        assert!(!sinking(MinecraftVersion::new(1, 16, 5)));
+    }
+
+    #[test]
     fn a_jump_swims_up_in_the_lava_the_last_move_reached_before_1_16() {
         let mut in_lava = SimulationState {
             position: Vec3::new(0.5, 5.0, 0.5),
@@ -3133,6 +3262,86 @@ mod tests {
 
         assert_eq!(in_lava.velocity.y, 0.03999999910593033 * 0.5 - 0.08 / 4.0);
         assert!(!in_lava.in_lava);
+    }
+
+    fn lava_against_a_wall(velocity: Vec3, no_gravity: bool, release: &str) -> SimulationState {
+        let mut world = WorldSnapshot::new();
+        load_chunks_around_origin(&mut world);
+        let lava = BlockState {
+            fluid: FluidState::Lava,
+            fluid_level: 8,
+            fluid_source: true,
+            ..BlockState::default()
+        };
+        for y in 0..3 {
+            world.set_block((0, y, 0), lava);
+            world.set_block_shapes((1, y, 0), BlockState::default(), vec![BlockShape::full_block()]);
+            world.set_block_shapes((0, y, 1), BlockState::default(), vec![BlockShape::full_block()]);
+        }
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 0.5, 0.5),
+            velocity,
+            in_lava: true,
+            no_gravity,
+            half_width: 0.3,
+            height: 1.8,
+            ..SimulationState::default()
+        };
+        crate::versioned::dispatch(release, &mut state, &world, PhysicsConfig::default())
+            .expect("a supported release");
+        state
+    }
+
+    #[test]
+    fn lavas_gravity_adds_the_zeros_that_clear_a_walls_negative_zero() {
+        let into_the_walls = Vec3::new(0.5, 0.0, 0.5);
+        // from 26.2 a wall leaves -x * 0.0, which the 0.0 of Vec3.add turns into 0.0
+        for release in ["26.2", "26.3"] {
+            let state = lava_against_a_wall(into_the_walls, false, release);
+            assert_eq!(state.velocity.x.to_bits(), 0.0_f64.to_bits(), "{release}");
+            assert_eq!(state.velocity.z.to_bits(), 0.0_f64.to_bits(), "{release}");
+            // no gravity, no add: the -0.0 stays
+            let state = lava_against_a_wall(into_the_walls, true, release);
+            assert_eq!(state.velocity.x.to_bits(), (-0.0_f64).to_bits(), "{release}");
+            assert_eq!(state.velocity.z.to_bits(), (-0.0_f64).to_bits(), "{release}");
+        }
+        // before, the wall sets 0.0
+        let state = lava_against_a_wall(into_the_walls, false, "26.1");
+        assert_eq!(state.velocity.x.to_bits(), 0.0_f64.to_bits());
+    }
+
+    #[test]
+    fn past_a_corner_of_the_border_a_walk_stops_at_its_edges_from_1_18() {
+        let walk = |release: &str| {
+            let mut world = WorldSnapshot::new();
+            load_chunks_around_origin(&mut world);
+            world.set_world_bounds(-64, 320, 8.5, 8.5, 10.0);
+            for x in 0..4 {
+                for z in 0..4 {
+                    world.set_block_shapes((x, 99, z), BlockState::default(), vec![BlockShape::full_block()]);
+                }
+            }
+            let mut state = SimulationState {
+                position: Vec3::new(2.6, 100.0, 2.6),
+                velocity: Vec3::new(0.15, 0.0, 0.15),
+                no_gravity: true,
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch(release, &mut state, &world, PhysicsConfig::default())
+                .expect("a supported release");
+            state
+        };
+        for release in ["1.18", "26.3"] {
+            let state = walk(release);
+            assert!((state.position.x - 2.7).abs() < 1.0e-9, "{release}: {}", state.position.x);
+            assert!((state.position.z - 2.7).abs() < 1.0e-9, "{release}: {}", state.position.z);
+            assert!(state.collided_horizontally, "{release}");
+        }
+        // an entity outside has the shape from 1.18 alone
+        let state = walk("1.17.1");
+        assert!((state.position.x - 2.75).abs() < 1.0e-9, "{}", state.position.x);
     }
 
     #[test]
@@ -3223,6 +3432,25 @@ mod tests {
         assert_eq!(VersionPhysicsRules::default().water_gravity_divisor, 16.0);
         assert!((fall(None) + 0.08 / 16.0).abs() < 1.0e-12);
         assert!((fall(Some(8.0)) + 0.08 / 8.0).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn a_tick_past_the_int_range_does_not_panic_on_either_floor() {
+        for release in [MinecraftVersion::new(1, 8, 8), MinecraftVersion::new(1, 21, 11), MinecraftVersion::new(26, 3, 0)] {
+            for coordinate in [-3.0e9, 3.0e9, -2147483648.5, 2147483647.5] {
+                let mut rules = VersionPhysicsRules::default();
+                rules.release = release;
+                let mut state = SimulationState {
+                    position: Vec3::new(coordinate, 70.0, coordinate),
+                    half_width: 0.3,
+                    height: 1.8,
+                    ..SimulationState::default()
+                };
+                let world = WorldSnapshot::new();
+                tick_with_rules(&mut state, &world, PhysicsConfig::default(), rules);
+                assert!(state.position.is_finite());
+            }
+        }
     }
 
     #[test]
@@ -3641,6 +3869,131 @@ mod tests {
         }
     }
 
+    fn gliding_player(y: f64) -> SimulationState {
+        SimulationState {
+            fall_flying: true,
+            no_gravity: false,
+            look: Vec3::new(0.0, 0.0, 1.0),
+            // the elytra pose of PlayerEntity.updateSize (1.9.4 PlayerEntity.java:366-367, 1.13.2
+            // :423-424)
+            height: java_float(0.6),
+            ..legacy_water_player(Vec3::new(0.5, y, 0.5), Vec3::new(0.1, -0.1, 0.0))
+        }
+    }
+
+    #[test]
+    fn a_gliding_player_travels_in_the_lava_its_turned_over_box_touches_before_1_14() {
+        // Source-predicted; no live trace of this fixture exists. isTouchingLava contracts the box
+        // by 0.4F each way, which takes the 0.6F high box past itself, and Box's constructor turns
+        // it back (1.9.4 Entity.java:1035-1036, Box.java:24-31, 111-119; 1.13.2 Entity.java:1144-
+        // 1146, Box.java:42-49, 232-234): 64.9 - 65.1 at y 64.7. World.containsMaterial reads floor
+        // to ceil, the cells 64 and 65 (1.13.2 World.java:1373-1395). The lava branch of travel comes
+        // before the elytra's: the velocity is halved and loses 0.02 (1.9.4 LivingEntity.java:1326-
+        // 1327, 1440-1445; 1.13.2 :1516-1518, 1631-1636)
+        for version in ["1.9.4", "1.10.2", "1.11.2", "1.12.2", "1.13.2"] {
+            for cell in [(0, 64, 0), (0, 65, 0)] {
+                let mut state = gliding_player(64.7);
+                crate::versioned::dispatch(
+                    version,
+                    &mut state,
+                    &lava_world(cell),
+                    PhysicsConfig::default(),
+                )
+                .unwrap();
+
+                assert!(state.in_lava, "{version} {cell:?}");
+                assert_eq!(state.velocity.x, 0.1 * 0.5, "{version} {cell:?}");
+                assert_eq!(state.velocity.y, -0.1 * 0.5 - 0.02, "{version} {cell:?}");
+                assert_eq!(state.velocity.z, 0.0, "{version} {cell:?}");
+            }
+            // lava past the box leaves the elytra's travel, whose forward look turns the motion
+            let mut state = gliding_player(64.7);
+            crate::versioned::dispatch(
+                version,
+                &mut state,
+                &lava_world((0, 66, 0)),
+                PhysicsConfig::default(),
+            )
+            .unwrap();
+
+            assert!(!state.in_lava, "{version}");
+            assert!(state.velocity.z > 0.0, "{version}");
+        }
+    }
+
+    #[test]
+    fn the_modern_lava_flag_keeps_its_own_box_and_its_own_tick_from_1_14() {
+        // Source-predicted control. From 1.14 isInLava is the flag FluidBlock.onEntityCollision sets
+        // in the move's block check, over the box contracted by 0.001 (1.14 Entity.java:1109-1115,
+        // FluidBlock.java:166-169): the first tick still glides, the next is in lava, and a box whose
+        // legacy contraction misses the cell below reads it
+        let world = lava_world((0, 65, 0));
+        let mut state = gliding_player(64.7);
+        crate::versioned::dispatch("1.14.4", &mut state, &world, PhysicsConfig::default()).unwrap();
+        assert!(state.in_lava);
+        assert!(state.velocity.z > 0.0);
+        let (velocity_x, velocity_y) = (state.velocity.x, state.velocity.y);
+        crate::versioned::dispatch("1.14.4", &mut state, &world, PhysicsConfig::default()).unwrap();
+        assert_eq!(state.velocity.x, velocity_x * 0.5);
+        assert_eq!(state.velocity.y, velocity_y * 0.5 - 0.08 / 4.0);
+
+        let below = lava_world((0, 64, 0));
+        let dipped = |version| {
+            let mut state = SimulationState {
+                velocity: Vec3::ZERO,
+                ..gliding_player(64.95)
+            };
+            crate::versioned::dispatch(version, &mut state, &below, PhysicsConfig::default())
+                .unwrap();
+            state.in_lava
+        };
+        assert!(!dipped("1.13.2"));
+        assert!(dipped("1.14.4"));
+    }
+
+    #[test]
+    fn a_walk_past_a_partial_block_within_the_epsilon_keeps_its_move_and_flags() {
+        // Side by side with a slab: 5e-8 into its width neither lists it nor blocks the box (26.3
+        // BlockCollisions.java:91-103; VoxelShape.collide reads the box's edge 1e-7 in), 2e-7 into
+        // it does both, on the release's own path: the block walk for this one-axis move to 1.17.1
+        // (1.16.5 Entity.java:835, VoxelShapes.java:243-306), the list from 1.18
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 1),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape {
+                    bounds: Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.5, 1.0)),
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        let walk = |reach: f64, version: &str| {
+            let mut state = SimulationState {
+                position: Vec3::new(reach - 0.3, 0.0, 0.65),
+                velocity: Vec3::new(0.0, 0.0, 0.1),
+                half_width: 0.3,
+                height: 1.8,
+                is_player: true,
+                no_gravity: true,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            state
+        };
+        for version in ["1.14.4", "1.16.5", "1.17.1", "1.18.2", "1.21.11", "26.3"] {
+            let past = walk(5.0e-8, version);
+            assert_eq!(past.position.z, 0.65 + 0.1, "{version}");
+            assert!(!past.collided_horizontally, "{version}");
+
+            let into = walk(2.0e-7, version);
+            assert_eq!(into.position.z, 0.65 + (1.0 - (0.65 + 0.3)), "{version}");
+            assert!(into.collided_horizontally, "{version}");
+        }
+    }
+
     #[test]
     fn supporting_effect_uses_entity_footprint_not_center_cell() {
         let mut world = WorldSnapshot::new();
@@ -3925,6 +4278,41 @@ mod tests {
     }
 
     #[test]
+    fn a_passenger_takes_no_item_use_slowdown_in_any_release() {
+        // isUsingItem() && !hasVehicle() (1.8.9 ClientPlayerEntity.java:540, 1.13.2 :703, 1.14 :621,
+        // 1.20.4 :662, 1.21.4 :667; 1.21.5 LocalPlayer.java:629, 26.3 :695): the rider's travel from
+        // rest, whose result stays in its motion, runs on the whole input
+        let travelled = |release, using_item, passenger| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.0, 2.0, 0.0),
+                is_player: true,
+                input: Vec3::new(1.0, 0.0, 1.0),
+                using_item,
+                passenger,
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            tick_release(&mut state, &WorldSnapshot::new(), release);
+            (state.velocity.x, state.velocity.z)
+        };
+        for release in [
+            MinecraftVersion::new(1, 8, 8),
+            MinecraftVersion::new(1, 13, 2),
+            MinecraftVersion::new(1, 20, 4),
+            MinecraftVersion::new(1, 21, 4),
+            MinecraftVersion::new(1, 21, 5),
+            MinecraftVersion::new(26, 3, 0),
+        ] {
+            let free = travelled(release, false, true);
+            assert_ne!(free, (0.0, 0.0), "{release:?}");
+            assert_eq!(travelled(release, true, true), free, "{release:?}");
+            let (walked, used) = (travelled(release, false, false), travelled(release, true, false));
+            assert!(used.0.abs() < walked.0.abs() && used.0 != 0.0, "{release:?}: {used:?} {walked:?}");
+        }
+    }
+
+    #[test]
     fn removed_player_stops_its_move_after_the_collision_then_stops_moving_from_1_19_1() {
         let mut world = WorldSnapshot::new();
         world.set_block(
@@ -4203,19 +4591,41 @@ mod tests {
     }
 
     #[test]
-    fn a_riptide_launch_needs_water_and_release_1_13() {
-        let launched = |in_water: bool, release| {
+    fn a_riptide_launch_needs_water_or_rain_and_release_1_13() {
+        let launched = |in_water: bool, in_rain: bool, passenger: bool, release| {
             let mut state = SimulationState {
                 in_water,
+                in_rain,
+                passenger,
                 ..releasing_riptide(1, Vec3::new(0.5, 2.0, 0.5), false)
             };
             tick_release(&mut state, &pool(), release);
             state.position.x - 0.5
         };
 
-        assert_eq!(launched(true, MinecraftVersion::new(1, 13, 0)), 1.5);
-        assert_eq!(launched(false, MinecraftVersion::new(26, 2, 0)), 0.0);
-        assert_eq!(launched(true, MinecraftVersion::new(1, 12, 2)), 0.0);
+        assert_eq!(launched(true, false, false, MinecraftVersion::new(1, 13, 0)), 1.5);
+        assert_eq!(launched(false, true, false, MinecraftVersion::new(1, 13, 0)), 1.5);
+        assert_eq!(launched(false, true, false, MinecraftVersion::new(26, 3, 0)), 1.5);
+        assert_eq!(launched(false, false, false, MinecraftVersion::new(26, 2, 0)), 0.0);
+        assert_eq!(launched(true, false, false, MinecraftVersion::new(1, 12, 2)), 0.0);
+        assert_eq!(launched(false, true, false, MinecraftVersion::new(1, 12, 2)), 0.0);
+        // 26.1 keeps a passenger from it (26.3 TridentItem.java:64), rain or not. Before, it launches,
+        // and the push is the motion rideTick then zeroes: the seat stays (1.20.4 Entity.java:1843-1847,
+        // 1.21.11 and 26.3 Entity.java:2465-2470); the launch shows in the lift off the ground
+        let lift = |release| {
+            let mut state = SimulationState {
+                in_rain: true,
+                passenger: true,
+                ..releasing_riptide(1, Vec3::new(0.5, 1.0, 0.5), true)
+            };
+            tick_release(&mut state, &pool(), release);
+            assert_eq!(state.position, Vec3::new(0.5, 1.0, 0.5));
+            state.riptide_lift.y
+        };
+        assert_eq!(launched(false, true, true, MinecraftVersion::new(26, 1, 0)), 0.0);
+        assert_eq!(lift(MinecraftVersion::new(26, 1, 0)), 0.0);
+        assert_eq!(launched(false, true, true, MinecraftVersion::new(1, 21, 11)), 0.0);
+        assert!((lift(MinecraftVersion::new(1, 21, 11)) - 1.1999999).abs() < 1.0e-6);
     }
 
     #[test]
@@ -5772,6 +6182,35 @@ mod tests {
     }
 
     #[test]
+    fn the_engine_never_starts_a_glide_and_keeps_one_it_is_given() {
+        // the start is LocalPlayer.aiStep's and the end of one in the air the server's (26.3
+        // LocalPlayer.java:833, LivingEntity.java:3119-3127): a jump in the air starts nothing,
+        // and a flag the caller set glides with no equipment to read
+        for release in [
+            MinecraftVersion::new(1, 16, 5),
+            MinecraftVersion::new(1, 21, 1),
+            MinecraftVersion::new(26, 3, 0),
+        ] {
+            let world = WorldSnapshot::new();
+            let start = |fall_flying| SimulationState {
+                position: Vec3::new(0.5, 20.0, 0.5),
+                velocity: Vec3::new(0.0, -0.5, 0.5),
+                is_player: true,
+                jump_requested: true,
+                fall_flying,
+                ..SimulationState::default()
+            };
+            let mut falling = start(false);
+            tick_release(&mut falling, &world, release);
+            assert!(!falling.fall_flying, "{release:?}");
+            let mut gliding = start(true);
+            tick_release(&mut gliding, &world, release);
+            assert!(gliding.fall_flying, "{release:?}");
+            assert_ne!(gliding.velocity, falling.velocity, "{release:?}");
+        }
+    }
+
+    #[test]
     fn fall_flying_redirects_velocity_toward_look_direction() {
         let mut state = SimulationState {
             velocity: Vec3::new(1.0, 0.0, 0.0),
@@ -6671,6 +7110,33 @@ mod tests {
     }
 
     #[test]
+    fn the_ticks_own_bubble_column_push_asks_can_simulate_movement_from_26_3() {
+        // the tick's applyEffectsFromBlocks reaches the same handleOnInsideBubbleColumn (26.3
+        // Entity.java:3005-3017; 26.2 Entity.java:2911-2922 has no test)
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), bubble_column(BlockEffect::BubbleUp));
+        world.set_block((0, 1, 0), bubble_column(BlockEffect::BubbleUp));
+        let at = |exact| SimulationState {
+            position: Vec3::new(0.5, 0.25, 0.5),
+            height: 0.5,
+            client_side: true,
+            can_simulate_movement: exact,
+            ..SimulationState::default()
+        };
+        for (release, exact, pushed) in [
+            (MinecraftVersion::new(26, 2, 0), Some(false), true),
+            (MinecraftVersion::new(26, 3, 0), Some(false), false),
+            (MinecraftVersion::new(26, 3, 0), Some(true), true),
+        ] {
+            assert_eq!(
+                bubble_push(&world, at(exact), release),
+                if pushed { 0.06 } else { 0.0 },
+                "{release} {exact:?}"
+            );
+        }
+    }
+
+    #[test]
     fn bubble_columns_push_from_each_axis_step_of_the_move_from_1_21_5() {
         let mut world = WorldSnapshot::new();
         for x in 0..2 {
@@ -7193,6 +7659,271 @@ mod tests {
         assert_eq!(state.freeze_damage, 1.0);
     }
 
+    /// A server's glide at `velocity` along its own direction, a stone wall at x = 2 a gap of 0.1
+    /// from the box, unless `edit` moves the state; `around` adds to the world.
+    fn wall_impact(
+        velocity: Vec3,
+        around: impl FnOnce(&mut WorldSnapshot),
+        edit: impl FnOnce(&mut SimulationState),
+        release: MinecraftVersion,
+    ) -> SimulationState {
+        let mut world = WorldSnapshot::new();
+        for y in 8..=12 {
+            for z in -2..=4 {
+                world.set_block(
+                    (2, y, z),
+                    BlockState {
+                        id: 1,
+                        shape: Some(BlockShape::full_block()),
+                        ..BlockState::default()
+                    },
+                );
+            }
+        }
+        around(&mut world);
+        let speed = (velocity.x * velocity.x + velocity.z * velocity.z).sqrt();
+        let mut state = SimulationState {
+            position: Vec3::new(1.6, 10.0, 0.5),
+            half_width: 0.3,
+            height: 0.6,
+            velocity,
+            is_player: true,
+            fall_flying: true,
+            no_gravity: true,
+            controlled_by_local_instance: true,
+            look: Vec3::new(velocity.x / speed, 0.0, velocity.z / speed),
+            ..SimulationState::default()
+        };
+        edit(&mut state);
+        let rules = VersionPhysicsRules {
+            release,
+            ..VersionPhysicsRules::default()
+        };
+        tick_with_rules(&mut state, &world, PhysicsConfig::default(), rules);
+        state
+    }
+
+    fn head_on(speed: f64, release: MinecraftVersion) -> f64 {
+        wall_impact(Vec3::new(speed, 0.0, 0.0), |_| {}, |_| {}, release).wall_damage
+    }
+
+    #[test]
+    fn a_flight_into_a_wall_deals_ten_times_the_speed_lost_less_3() {
+        // the speed is the motion's before the glide's 0.99, the damage a float:
+        // (float)(lost * 10 - 3) (1.9.4 LivingEntity.java:1335, 1363-1371; 1.20.4 :2133; 1.21.3
+        // :2278-2286; 26.3 :2504-2510, 2546-2553). 1.8.9's LivingEntity has no flyIntoWall.
+        for version in [
+            "1.9.4", "1.13.2", "1.16.5", "1.20.4", "1.21.1", "1.21.3", "1.21.5", "1.21.11", "26.2",
+            "26.3",
+        ] {
+            let release = MinecraftVersion::parse(version).unwrap();
+            assert_eq!(head_on(1.0, release), 7.0, "{version}");
+            // 0.31 * 10 - 3 is 0.10000000000000009 in double
+            assert_eq!(head_on(0.31, release), 0.10000000149011612, "{version}");
+            // around the threshold, 0.3 * 10.0 being 3.0 exactly; a speed taken after the glide's
+            // 0.99 would miss the last
+            assert_eq!(head_on(0.29999999999999993, release), 0.0, "{version}");
+            assert_eq!(head_on(0.3, release), 0.0, "{version}");
+            assert_eq!(
+                head_on(0.30000000000000004, release),
+                f64::from(4.440892098500626e-16_f64 as f32),
+                "{version}"
+            );
+        }
+        assert_eq!(head_on(1.0, MinecraftVersion::new(1, 8, 9)), 0.0);
+    }
+
+    #[test]
+    fn a_glancing_flight_into_a_wall_loses_only_the_speed_the_wall_took() {
+        // equal speeds: the motion along z stays, the glide's 0.99 of it, and counts as kept
+        // (26.3 LivingEntity.java:2505-2510, 2548)
+        let release = MinecraftVersion::new(26, 3, 0);
+        let glancing = wall_impact(Vec3::new(0.8, 0.0, 0.6), |_| {}, |_| {}, release);
+        assert!(glancing.collided_horizontally);
+        assert_eq!(glancing.velocity.x.abs(), 0.0);
+        let kept = glancing.velocity.z;
+        assert!((kept - 0.6 * f64::from(0.99_f32)).abs() < 1.0e-12);
+        let lost = (0.8_f64 * 0.8 + 0.6 * 0.6).sqrt() - kept;
+        assert_eq!(glancing.wall_damage, f64::from((lost * 10.0 - 3.0) as f32));
+        assert!(glancing.wall_damage > 0.0 && glancing.wall_damage < 7.0);
+
+        // nearer along the wall the same speed loses too little
+        let shallow = wall_impact(Vec3::new(0.6, 0.0, 0.8), |_| {}, |_| {}, release);
+        assert!(shallow.collided_horizontally);
+        assert_eq!(shallow.wall_damage, 0.0);
+    }
+
+    #[test]
+    fn the_speed_a_flight_keeps_is_the_one_entity_move_left() {
+        // Entity.move ends by the block speed factor before travelFallFlying reads the speed
+        // (26.3 Entity.java:850-851, LivingEntity.java:2505-2510): a slow block's mob loses more;
+        // a gliding player keeps a factor of 1 (block_speed_factor)
+        let release = MinecraftVersion::new(26, 3, 0);
+        let soul_sand = |world: &mut WorldSnapshot| {
+            world.set_block(
+                (1, 10, 1),
+                BlockState {
+                    id: 2,
+                    shape: Some(BlockShape {
+                        bounds: Aabb::new(Vec3::ZERO, Vec3::ZERO),
+                        effect: BlockEffect::SoulSand,
+                        ..BlockShape::full_block()
+                    }),
+                    ..BlockState::default()
+                },
+            );
+        };
+        let mob = |state: &mut SimulationState| state.is_player = false;
+        let flight = Vec3::new(0.8, 0.0, 0.6);
+        let slowed = wall_impact(flight, soul_sand, mob, release);
+        let unslowed = wall_impact(flight, |_| {}, mob, release);
+        assert!((slowed.velocity.z - unslowed.velocity.z * f64::from(0.4_f32)).abs() < 1.0e-12);
+        let lost = (0.8_f64 * 0.8 + 0.6 * 0.6).sqrt() - slowed.velocity.z;
+        assert_eq!(slowed.wall_damage, f64::from((lost * 10.0 - 3.0) as f32));
+        assert!(slowed.wall_damage > unslowed.wall_damage);
+        let player = wall_impact(flight, soul_sand, |_| {}, release);
+        assert_eq!(player.wall_damage, unslowed.wall_damage);
+    }
+
+    #[test]
+    fn a_wall_impact_is_only_the_servers_and_only_a_flights() {
+        // the client's glide skips it, for the same collision and motion (26.3
+        // LivingEntity.java:2508, 1.9.4 :1363)
+        for version in ["1.9.4", "1.20.4", "26.3"] {
+            let release = MinecraftVersion::parse(version).unwrap();
+            let client = wall_impact(
+                Vec3::new(1.0, 0.0, 0.0),
+                |_| {},
+                |state| state.client_side = true,
+                release,
+            );
+            let server = wall_impact(Vec3::new(1.0, 0.0, 0.0), |_| {}, |_| {}, release);
+            assert_eq!(client.wall_damage, 0.0, "{version}");
+            assert_eq!(server.wall_damage, 7.0, "{version}");
+            assert!(client.collided_horizontally, "{version}");
+            assert_eq!(client.position, server.position, "{version}");
+            assert_eq!(client.velocity, server.velocity, "{version}");
+        }
+        let release = MinecraftVersion::new(26, 3, 0);
+        // free flight: the speed drops by the glide's 0.99 and nothing is hit
+        let free = wall_impact(
+            Vec3::new(1.0, 0.0, 0.0),
+            |_| {},
+            |state| state.position = Vec3::new(-20.0, 10.0, 0.5),
+            release,
+        );
+        assert!(!free.collided_horizontally);
+        assert_eq!(free.wall_damage, 0.0);
+        // a landing straight down collides below alone
+        let landing = wall_impact(
+            Vec3::new(0.0, -1.5, 0.0),
+            |world| {
+                world.set_block(
+                    (1, 9, 0),
+                    BlockState {
+                        id: 1,
+                        shape: Some(BlockShape::full_block()),
+                        ..BlockState::default()
+                    },
+                );
+            },
+            |state| {
+                state.position = Vec3::new(1.5, 10.1, 0.5);
+                state.look = Vec3::new(1.0, 0.0, 0.0);
+            },
+            release,
+        );
+        assert!(landing.collided_vertically && !landing.collided_horizontally);
+        assert_eq!(landing.wall_damage, 0.0);
+        // no glide, no impact: without the flag the same hit is an ordinary one
+        let walking = wall_impact(
+            Vec3::new(1.0, 0.0, 0.0),
+            |_| {},
+            |state| state.fall_flying = false,
+            release,
+        );
+        assert!(walking.collided_horizontally);
+        assert_eq!(walking.wall_damage, 0.0);
+        // nor does the next tick repeat it, and the fall's damage stays apart
+        let mut state = wall_impact(Vec3::new(1.0, 0.0, 0.0), |_| {}, |_| {}, release);
+        assert_eq!(state.fall_damage, 0.0);
+        let rules = VersionPhysicsRules {
+            release,
+            ..VersionPhysicsRules::default()
+        };
+        tick_with_rules(&mut state, &WorldSnapshot::new(), PhysicsConfig::default(), rules);
+        assert_eq!(state.wall_damage, 0.0);
+    }
+
+    #[test]
+    fn a_glide_stopped_on_a_climbable_block_hits_no_wall_from_1_21_5() {
+        // 1.21.5 travelFallFlying leaves a climbable block's travel to travelInAir (1.21.5
+        // LivingEntity.java:2299-2302); before, the glide goes on (1.21.3 :2278-2286)
+        let climbing = |release| {
+            wall_impact(
+                Vec3::new(1.0, 0.0, 0.0),
+                |_| {},
+                |state| state.climbing = true,
+                release,
+            )
+        };
+        assert_eq!(climbing(MinecraftVersion::new(1, 21, 4)).wall_damage, 7.0);
+        assert_eq!(climbing(MinecraftVersion::new(1, 21, 5)).wall_damage, 0.0);
+    }
+
+    #[test]
+    fn contact_damage_is_the_servers_alone() {
+        // hurt is the server's in every family (1.8.9 ClientPlayerEntity.java:90-92, LivingEntity.java:672-674;
+        // 1.20.4 ClientPlayerEntity.java:151-153, LivingEntity.java:1096-1098; 1.21.3 MagmaBlock.java:30; 26.3
+        // Entity.java:1969-1975); the block's other effects stay on the client's side
+        let effect_world = |effect, position| {
+            let mut world = WorldSnapshot::new();
+            world.set_block(
+                position,
+                BlockState {
+                    shape: Some(BlockShape {
+                        effect,
+                        ..BlockShape::full_block()
+                    }),
+                    ..BlockState::default()
+                },
+            );
+            world
+        };
+        let dealt = |world: &WorldSnapshot, client_side, release| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 1.0, 0.5),
+                // gravity's step of a standing entity
+                velocity: Vec3::new(0.0, -0.0784, 0.0),
+                on_ground: true,
+                // the local player on a client, another entity on a server: both tick their moves
+                is_player: client_side,
+                client_side,
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            tick_release(&mut state, world, release);
+            state.contact_damage
+        };
+        let magma = effect_world(BlockEffect::Magma, (0, 0, 0));
+        let fire = passable_effect_world((0, 1, 0), BlockEffect::SoulFire);
+        for release in [
+            MinecraftVersion::new(1, 8, 8),
+            MinecraftVersion::new(1, 20, 4),
+            MinecraftVersion::new(1, 21, 3),
+            MinecraftVersion::new(26, 3, 0),
+        ] {
+            // magma is not a block of 1.8 (no MagmaBlock in the 1.8.9 or 1.9.4 sources)
+            if release.at_least(1, 10, 0) {
+                assert_eq!(dealt(&magma, false, release), 1.0, "{release:?}");
+                assert_eq!(dealt(&magma, true, release), 0.0, "{release:?}");
+            }
+            assert_eq!(dealt(&fire, false, release), 2.0, "{release:?}");
+            assert_eq!(dealt(&fire, true, release), 0.0, "{release:?}");
+        }
+    }
+
     #[test]
     fn damage_surfaces_emit_source_specific_contact_damage() {
         let mut magma_world = WorldSnapshot::new();
@@ -7361,6 +8092,56 @@ mod tests {
     }
 
     #[test]
+    fn fire_resistance_refuses_what_burns_and_not_a_cactus() {
+        // LivingEntity.hurtServer refuses a #is_fire damage under the effect (1.20.4
+        // LivingEntity.java:1104, 26.3 :1154), hot_floor and campfire among them (1.21.11
+        // DamageTypeTagsProvider.java:59-68; hotFloor.setFire, 1.10.2 DamageSource.java:20)
+        let release = MinecraftVersion::new(26, 3, 0);
+        for (effect, unprotected) in [
+            (BlockEffect::Campfire, 1.0),
+            (BlockEffect::SoulCampfire, 2.0),
+            (BlockEffect::Fire, 1.0),
+            (BlockEffect::SoulFire, 2.0),
+            (BlockEffect::Cactus, 1.0),
+        ] {
+            let world = passable_effect_world((0, 1, 0), effect);
+            let touching = |fire_resistance| {
+                let mut state = SimulationState {
+                    position: Vec3::new(0.5, 1.5, 0.5),
+                    height: 1.8,
+                    no_gravity: true,
+                    fire_resistance,
+                    ..SimulationState::default()
+                };
+                tick_release(&mut state, &world, release);
+                state.contact_damage
+            };
+            assert_eq!(touching(false), unprotected, "{effect:?}");
+            let expected = if effect == BlockEffect::Cactus { unprotected } else { 0.0 };
+            assert_eq!(touching(true), expected, "{effect:?}");
+        }
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                shape: Some(BlockShape {
+                    effect: BlockEffect::Magma,
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 1.0, 0.5),
+            on_ground: true,
+            fire_resistance: true,
+            ..SimulationState::default()
+        };
+        tick_release(&mut state, &world, release);
+        assert_eq!(state.contact_damage, 0.0);
+    }
+
+    #[test]
     fn lit_campfires_spare_frost_walker() {
         // CampfireBlock.entityInside skips a wearer of Frost Walker before 1.21 (1.20.5
         // CampfireBlock.java:104), the enchantment's immunity to the campfire damage type from 1.21
@@ -7376,6 +8157,28 @@ mod tests {
             tick_release(&mut state, &world, release);
             assert_eq!(state.contact_damage, 0.0);
         }
+    }
+
+    #[test]
+    fn a_campfire_reaches_the_whole_of_its_block_on_26_3() {
+        // CampfireBlock has no getEntityInsideCollisionShape (26.3 CampfireBlock.java), so the default
+        // Shapes.block() holds (BlockBehaviour.java:298-300) and Entity.java:1386-1387 counts any box in
+        // its cell, over the 7/16 of its shape (:270) too; a box out of the cell is not inside
+        let world = passable_effect_world((0, 1, 0), BlockEffect::Campfire);
+        let dealt = |y: f64| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, y, 0.5),
+                height: 1.8,
+                no_gravity: true,
+                ..SimulationState::default()
+            };
+            tick_release(&mut state, &world, MinecraftVersion::new(26, 3, 0));
+            state.contact_damage
+        };
+        // (7/16 up the cell, at the top of the shape, and over it)
+        assert_eq!(dealt(1.0 + 7.0 / 16.0), 1.0);
+        assert_eq!(dealt(1.9), 1.0);
+        assert_eq!(dealt(2.1), 0.0);
     }
 
     #[test]
@@ -7867,8 +8670,10 @@ mod tests {
             (MinecraftVersion::new(1, 18, 2), false),
             (MinecraftVersion::new(1, 21, 11), false),
         ] {
+            // (a hair past the edge: the join's 1e-7 merge leaves out a box flush with it, as a
+            // recorded 1.17.1 player against the world border shows)
             let mut state = SimulationState {
-                position: Vec3::new(4.75, 0.0, 0.5),
+                position: Vec3::new(4.75 + 5.0e-8, 0.0, 0.5),
                 half_width: 0.25,
                 height: 1.8,
                 eye_height: Some(1.62),
@@ -7877,6 +8682,16 @@ mod tests {
             };
             tick_release(&mut state, &world, release);
             assert_eq!(state.inside_wall, touching, "{release:?}");
+            let mut flush = SimulationState {
+                position: Vec3::new(4.75, 0.0, 0.5),
+                half_width: 0.25,
+                height: 1.8,
+                eye_height: Some(1.62),
+                no_gravity: true,
+                ..SimulationState::default()
+            };
+            tick_release(&mut flush, &world, release);
+            assert!(!flush.inside_wall, "{release:?}");
             let mut away = SimulationState {
                 position: Vec3::new(4.5, 0.0, 0.5),
                 half_width: 0.25,
@@ -7949,6 +8764,148 @@ mod tests {
         let spliterator = MinecraftVersion::new(1, 17, 1);
         assert!(in_wall(spliterator, 0.0, 5.0e-8));
         assert!(!in_wall(spliterator, 0.5, 5.0e-8));
+    }
+
+    #[test]
+    fn mth_floor_of_a_position_past_the_int_range_wraps_until_26_1() {
+        // 1.19.4 MathHelper.floor: the cast then one down wraps to the top (1.19.4 MathHelper.java);
+        // 26.3 Mth.floor saturates (26.3 Mth.java:69-71)
+        let state = SimulationState {
+            position: Vec3::new(-3.0e9, 64.0, 0.5),
+            ..SimulationState::default()
+        };
+        let world = WorldSnapshot::new();
+        let at = |release| crate::simulation::block_below_affecting_movement(&world, &state, None, release).0;
+        assert_eq!(at(MinecraftVersion::new(1, 19, 4)), i32::MAX);
+        assert_eq!(at(MinecraftVersion::new(26, 3, 0)), i32::MIN);
+    }
+
+    #[test]
+    fn a_fall_past_the_int_range_deals_what_mth_ceil_leaves() {
+        // computeFallDamage is an int: Mth.ceil wraps a huge fall to a negative, no damage, in 1.21.4
+        // (1.21.4 LivingEntity.java:1657-1664); Mth.floor stays at the top from 1.21.5 (1.21.5
+        // :1672-1682), the same value 26.3's cast gives
+        use crate::simulation::{attribute_landing_damage, LandingDamageRounding};
+        let damage = |rounding, release| attribute_landing_damage(3.0e9, 3.0, 1.0, 1.0, rounding, release);
+        let (ceil, floor) = (LandingDamageRounding::Ceil, LandingDamageRounding::Floor);
+        assert_eq!(damage(ceil, MinecraftVersion::new(1, 21, 4)), 0.0);
+        assert_eq!(damage(floor, MinecraftVersion::new(1, 21, 11)), f64::from(i32::MAX));
+        assert_eq!(damage(floor, MinecraftVersion::new(26, 3, 0)), f64::from(i32::MAX));
+        assert_eq!(attribute_landing_damage(10.0, 3.0, 1.0, 1.0, ceil, MinecraftVersion::new(1, 21, 4)), 7.0);
+    }
+
+    #[test]
+    fn the_same_block_is_a_wall_by_eye_height_width_and_flags() {
+        // Entity.isInWall reads the eye and 0.8 of the width, each release in its form (1.15
+        // Entity.java:1578-1586, 1.16.5 :1645-1648, 1.17 :1667-1669, 1.19 :1683-1692, 26.3 :2325-2335)
+        // and Entity.noPhysics stops it: a crouch's eye below the block, a scale's narrower box beside
+        // it, a spectator and a sleeper are no wall where a plain player is. Negative cells round down.
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (-1, 1, -1),
+            BlockState { shape: Some(BlockShape::full_block()), ..BlockState::default() },
+        );
+        for release in [
+            MinecraftVersion::new(1, 8, 8),
+            MinecraftVersion::new(1, 15, 2),
+            MinecraftVersion::new(1, 16, 5),
+            MinecraftVersion::new(1, 17, 1),
+            MinecraftVersion::new(1, 18, 2),
+            MinecraftVersion::new(1, 19, 0),
+            MinecraftVersion::new(26, 3, 0),
+        ] {
+            let in_wall = |x: f64, half_width: f64, eye: f64, no_physics: bool, sleeping: bool| {
+                let mut state = SimulationState {
+                    position: Vec3::new(x, 0.0, -0.5),
+                    half_width,
+                    height: 1.8,
+                    eye_height: Some(eye),
+                    no_gravity: true,
+                    no_physics,
+                    sleeping,
+                    ..SimulationState::default()
+                };
+                tick_release(&mut state, &world, release);
+                state.inside_wall
+            };
+            assert!(in_wall(-0.5, 0.3, 1.5, false, false), "{release:?}");
+            assert!(!in_wall(-0.5, 0.3, 0.9, false, false), "crouched {release:?}");
+            assert!(!in_wall(-0.5, 0.3, 1.5, true, false), "spectator {release:?}");
+            assert!(!in_wall(-0.5, 0.3, 1.5, false, true), "sleeping {release:?}");
+            // beside the block: only the width reaches over x=0
+            assert!(in_wall(0.2, 0.3, 1.5, false, false), "wide {release:?}");
+            assert!(!in_wall(0.2, 0.15, 1.5, false, false), "scaled {release:?}");
+        }
+    }
+
+    #[test]
+    fn a_sleeper_in_a_wall_is_no_wall_and_still_pushed_out() {
+        // LivingEntity.isInWall answers false for a sleeper (26.3 LivingEntity.java:3823-3825), and
+        // LocalPlayer.aiStep's moveTowardsClosestSpace asks only noPhysics and from 26.3 isPassenger
+        // (1.20.4 ClientPlayerEntity.java:675, 26.3 LocalPlayer.java:774): the phases part
+        let world = wall_along_z(None);
+        for version in ["1.21.1", "26.3"] {
+            let mut state = SimulationState {
+                position: Vec3::new(0.2, 0.0, 0.5),
+                half_width: 0.3,
+                height: 1.8,
+                is_player: true,
+                no_gravity: true,
+                sleeping: true,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default()).unwrap();
+            assert!(!state.inside_wall, "{version}");
+            assert_eq!(state.position.x, 0.2 + -0.1, "{version}");
+            // a passenger is spared the push only from 26.3
+            let mut riding = SimulationState {
+                position: Vec3::new(0.2, 0.0, 0.5),
+                half_width: 0.3,
+                height: 1.8,
+                is_player: true,
+                no_gravity: true,
+                passenger: true,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch(version, &mut riding, &world, PhysicsConfig::default()).unwrap();
+            assert_eq!(riding.position.x, 0.2, "the seat holds it: {version}");
+            assert_eq!(riding.velocity.x == 0.0, version == "26.3", "{version}");
+        }
+    }
+
+    #[test]
+    fn a_spectator_leaves_the_ground_and_its_block_on_the_tick_it_turns() {
+        // Player.tick: noPhysics = isSpectator(), then setOnGround(false) (26.3 Player.java:218-220,
+        // 1.20.4 PlayerEntity.java), which empties the supporting block (1.21.11 Entity.java:680-684)
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState { shape: Some(BlockShape::full_block()), ..BlockState::default() },
+        );
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 1.0, 0.5),
+            half_width: 0.3,
+            height: 1.8,
+            velocity: Vec3::new(0.0, -0.1, 0.0),
+            is_player: true,
+            on_ground: true,
+            ..SimulationState::default()
+        };
+        let release = MinecraftVersion::new(26, 3, 0);
+        tick_release(&mut state, &world, release);
+        assert!(state.on_ground);
+        assert_eq!(state.supporting_block, Some((0, 0, 0)));
+        state.no_physics = true;
+        tick_release(&mut state, &world, release);
+        assert!(!state.on_ground);
+        assert_eq!(state.supporting_block, None);
+        // and back on the ground the first move finds it again
+        state.no_physics = false;
+        state.position = Vec3::new(0.5, 1.0, 0.5);
+        state.velocity = Vec3::new(0.0, -0.1, 0.0);
+        tick_release(&mut state, &world, release);
+        assert!(state.on_ground);
+        assert_eq!(state.supporting_block, Some((0, 0, 0)));
     }
 
     #[test]
@@ -8070,6 +9027,118 @@ mod tests {
         tick(&mut state, &world, PhysicsConfig::default());
 
         assert!(state.velocity.x > 0.9);
+    }
+
+    fn world_with_bush(effect: BlockEffect) -> WorldSnapshot {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 1, 0),
+            BlockState {
+                shape: Some(BlockShape {
+                    effect,
+                    bounds: Aabb::new(Vec3::ZERO, Vec3::ZERO),
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        world
+    }
+
+    fn pricked(effect: BlockEffect, velocity: Vec3, state: SimulationState) -> f64 {
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 1.5, 0.5),
+            velocity,
+            half_width: 0.3,
+            height: 1.8,
+            no_gravity: true,
+            ..state
+        };
+        tick(&mut state, &world_with_bush(effect), PhysicsConfig::default());
+        state.contact_damage
+    }
+
+    #[test]
+    fn a_grown_bush_pricks_what_moved_0_003f_along_an_axis() {
+        // (26.3 SweetBerryBushBlock.java:80-88)
+        let base = SimulationState::default();
+        let step = f64::from(0.003_f32);
+        assert_eq!(pricked(BlockEffect::SweetBerryBush, Vec3::new(step, 0.0, 0.0), base), 1.0);
+        assert_eq!(pricked(BlockEffect::SweetBerryBush, Vec3::new(0.0, 0.0, -step), base), 1.0);
+        assert_eq!(pricked(BlockEffect::SweetBerryBush, Vec3::new(0.0029, 0.0, 0.0029), base), 0.0);
+        assert_eq!(pricked(BlockEffect::SweetBerryBush, Vec3::new(0.0, -0.5, 0.0), base), 0.0);
+        // age 0 slows and deals nothing, on the client nothing is dealt, and what is immune is not hurt
+        assert_eq!(pricked(BlockEffect::SweetBerrySapling, Vec3::new(0.1, 0.0, 0.0), base), 0.0);
+        let client = SimulationState { client_side: true, ..base };
+        assert_eq!(pricked(BlockEffect::SweetBerryBush, Vec3::new(0.1, 0.0, 0.0), client), 0.0);
+        let fox = SimulationState { sweet_berry_bush_immune: true, ..base };
+        assert_eq!(pricked(BlockEffect::SweetBerryBush, Vec3::new(0.1, 0.0, 0.0), fox), 0.0);
+    }
+
+    #[test]
+    fn a_young_bush_slows_as_a_grown_one() {
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 1.5, 0.5),
+            half_width: 0.3,
+            height: 1.8,
+            no_gravity: true,
+            ..SimulationState::default()
+        };
+        let world = world_with_bush(BlockEffect::SweetBerrySapling);
+        tick(&mut state, &world, PhysicsConfig::default());
+        assert_eq!(
+            state.stuck_speed_multiplier,
+            Vec3::new(java_float(0.8), 0.75, java_float(0.8))
+        );
+    }
+
+    #[test]
+    fn fire_resistance_refuses_every_hot_surface_and_leaves_the_rest() {
+        // LivingEntity.hurt returns false for a fire source under the effect (1.8.9
+        // LivingEntity.java:682, 1.20.4 :1104, 26.3 :1154); a hot floor and a fire are such sources,
+        // a cactus is not
+        let hit = |effect: BlockEffect, below: bool, fire_resistance: bool| {
+            let mut world = WorldSnapshot::new();
+            world.set_block(
+                (0, i32::from(!below), 0),
+                BlockState {
+                    shape: Some(BlockShape {
+                        effect,
+                        bounds: if below {
+                            BlockShape::full_block().bounds
+                        } else {
+                            Aabb::new(Vec3::ZERO, Vec3::ZERO)
+                        },
+                        ..BlockShape::full_block()
+                    }),
+                    ..BlockState::default()
+                },
+            );
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 1.0, 0.5),
+                half_width: 0.3,
+                height: 1.8,
+                on_ground: below,
+                no_gravity: true,
+                fire_resistance,
+                ..SimulationState::default()
+            };
+            tick(&mut state, &world, PhysicsConfig::default());
+            state.contact_damage
+        };
+        assert_eq!(hit(BlockEffect::Magma, true, false), 1.0);
+        assert_eq!(hit(BlockEffect::Magma, true, true), 0.0);
+        for (effect, damage) in [
+            (BlockEffect::Campfire, 1.0),
+            (BlockEffect::SoulCampfire, 2.0),
+            (BlockEffect::Fire, 1.0),
+            (BlockEffect::SoulFire, 2.0),
+        ] {
+            assert_eq!(hit(effect, false, false), damage);
+            assert_eq!(hit(effect, false, true), 0.0);
+        }
+        assert_eq!(hit(BlockEffect::Cactus, false, false), 1.0);
+        assert_eq!(hit(BlockEffect::Cactus, false, true), 1.0);
     }
 
     #[test]
@@ -9137,7 +10206,7 @@ mod tests {
             let release = MinecraftVersion::parse(version).unwrap();
             assert!(world.is_free_for_entity(hop, entity, release), "{version}");
         }
-        assert!(world.is_free(hop));
+        assert!(world.is_free(hop, MinecraftVersion::new(26, 3, 0)));
     }
 
     fn place_box(world: &mut WorldSnapshot, position: (i32, i32, i32), min: Vec3, max: Vec3) {
@@ -9384,7 +10453,7 @@ mod tests {
         };
         let release = MinecraftVersion::parse("1.21.11").unwrap();
         assert!(world.is_free_for_entity(hop, entity, release));
-        assert!(!world.is_free(hop));
+        assert!(!world.is_free(hop, MinecraftVersion::new(26, 3, 0)));
     }
 
     #[test]
@@ -9410,8 +10479,10 @@ mod tests {
         assert!(!world.no_collision_for_entity(across, entity_at(4.5), release("1.21.11")));
         assert!(world.no_collision_for_entity(inside, entity_at(4.5), release("1.21.11")));
         // the box at the edge touches the border: every query collides before 1.18
-        assert!(!world.no_collision_for_entity(inside, entity_at(4.7), release("1.17.1")));
-        assert!(!world.no_collision_for_entity(inside, entity_at(4.7), release("1.14.4")));
+        assert!(!world.no_collision_for_entity(inside, entity_at(4.7 + 5.0e-8), release("1.17.1")));
+        assert!(!world.no_collision_for_entity(inside, entity_at(4.7 + 5.0e-8), release("1.14.4")));
+        // (flush with it, it does not: the join's 1e-7 merge drops the sliver)
+        assert!(world.no_collision_for_entity(inside, entity_at(4.7), release("1.17.1")));
         assert!(world.no_collision_for_entity(inside, entity_at(4.5), release("1.16.5")));
         // before 1.14 the cells outside are stone to an entity inside
         assert!(!world.no_collision_for_entity(across, entity_at(4.5), release("1.12.2")));
@@ -9612,6 +10683,90 @@ mod tests {
                 "{release}"
             );
             assert_eq!(state.fall_distance, 0.0, "{release}");
+        }
+    }
+
+    #[test]
+    fn a_long_fall_reaches_block_effects_only_as_far_as_the_budget() {
+        // A fall of 30 from 40. From 1.21.9 the walk accepts 15 iterations, the cells 39 - 25 (26.3
+        // Entity.java:1374, BlockGetter.java:248-250), then checkInsideBlocks(to, to, 1) reads the
+        // final box at 10 and 11 (:1342-1344); 1.21.8 walks the cells 39 - 23 and always ends with
+        // that box (1.21.8 BlockGetter.java:186-197, 234-236). A cobweb sticks (WebBlock.entityInside),
+        // powder snow freezes, a bubble column pushes, here precise by movedFar (26.3
+        // Entity.java:1357, 1392, BubbleColumnBlock.entityInside): each block's effect or nothing
+        let falling = SimulationState {
+            position: Vec3::new(0.5, 40.0, 0.5),
+            velocity: Vec3::new(0.0, -30.0, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            is_player: true,
+            no_gravity: true,
+            ticks_frozen: 10,
+            ..SimulationState::default()
+        };
+        let empty_shaped = |effect| BlockState {
+            id: 1,
+            shape: Some(BlockShape {
+                bounds: Aabb::new(Vec3::ZERO, Vec3::ZERO),
+                effect,
+                ..BlockShape::full_block()
+            }),
+            ..BlockState::default()
+        };
+        let fallen = |cell: Option<(i32, BlockState)>, version: &str| {
+            let mut world = WorldSnapshot::new();
+            if let Some((y, block)) = cell {
+                world.set_block((0, y, 0), block);
+            }
+            let mut state = falling;
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            assert_eq!(state.position.y, 10.0, "{version}");
+            state
+        };
+        let plain_water = BlockState {
+            fluid: FluidState::Water,
+            fluid_source: true,
+            ..BlockState::default()
+        };
+        for (y, reached) in [
+            (25, ["1.21.8", "1.21.9", "1.21.10", "26.3"].as_slice()),
+            (24, ["1.21.8"].as_slice()),
+            (23, ["1.21.8"].as_slice()),
+            (22, [].as_slice()),
+            (11, ["1.21.8", "1.21.9", "1.21.10", "26.3"].as_slice()),
+            (10, ["1.21.8", "1.21.9", "1.21.10", "26.3"].as_slice()),
+        ] {
+            for version in ["1.21.8", "1.21.9", "1.21.10", "26.3"] {
+                let expected = reached.contains(&version);
+                let stuck = fallen(Some((y, empty_shaped(BlockEffect::Web))), version);
+                assert_eq!(
+                    stuck.stuck_speed_multiplier != Vec3::ZERO,
+                    expected,
+                    "web {y} {version}"
+                );
+
+                let frozen = fallen(Some((y, empty_shaped(BlockEffect::PowderSnow))), version);
+                let unfrozen = fallen(None, version);
+                assert_eq!(
+                    frozen.ticks_frozen > unfrozen.ticks_frozen,
+                    expected,
+                    "powder snow {y} {version}"
+                );
+
+                let column = BlockState {
+                    fluid: FluidState::Water,
+                    fluid_source: true,
+                    ..empty_shaped(BlockEffect::BubbleUp)
+                };
+                let pushed = fallen(Some((y, column)), version);
+                let unpushed = fallen(Some((y, plain_water)), version);
+                assert_eq!(
+                    pushed.velocity.y != unpushed.velocity.y,
+                    expected,
+                    "bubbles {y} {version}"
+                );
+            }
         }
     }
 
@@ -9939,6 +11094,7 @@ mod tests {
                 half_width: 0.3,
                 height: 1.8,
                 controlled_by_local_instance: true,
+                client_side: true,
                 ..SimulationState::default()
             };
             crate::versioned::dispatch(
@@ -9965,6 +11121,7 @@ mod tests {
             |version: &str, jump_boost_amplifier: Option<i32>, jump_strength: Option<f64>| {
                 let mut state = SimulationState {
                     is_player: true,
+                    client_side: true,
                     on_ground: true,
                     jump_requested: true,
                     jump_boost_amplifier,
@@ -10160,8 +11317,12 @@ mod tests {
         // 1.21.9 the fire's CLEAR_FREEZE clears them on the first contact (1.21.9
         // BaseFireBlock.java:131-136, InsideBlockEffectType.java)
         let world = fire_world(BlockEffect::SoulFire);
+        let cold = SimulationState {
+            remaining_fire_ticks: Some(-20),
+            ..standing_in_fire(true)
+        };
         for release in [MinecraftVersion::new(1, 21, 5), MinecraftVersion::new(1, 21, 8)] {
-            let mut state = standing_in_fire(true);
+            let mut state = cold;
             for _ in 0..19 {
                 tick_release(&mut state, &world, release);
             }
@@ -10173,7 +11334,7 @@ mod tests {
             assert_eq!(state.ticks_frozen, 0, "{release:?}");
         }
         for release in [MinecraftVersion::new(1, 21, 9), MinecraftVersion::new(26, 3, 0)] {
-            let mut state = standing_in_fire(true);
+            let mut state = cold;
             tick_release(&mut state, &world, release);
             assert_eq!(state.ticks_frozen, 0, "{release:?}");
             assert_eq!(state.remaining_fire_ticks, Some(-19), "{release:?}");
@@ -10191,6 +11352,7 @@ mod tests {
         let empty = WorldSnapshot::new();
         let rained_on = SimulationState {
             in_rain: true,
+            remaining_fire_ticks: Some(-20),
             ..standing_in_fire(true)
         };
         for (release, after) in [
@@ -10257,11 +11419,33 @@ mod tests {
             (MinecraftVersion::new(1, 21, 6), -20),
             (MinecraftVersion::new(26, 3, 0), -20),
         ] {
-            let mut state = standing_in_fire(true);
+            let mut state = SimulationState {
+                remaining_fire_ticks: Some(-20),
+                ..standing_in_fire(true)
+            };
             for _ in 0..10 {
                 tick_release(&mut state, &fire, release);
             }
             assert_eq!(state.remaining_fire_ticks, Some(-10), "{release:?}");
+            tick_release(&mut state, &empty, release);
+            assert_eq!(state.remaining_fire_ticks, Some(after), "{release:?}");
+        }
+    }
+
+    #[test]
+    fn a_dead_entity_keeps_its_fire_count_from_1_21_2_to_1_21_4() {
+        // 1.21.3 Entity.java:769 asks isAlive before it resets the count; 1.21.1 does not ask
+        let empty = WorldSnapshot::new();
+        for (release, after) in [
+            (MinecraftVersion::new(1, 21, 1), -20),
+            (MinecraftVersion::new(1, 21, 2), 0),
+            (MinecraftVersion::new(1, 21, 4), 0),
+        ] {
+            let mut state = SimulationState {
+                remaining_fire_ticks: Some(0),
+                dead: true,
+                ..standing_in_fire(true)
+            };
             tick_release(&mut state, &empty, release);
             assert_eq!(state.remaining_fire_ticks, Some(after), "{release:?}");
         }
@@ -10541,5 +11725,2734 @@ mod tests {
         assert!(fall(MinecraftVersion::new(1, 21, 8)));
         assert!(!fall(MinecraftVersion::new(1, 21, 9)));
         assert!(!fall(MinecraftVersion::new(26, 3, 0)));
+    }
+
+    #[test]
+    fn only_the_server_takes_periodic_freeze_damage() {
+        // LivingEntity.aiStep hurts a fully frozen entity on the server alone (1.17
+        // LivingEntity.java:2557, 1.21.11 :2989-2996, 26.3 :3074-3087)
+        let world = fire_world(BlockEffect::PowderSnow);
+        for release in [
+            MinecraftVersion::new(1, 17, 0),
+            MinecraftVersion::new(1, 20, 4),
+            MinecraftVersion::new(1, 21, 4),
+            MinecraftVersion::new(1, 21, 5),
+            MinecraftVersion::new(1, 21, 11),
+            MinecraftVersion::new(26, 3, 0),
+        ] {
+            for client_side in [false, true] {
+                let mut state = SimulationState {
+                    ticks_frozen: 140,
+                    tick_count: 38,
+                    client_side,
+                    ..standing_in_fire(true)
+                };
+                // Carry state through both damage boundaries: 39/40/41 and 79/80/81.
+                // freeze_damage is an accumulated output, not a per-tick flag.
+                for tick_count in 39..=81 {
+                    tick_release(&mut state, &world, release);
+                    assert_eq!(state.tick_count, tick_count);
+                    assert_eq!(
+                        state.freeze_damage,
+                        if client_side { 0.0 } else { f64::from(tick_count / 40) },
+                        "{release:?}, client={client_side}, tick={tick_count}"
+                    );
+                    assert_eq!(state.ticks_frozen, 140);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_tick_count_wraps_as_a_java_int_and_keeps_its_freeze_period() {
+        let world = fire_world(BlockEffect::PowderSnow);
+        let release = MinecraftVersion::new(1, 21, 11);
+        let ticked = |tick_count: u32| {
+            let mut state = SimulationState {
+                ticks_frozen: 140,
+                tick_count,
+                client_side: false,
+                ..standing_in_fire(true)
+            };
+            tick_release(&mut state, &world, release);
+            state
+        };
+        // -41 ticks to -40: Java's -40 % 40 is 0, the same bits as an unsigned number are not
+        let negative = ticked((-41_i32) as u32);
+        assert_eq!(negative.tick_count as i32, -40);
+        assert_eq!(negative.freeze_damage, 1.0);
+        // -39 ticks to -38: Java's remainder keeps the sign and is no 0
+        assert_eq!(ticked((-39_i32) as u32).freeze_damage, 0.0);
+        // 2147483647 ticks over to -2147483648, and -1 on to 0, which is a damage tick
+        assert_eq!(ticked(i32::MAX as u32).tick_count as i32, i32::MIN);
+        let wrapped = ticked(u32::MAX);
+        assert_eq!(wrapped.tick_count, 0);
+        assert_eq!(wrapped.freeze_damage, 1.0);
+    }
+
+    #[test]
+    fn periodic_freeze_damage_respects_immunity_and_the_counter_after_thawing() {
+        // Damage follows aiStep's thawing, so leaving with 140 ticks prevents this
+        // tick's damage, but a command-set counter of 300 remains fully frozen.
+        // canFreeze independently rejects damage even with an above-limit counter.
+        let snow = fire_world(BlockEffect::PowderSnow);
+        let air = WorldSnapshot::new();
+        for release in [
+            MinecraftVersion::new(1, 17, 0),
+            MinecraftVersion::new(1, 20, 4),
+            MinecraftVersion::new(1, 21, 4),
+            MinecraftVersion::new(1, 21, 5),
+            MinecraftVersion::new(1, 21, 11),
+            MinecraftVersion::new(26, 3, 0),
+        ] {
+            for client_side in [false, true] {
+                for powder_snow_immune in [false, true] {
+                    for ticks_frozen in [140, 300] {
+                        for stays_in_snow in [false, true] {
+                            let mut state = SimulationState {
+                                ticks_frozen,
+                                tick_count: 39,
+                                client_side,
+                                powder_snow_immune,
+                                in_powder_snow: true,
+                                ..standing_in_fire(true)
+                            };
+                            tick_release(&mut state, if stays_in_snow { &snow } else { &air }, release);
+                            let freezes = stays_in_snow && !powder_snow_immune;
+                            let expected_counter = if client_side {
+                                if release.at_least(1, 21, 5) && freezes { 140 } else { ticks_frozen }
+                            } else if freezes {
+                                140
+                            } else {
+                                ticks_frozen - 2
+                            };
+                            assert_eq!(state.ticks_frozen, expected_counter,
+                                "{release:?}, client={client_side}, immune={powder_snow_immune}, initial={ticks_frozen}, snow={stays_in_snow}");
+                            assert_eq!(state.in_powder_snow, stays_in_snow);
+                            let takes_damage = !client_side && !powder_snow_immune && expected_counter >= 140;
+                            assert_eq!(state.freeze_damage, if takes_damage { 1.0 } else { 0.0 },
+                                "{release:?}, client={client_side}, immune={powder_snow_immune}, initial={ticks_frozen}, snow={stays_in_snow}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn client_inside_block_freeze_still_reaches_the_threshold_without_damage() {
+        // From 1.21.5 InsideBlockEffectType.FREEZE increments on both sides;
+        // LivingEntity.aiStep's periodic damage remains server-only. Before that
+        // boundary the client retains its synchronized counter even inside snow.
+        let snow = fire_world(BlockEffect::PowderSnow);
+        for release in [
+            MinecraftVersion::new(1, 17, 0),
+            MinecraftVersion::new(1, 21, 4),
+            MinecraftVersion::new(1, 21, 5),
+            MinecraftVersion::new(1, 21, 11),
+            MinecraftVersion::new(26, 3, 0),
+        ] {
+            let mut state = SimulationState {
+                client_side: true,
+                ticks_frozen: 139,
+                tick_count: 39,
+                ..standing_in_fire(true)
+            };
+            tick_release(&mut state, &snow, release);
+            let expected_counter = if release.at_least(1, 21, 5) { 140 } else { 139 };
+            assert_eq!(state.ticks_frozen, expected_counter, "{release:?}");
+            assert!(state.in_powder_snow);
+            assert_eq!(state.freeze_damage, 0.0, "{release:?}");
+            tick_release(&mut state, &WorldSnapshot::new(), release);
+            assert_eq!(state.ticks_frozen, expected_counter, "{release:?}");
+            assert!(!state.in_powder_snow);
+            assert_eq!(state.freeze_damage, 0.0, "{release:?}");
+        }
+    }
+
+    #[test]
+    fn a_wet_client_the_server_says_burns_goes_back_to_the_immune_ticks() {
+        // Entity.isOnFire reads the shared flag on a client (1.20.4 Entity.java:2121-2124), so the
+        // wet test after the move sees it with the ticks cleared (1.20.4 :724-726)
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 1, 0),
+            BlockState {
+                id: 8,
+                fluid: FluidState::Water,
+                ..BlockState::default()
+            },
+        );
+        // lava in the box: the test before it, for a box with no fire, leaves the ticks alone
+        world.set_block(
+            (0, 2, 0),
+            BlockState {
+                id: 10,
+                fluid: FluidState::Lava,
+                ..BlockState::default()
+            },
+        );
+        let run_at = |release, client_side, on_fire_flag| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 1.2, 0.5),
+                half_width: 0.3,
+                height: 1.8,
+                is_player: true,
+                in_water: true,
+                no_gravity: true,
+                remaining_fire_ticks: Some(0),
+                client_side,
+                on_fire_flag,
+                ..SimulationState::default()
+            };
+            tick_release(&mut state, &world, release);
+            state.remaining_fire_ticks
+        };
+        let run = |client_side, on_fire_flag| {
+            run_at(MinecraftVersion::new(1, 20, 4), client_side, on_fire_flag)
+        };
+        // through 1.10.2 the test reads the ticks alone (1.10.2 Entity.java:824, 1.11.2 :883)
+        assert_eq!(run_at(MinecraftVersion::new(1, 10, 2), true, true), Some(0));
+        assert_eq!(run_at(MinecraftVersion::new(1, 11, 2), true, true), Some(-20));
+        assert_eq!(run(true, true), Some(-20));
+        assert_eq!(run(true, false), Some(0));
+        // the server keeps no such reading: its ticks are all it asks
+        assert_eq!(run(false, true), Some(0));
+    }
+
+    #[test]
+    fn a_dry_client_keeps_its_fire_ticks_from_1_21_6() {
+        // the reset to -getFireImmuneTicks: any side in 1.21.5 for an entity that just went out
+        // (Entity.java:817-819), the server's alone from 1.21.6 (Entity.java:851-853)
+        let air = WorldSnapshot::new();
+        for (client_side, ticks) in [(false, -20), (true, 0)] {
+            let mut state = SimulationState {
+                remaining_fire_ticks: Some(0),
+                client_side,
+                ..standing_in_fire(true)
+            };
+            tick_release(&mut state, &air, MinecraftVersion::new(1, 21, 6));
+            assert_eq!(state.remaining_fire_ticks, Some(ticks));
+        }
+    }
+
+    #[test]
+    fn the_post_move_fire_reset_follows_the_side_and_the_release_for_each_counter() {
+        // M23/M25. 1.21.6 Entity.java:851 and 26.3 :1028-1030: the server alone, for anything not
+        // burning whose ticks no ignition raised. 1.21.5 :817-819: either side, only for an entity
+        // that burned before the move. The client's base tick clears positive ticks first and
+        // the server's takes one off.
+        let air = WorldSnapshot::new();
+        let run = |release, is_player, client_side, ticks, in_rain| {
+            let mut state = SimulationState {
+                remaining_fire_ticks: Some(ticks),
+                client_side,
+                in_rain,
+                ..standing_in_fire(is_player)
+            };
+            tick_release(&mut state, &air, release);
+            state.remaining_fire_ticks.expect("set by the test")
+        };
+        for release in [
+            MinecraftVersion::new(1, 21, 6),
+            MinecraftVersion::new(1, 21, 11),
+            MinecraftVersion::new(26, 3, 0),
+        ] {
+            // Entity.clearFire is setRemainingFireTicks(0) before 1.21.9 and keeps a negative
+            // counter from then on
+            let negative_client = if release.at_least(1, 21, 9) { -5 } else { 0 };
+            for (is_player, reset) in [(true, -20), (false, 0)] {
+                for (ticks, server, client) in [
+                    (-5, reset, negative_client),
+                    (0, reset, 0),
+                    (1, reset, 0),
+                    (2, 1, 0),
+                    (160, 159, 0),
+                ] {
+                    let at = format!("{release:?} player={is_player} ticks={ticks}");
+                    assert_eq!(run(release, is_player, false, ticks, false), server, "{at}");
+                    assert_eq!(run(release, is_player, true, ticks, false), client, "{at}");
+                }
+                assert_eq!(run(release, is_player, false, 5, true), reset, "{release:?}");
+                assert_eq!(run(release, is_player, true, 5, true), 0, "{release:?}");
+            }
+        }
+        // the narrower 1.21.5 test: nothing that was not burning after the base tick is reset
+        let release = MinecraftVersion::new(1, 21, 5);
+        for (is_player, reset) in [(true, -20), (false, -1)] {
+            for (ticks, server, client) in
+                [(-5, -5, 0), (0, 0, 0), (1, 0, 0), (2, 1, 0), (160, 159, 0)]
+            {
+                let at = format!("1.21.5 player={is_player} ticks={ticks}");
+                assert_eq!(run(release, is_player, false, ticks, false), server, "{at}");
+                assert_eq!(run(release, is_player, true, ticks, false), client, "{at}");
+            }
+            assert_eq!(run(release, is_player, false, 5, true), reset);
+            assert_eq!(run(release, is_player, true, 5, true), 0);
+        }
+    }
+
+    #[test]
+    fn ignition_and_extinguishing_in_one_tick_keep_the_was_ignited_test() {
+        // Entity.applyEffectsFromBlocks reads the ticks before checkInsideBlocks: an ignition that
+        // raised them stops the reset even when the same step puts the fire out (1.21.6
+        // Entity.java:837-853, 26.3 :1015-1030). A step applies FIRE_IGNITE before EXTINGUISH.
+        let world = WorldSnapshot::new();
+        let step = InsideEffectStep {
+            fire_ignite: true,
+            extinguish: true,
+            ..InsideEffectStep::default()
+        };
+        let effects = InsideEffects {
+            steps: vec![step],
+            ..InsideEffects::default()
+        };
+        let run = |release, is_player, client_side, ticks| {
+            let mut state = SimulationState {
+                remaining_fire_ticks: Some(ticks),
+                client_side,
+                ..standing_in_fire(is_player)
+            };
+            apply_inside_fire_effects(&mut state, &world, &[], &effects, release);
+            state.remaining_fire_ticks.expect("set by the test")
+        };
+        for release in [MinecraftVersion::new(1, 21, 6), MinecraftVersion::new(26, 3, 0)] {
+            // raised from -5 to -4: no reset on the server, whatever was put out, and clearFire
+            // leaves 0 before 1.21.9 and the negative counter from then on
+            let raised = if release.at_least(1, 21, 9) { -4 } else { 0 };
+            assert_eq!(run(release, true, false, -5), raised, "{release:?}");
+            assert_eq!(run(release, true, true, -5), raised, "{release:?}");
+            // ignited to 160 and cleared to 0, no higher than before: the server resets
+            assert_eq!(run(release, true, false, 0), -20, "{release:?}");
+            assert_eq!(run(release, false, false, 0), 0, "{release:?}");
+            assert_eq!(run(release, true, true, 0), 0, "{release:?}");
+            assert_eq!(run(release, true, false, 5), -20, "{release:?}");
+            assert_eq!(run(release, true, true, 5), 0, "{release:?}");
+        }
+        // in 1.21.5 it needs a fire burning before the move, and the client resets too
+        let release = MinecraftVersion::new(1, 21, 5);
+        assert_eq!(run(release, true, false, 0), 0);
+        assert_eq!(run(release, true, false, 5), -20);
+        assert_eq!(run(release, true, true, 5), -20);
+        assert_eq!(run(release, false, false, 5), -1);
+        assert_eq!(run(release, false, true, 5), -1);
+    }
+
+    #[test]
+    fn the_generic_fire_delay_carries_through_extinguishing_and_the_next_contact() {
+        // M25: 1 to 0 at 1.21.6 (1.21.5 Entity.java:3230-3232, 1.21.6 :3403-3405), the player's
+        // override stays 20 and an invulnerable player's ticks stay at most 1.
+        let air = WorldSnapshot::new();
+        let fire = fire_world(BlockEffect::Fire);
+        for (release, is_player, delay) in [
+            (MinecraftVersion::new(1, 21, 5), false, -1),
+            (MinecraftVersion::new(1, 21, 6), false, 0),
+            (MinecraftVersion::new(26, 3, 0), false, 0),
+            (MinecraftVersion::new(1, 21, 5), true, -20),
+            (MinecraftVersion::new(1, 21, 6), true, -20),
+            (MinecraftVersion::new(26, 3, 0), true, -20),
+        ] {
+            let mut state = SimulationState {
+                remaining_fire_ticks: Some(5),
+                in_rain: true,
+                ..standing_in_fire(is_player)
+            };
+            tick_release(&mut state, &air, release);
+            assert_eq!(state.remaining_fire_ticks, Some(delay), "{release:?}");
+            state.in_rain = false;
+            tick_release(&mut state, &fire, release);
+            let expected = if is_player { -19 } else { 160 };
+            assert_eq!(state.remaining_fire_ticks, Some(expected), "{release:?}");
+        }
+        for release in [MinecraftVersion::new(1, 21, 5), MinecraftVersion::new(26, 3, 0)] {
+            let mut state = SimulationState {
+                remaining_fire_ticks: Some(160),
+                invulnerable: true,
+                ..standing_in_fire(true)
+            };
+            tick_release(&mut state, &air, release);
+            assert_eq!(state.remaining_fire_ticks, Some(1), "{release:?}");
+            tick_release(&mut state, &air, release);
+            let out = if release.at_least(1, 21, 6) { -20 } else { 0 };
+            assert_eq!(state.remaining_fire_ticks, Some(out), "{release:?}");
+        }
+    }
+
+    #[test]
+    fn a_later_fire_ignition_adds_ticks_for_a_server_player_alone() {
+        // BaseFireBlock.fireIgnite: negative ticks +1 for all, else ServerPlayer nextInt(1, 3)
+        // (1.21.5 BaseFireBlock.java:136-150, 26.3 :122-136); the eight seconds are 160. The
+        // block's touch follows a base tick that takes the 160 to 159.
+        let world = fire_world(BlockEffect::Fire);
+        let release = MinecraftVersion::new(1, 21, 4);
+        let burning = |is_player, server_fire_increment| SimulationState {
+            remaining_fire_ticks: Some(160),
+            server_fire_increment,
+            ..standing_in_fire(is_player)
+        };
+        for (is_player, increment, ticks) in [
+            (true, None, 160),
+            (true, Some(1), 160),
+            (true, Some(2), 161),
+            (false, Some(2), 160),
+        ] {
+            let mut state = burning(is_player, increment);
+            tick_release(&mut state, &world, release);
+            assert_eq!(state.remaining_fire_ticks, Some(ticks));
+        }
+        // two FIRE_IGNITE steps of one tick: the second adds to a ServerPlayer's, not a LocalPlayer's
+        let release = MinecraftVersion::new(26, 3, 0);
+        let step = InsideEffectStep {
+            fire_ignite: true,
+            ..InsideEffectStep::default()
+        };
+        let effects = InsideEffects {
+            steps: vec![step, step],
+            ..InsideEffects::default()
+        };
+        for (client_side, ticks) in [(true, 160), (false, 162)] {
+            let mut state = SimulationState {
+                remaining_fire_ticks: Some(0),
+                server_fire_increment: Some(2),
+                client_side,
+                ..standing_in_fire(true)
+            };
+            apply_inside_fire_effects(&mut state, &world, &[], &effects, release);
+            assert_eq!(state.remaining_fire_ticks, Some(ticks));
+        }
+    }
+
+    #[test]
+    fn each_server_player_ignition_reads_its_own_draw_in_order() {
+        // BaseFireBlock.fireIgnite calls nextInt(1, 3) once per eligible ignition (1.21.5
+        // BaseFireBlock.java:136-150, 26.3 :122-136), so no fixed value gives 203 from 200 and
+        // 1, 2. A step applies FIRE_IGNITE once, however many fire blocks it touches.
+        let world = WorldSnapshot::new();
+        let release = MinecraftVersion::new(26, 3, 0);
+        let step = InsideEffectStep {
+            fire_ignite: true,
+            ..InsideEffectStep::default()
+        };
+        let two_steps = InsideEffects {
+            steps: vec![step, step],
+            ..InsideEffects::default()
+        };
+        let run = |start: i32, draws: &[i32], change: fn(&mut SimulationState)| {
+            let mut state = SimulationState {
+                remaining_fire_ticks: Some(start),
+                server_fire_draws: ServerFireDraws::new(draws),
+                ..standing_in_fire(true)
+            };
+            change(&mut state);
+            apply_inside_fire_effects(&mut state, &world, &[], &two_steps, release);
+            (
+                state.remaining_fire_ticks.expect("set by the test"),
+                state.server_fire_draws.expect("given").to_vec(),
+                state.server_fire_draws_exhausted,
+            )
+        };
+        let none: fn(&mut SimulationState) = |_| {};
+        assert_eq!(run(200, &[1, 2, 2], none), (203, vec![2], false));
+        // the first draw counts although the eight seconds overwrite what it added
+        assert_eq!(run(0, &[1, 2], none), (162, vec![], false));
+        assert_eq!(run(0, &[2, 1], none), (161, vec![], false));
+        // from -1 the first ignition is the deterministic +1 and draws nothing
+        assert_eq!(run(-1, &[2, 1], none), (162, vec![1], false));
+        assert_eq!(run(-5, &[2], none), (-3, vec![2], false));
+        // nothing is read by a client, a generic entity or a fire-immune player
+        assert_eq!(run(200, &[2, 2], |state| state.client_side = true), (200, vec![2, 2], false));
+        assert_eq!(run(200, &[2, 2], |state| state.is_player = false), (200, vec![2, 2], false));
+        // (not on fire, so the server's post-move reset still runs)
+        assert_eq!(run(200, &[2, 2], |state| state.fire_immune = true), (-20, vec![2, 2], false));
+        // an invulnerable player's clamp hides the draw, not its consumption
+        assert_eq!(run(0, &[2, 2, 1], |state| state.invulnerable = true), (1, vec![1], false));
+        // running out is reported, never a quiet repeat
+        assert_eq!(run(200, &[2], none), (203, vec![], true));
+    }
+
+    #[test]
+    fn fire_ignition_draws_start_at_1_21_2_and_are_decided_at_each_ignition() {
+        // 1.21.1 adds one for every entity and draws nothing; 1.21.2 is the first with nextInt
+        let world = fire_world(BlockEffect::Fire);
+        for (release, ticks, rest) in [
+            (MinecraftVersion::new(1, 21, 1), 201, vec![2, 1]),
+            (MinecraftVersion::new(1, 21, 2), 201, vec![1]),
+            (MinecraftVersion::new(1, 21, 4), 201, vec![1]),
+        ] {
+            let mut state = SimulationState {
+                remaining_fire_ticks: Some(201),
+                server_fire_draws: ServerFireDraws::new(&[2, 1]),
+                ..standing_in_fire(true)
+            };
+            tick_release(&mut state, &world, release);
+            let expected = if release.at_least(1, 21, 2) { ticks + 1 } else { ticks };
+            assert_eq!(state.remaining_fire_ticks, Some(expected), "{release:?}");
+            assert_eq!(state.server_fire_draws.expect("given").to_vec(), rest, "{release:?}");
+        }
+        // a step between two ignitions puts the fire out: the next is decided on the 0 it left
+        let release = MinecraftVersion::new(26, 3, 0);
+        let ignite = InsideEffectStep {
+            fire_ignite: true,
+            ..InsideEffectStep::default()
+        };
+        let extinguish = InsideEffectStep {
+            extinguish: true,
+            ..InsideEffectStep::default()
+        };
+        let effects = InsideEffects {
+            steps: vec![ignite, extinguish, ignite],
+            ..InsideEffects::default()
+        };
+        let mut state = SimulationState {
+            remaining_fire_ticks: Some(200),
+            server_fire_draws: ServerFireDraws::new(&[1, 2]),
+            ..standing_in_fire(true)
+        };
+        apply_inside_fire_effects(&mut state, &WorldSnapshot::new(), &[], &effects, release);
+        assert_eq!(state.remaining_fire_ticks, Some(160));
+        assert_eq!(state.server_fire_draws.expect("given").to_vec(), Vec::<i32>::new());
+        // a burning-time attribute changes the eight seconds, not the reading of the draws
+        let mut state = SimulationState {
+            remaining_fire_ticks: Some(0),
+            burning_time: Some(0.5),
+            server_fire_draws: ServerFireDraws::new(&[1, 2, 1]),
+            ..standing_in_fire(true)
+        };
+        let effects = InsideEffects {
+            steps: vec![ignite],
+            ..InsideEffects::default()
+        };
+        apply_inside_fire_effects(&mut state, &WorldSnapshot::new(), &[], &effects, release);
+        assert_eq!(state.remaining_fire_ticks, Some(80));
+        assert_eq!(state.server_fire_draws.expect("given").to_vec(), vec![2, 1]);
+    }
+
+    #[test]
+    fn a_fire_draw_stream_keeps_its_order_up_to_its_capacity() {
+        let draws: Vec<i32> = (0..ServerFireDraws::CAPACITY).map(|at| 1 + (at % 3 == 0) as i32).collect();
+        assert_eq!(ServerFireDraws::new(&draws).expect("it fits").to_vec(), draws);
+        let mut over = draws;
+        over.push(1);
+        assert_eq!(ServerFireDraws::new(&over), None);
+        assert_eq!(ServerFireDraws::new(&[0]), None);
+        assert_eq!(ServerFireDraws::new(&[3]), None);
+    }
+
+    #[test]
+    fn a_fresh_entitys_fire_ticks_and_the_generic_reset_follow_the_release() {
+        // -getFireImmuneTicks up to 1.21.5 (Entity.java:212), the field's 0 from 1.21.6 (:233); the
+        // generic reset value goes from 1 to 0 at 1.21.6 (1.21.5 Entity.java:3230-3232, 1.21.6
+        // :3403-3405), a player's stays 20
+        let air = WorldSnapshot::new();
+        let fire = fire_world(BlockEffect::Fire);
+        for (release, is_player, reset) in [
+            (MinecraftVersion::new(1, 21, 6), false, 0),
+            (MinecraftVersion::new(1, 21, 6), true, -20),
+            (MinecraftVersion::new(26, 3, 0), false, 0),
+            (MinecraftVersion::new(26, 3, 0), true, -20),
+        ] {
+            let mut state = SimulationState {
+                remaining_fire_ticks: Some(0),
+                ..standing_in_fire(is_player)
+            };
+            tick_release(&mut state, &air, release);
+            assert_eq!(state.remaining_fire_ticks, Some(reset));
+        }
+        let mut mob = standing_in_fire(false);
+        tick_release(&mut mob, &fire, MinecraftVersion::new(1, 21, 5));
+        assert_eq!(mob.remaining_fire_ticks, Some(160));
+        let mut player = standing_in_fire(true);
+        tick_release(&mut player, &fire, MinecraftVersion::new(1, 21, 5));
+        assert_eq!(player.remaining_fire_ticks, Some(-19));
+        // one touch ignites a local player from the field's 0
+        let mut local = SimulationState {
+            client_side: true,
+            ..standing_in_fire(true)
+        };
+        tick_release(&mut local, &fire, MinecraftVersion::new(1, 21, 9));
+        assert_eq!(local.remaining_fire_ticks, Some(160));
+    }
+
+    #[test]
+    fn a_dead_or_sleeping_player_neither_walks_nor_jumps() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        let resting = |dead, sleeping| SimulationState {
+            position: Vec3::new(0.5, 1.0, 0.5),
+            half_width: 0.3,
+            height: 1.8,
+            is_player: true,
+            on_ground: true,
+            input: Vec3::new(0.0, 0.0, 1.0),
+            jump_requested: true,
+            dead,
+            sleeping,
+            ..SimulationState::default()
+        };
+        for release in [
+            MinecraftVersion::new(1, 8, 8),
+            MinecraftVersion::new(1, 13, 2),
+            MinecraftVersion::new(1, 20, 4),
+            MinecraftVersion::new(1, 21, 5),
+            MinecraftVersion::new(26, 3, 0),
+        ] {
+            let mut alive = resting(false, false);
+            tick_release(&mut alive, &world, release);
+            assert!(alive.position.y > 1.4 && alive.position.z > 0.5);
+            assert_eq!(alive.jump_ticks, 10);
+            for (dead, sleeping) in [(true, false), (false, true)] {
+                let mut state = resting(dead, sleeping);
+                state.jump_ticks = 5;
+                tick_release(&mut state, &world, release);
+                assert_eq!(state.position, Vec3::new(0.5, 1.0, 0.5), "{release:?}");
+                // aiStep's noJumpDelay = 0 when not jumping (26.3 LivingEntity.java:3035)
+                assert_eq!(state.jump_ticks, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn an_immobile_entity_keeps_its_motion_and_gravity() {
+        // only the input goes: travel still runs (1.20.4 LivingEntity.java:2552-2555)
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 20.0, 0.5),
+            velocity: Vec3::new(0.2, 0.0, 0.0),
+            half_width: 0.3,
+            height: 1.8,
+            is_player: true,
+            dead: true,
+            input: Vec3::new(0.0, 0.0, 1.0),
+            ..SimulationState::default()
+        };
+        tick_release(&mut state, &WorldSnapshot::new(), MinecraftVersion::new(1, 20, 4));
+        assert_eq!(state.position.x, 0.7);
+        assert_eq!(state.position.z, 0.5);
+        assert!(state.velocity.y < 0.0);
+        // a mob that sleeps is not immobile (LivingEntity.isImmobile is isDead alone)
+        let mut mob = SimulationState {
+            position: Vec3::new(0.5, 20.0, 0.5),
+            half_width: 0.3,
+            height: 1.8,
+            sleeping: true,
+            input: Vec3::new(0.0, 0.0, 1.0),
+            ..SimulationState::default()
+        };
+        tick_release(&mut mob, &WorldSnapshot::new(), MinecraftVersion::new(1, 20, 4));
+        assert!(mob.position.z > 0.5);
+    }
+
+    /// A stone floor at y 0 around the origin.
+    fn immobile_floor() -> WorldSnapshot {
+        let mut world = WorldSnapshot::new();
+        for x in -4..=8 {
+            for z in -4..=8 {
+                world.set_block(
+                    (x, 0, z),
+                    BlockState {
+                        shape: Some(BlockShape::full_block()),
+                        ..BlockState::default()
+                    },
+                );
+            }
+        }
+        world
+    }
+
+    const IMMOBILE_RELEASES: [MinecraftVersion; 5] = [
+        MinecraftVersion::new(1, 8, 8),
+        MinecraftVersion::new(1, 13, 2),
+        MinecraftVersion::new(1, 20, 4),
+        MinecraftVersion::new(1, 21, 5),
+        MinecraftVersion::new(26, 3, 0),
+    ];
+
+    fn immobile_player(input: Vec3, jump: bool, sprinting: bool, velocity: Vec3) -> SimulationState {
+        SimulationState {
+            position: Vec3::new(0.5, 1.0, 0.5),
+            velocity,
+            half_width: 0.3,
+            height: 1.8,
+            is_player: true,
+            on_ground: velocity.y <= 0.0,
+            input,
+            jump_requested: jump,
+            sprinting,
+            ..SimulationState::default()
+        }
+    }
+
+    #[test]
+    fn immobile_controls_add_nothing_to_the_motion_an_external_push_left() {
+        // the input goes and nothing else (1.8.9 LivingEntity.java:1438-1443, 1.20.4 :2552-2555,
+        // 26.3 :3000-3003): an immobile trace is the trace of the same player with no keys down,
+        // here over forward, diagonal and jump, with a sprint held, from rest and from a knockback
+        // (LivingEntity.knockback only writes the delta movement)
+        let world = immobile_floor();
+        let controls = [
+            (Vec3::new(0.0, 0.0, 1.0), false),
+            (Vec3::new(1.0, 0.0, 1.0), false),
+            (Vec3::new(-1.0, 0.0, -1.0), true),
+            (Vec3::ZERO, true),
+        ];
+        let motions = [
+            Vec3::ZERO,
+            Vec3::new(0.2, -0.0784, 0.1),
+            Vec3::new(0.0, 0.3, 0.0),
+            Vec3::new(0.1, 0.4, -0.1),
+        ];
+        for release in IMMOBILE_RELEASES {
+            for motion in motions {
+                for sprinting in [false, true] {
+                    let mut idle = immobile_player(Vec3::ZERO, false, sprinting, motion);
+                    let mut trace = Vec::new();
+                    for _ in 0..4 {
+                        tick_release(&mut idle, &world, release);
+                        trace.push((idle.position, idle.velocity, idle.on_ground));
+                    }
+                    for (input, jump) in controls {
+                        for (dead, sleeping) in [(true, false), (false, true)] {
+                            let mut held = immobile_player(input, jump, sprinting, motion);
+                            held.dead = dead;
+                            held.sleeping = sleeping;
+                            for expected in &trace {
+                                tick_release(&mut held, &world, release);
+                                assert_eq!(
+                                    (held.position, held.velocity, held.on_ground),
+                                    *expected,
+                                    "{release:?} {input:?} {jump} {motion:?} {sprinting}"
+                                );
+                            }
+                        }
+                        // and the same keys do move a player that is neither (a player already
+                        // rising from the push is off the ground: the jump alone does nothing)
+                        if input != Vec3::ZERO || motion.y <= 0.0 {
+                            let mut alive = immobile_player(input, jump, sprinting, motion);
+                            tick_release(&mut alive, &world, release);
+                            assert_ne!(alive.position, trace[0].0, "{release:?} {input:?} {jump}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn immobile_motion_advances_by_the_source_drag_and_gravity() {
+        // a knockback in the air: the move takes the whole delta, then 0.91F air friction on x and
+        // z and (y - 0.08) * 0.98F on y (1.20.4 LivingEntity.java travel, 26.3 :2382-2415 travelInAir)
+        let air = WorldSnapshot::new();
+        for release in [MinecraftVersion::new(1, 20, 4), MinecraftVersion::new(26, 3, 0)] {
+            for (dead, sleeping) in [(true, false), (false, true)] {
+                let mut state = immobile_player(
+                    Vec3::new(1.0, 0.0, 1.0),
+                    true,
+                    false,
+                    Vec3::new(0.1, 0.4, -0.2),
+                );
+                state.position.y = 20.0;
+                state.dead = dead;
+                state.sleeping = sleeping;
+                tick_release(&mut state, &air, release);
+                assert_eq!(state.position, Vec3::new(0.6, 20.4, 0.3), "{release:?}");
+                let friction = f64::from(0.91_f32);
+                assert_eq!(state.velocity.x, 0.1 * friction, "{release:?}");
+                assert_eq!(state.velocity.z, -0.2 * friction, "{release:?}");
+                let expected_y = (0.4 - 0.08) * f64::from(0.98_f32);
+                assert_eq!(state.velocity.y, expected_y, "{release:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn immobile_jump_in_water_and_on_a_ladder_is_no_jump() {
+        // jumping cleared comes before aiStep's fluid jump (26.3 LivingEntity.java:3012-3031) and
+        // the ladder's climb, which reads it after the move (from 1.14; before it, only a wall)
+        let mut water = WorldSnapshot::new();
+        // from 26.1 the fluid scan also needs the chunks under its one-cell margin
+        for chunk_x in -1..=0 {
+            for chunk_z in -1..=0 {
+                water.set_chunk_loaded(chunk_x, chunk_z, true);
+            }
+        }
+        for y in 1..=4 {
+            water.set_block(
+                (0, y, 0),
+                BlockState {
+                    fluid: FluidState::Water,
+                    fluid_source: true,
+                    ..BlockState::default()
+                },
+            );
+        }
+        let air = WorldSnapshot::new();
+        for release in IMMOBILE_RELEASES {
+            for (world, y) in [(&water, 2.0), (&air, 20.0)] {
+                let run = |jump: bool, dead: bool| {
+                    let mut state = immobile_player(Vec3::ZERO, jump, false, Vec3::ZERO);
+                    state.position.y = y;
+                    state.on_ground = false;
+                    state.climbing = y == 20.0;
+                    state.dead = dead;
+                    tick_release(&mut state, world, release);
+                    state.velocity
+                };
+                assert_eq!(run(true, true), run(false, false), "{release:?} y {y}");
+                if release.at_least(1, 14, 0) || y == 2.0 {
+                    assert_ne!(run(true, false), run(false, false), "{release:?} y {y}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_immobile_tick_releases_the_jump_cooldown_and_the_next_can_jump() {
+        // aiStep's noJumpDelay = 0 when not jumping (26.3 LivingEntity.java:3035): a sleep ends a
+        // cooldown a held jump would have kept. The player stands as gravity leaves it: a move
+        // with no motion down meets no floor and leaves the ground.
+        let world = immobile_floor();
+        let standing = Vec3::new(0.0, (0.0 - 0.08) * f64::from(0.98_f32), 0.0);
+        for release in IMMOBILE_RELEASES {
+            for (dead, sleeping) in [(true, false), (false, true)] {
+                let start = || {
+                    let mut state = immobile_player(Vec3::ZERO, true, false, standing);
+                    state.jump_ticks = 10;
+                    state
+                };
+                let mut awake = start();
+                tick_release(&mut awake, &world, release);
+                assert_eq!(awake.jump_ticks, 9);
+                assert_eq!(awake.position.y, 1.0);
+                let mut resting = start();
+                resting.dead = dead;
+                resting.sleeping = sleeping;
+                tick_release(&mut resting, &world, release);
+                assert_eq!(resting.jump_ticks, 0);
+                assert_eq!(resting.position.y, 1.0);
+                // the first tick awake jumps at once, as a player with no cooldown does
+                resting.dead = false;
+                resting.sleeping = false;
+                let mut fresh = immobile_player(Vec3::ZERO, true, false, standing);
+                fresh.velocity = resting.velocity;
+                tick_release(&mut resting, &world, release);
+                tick_release(&mut fresh, &world, release);
+                assert!(resting.position.y > 1.4, "{release:?}");
+                assert_eq!(resting.position, fresh.position);
+                assert_eq!(resting.velocity, fresh.velocity);
+                assert_eq!(resting.jump_ticks, 10);
+            }
+        }
+    }
+
+    #[test]
+    fn an_immobile_state_keeps_the_controls_it_was_asked_for() {
+        // jumping, xxa and zza are the entity's, the keys stay LocalPlayer.input's (26.3
+        // LivingEntity.java:3000-3003, LocalPlayer.java:676): a state passed back after the sleep
+        // walks on its first tick awake, as the packed player sent the same keys does
+        let world = immobile_floor();
+        for release in IMMOBILE_RELEASES {
+            let keys = Vec3::new(1.0, 0.0, 1.0);
+            let standing = Vec3::new(0.0, (0.0 - 0.08) * f64::from(0.98_f32), 0.0);
+            let mut state = immobile_player(keys, true, false, standing);
+            state.sleeping = true;
+            tick_release(&mut state, &world, release);
+            assert_eq!(state.input, keys, "{release:?}");
+            assert!(state.jump_requested, "{release:?}");
+            assert_eq!(state.position, Vec3::new(0.5, 1.0, 0.5));
+            state.sleeping = false;
+            tick_release(&mut state, &world, release);
+            assert!(state.position.y > 1.4 && state.position.z > 0.5, "{release:?}");
+        }
+    }
+
+    #[test]
+    fn a_pushed_sleeper_arms_the_auto_jump_its_keys_ask_for() {
+        // canAutoJump's isMoving and updateAutoJump read LocalPlayer.input, which an immobile tick
+        // leaves alone (1.20.4 ClientPlayerEntity.java:871, 878-879, 996-1006; 26.3
+        // LocalPlayer.java:995-1003, 1109-1114): pushed at a block with a key down the jump is armed,
+        // aiStep clears it while immobile, and a tick awake takes it
+        let mut world = immobile_floor();
+        world.set_block(
+            (0, 1, 1),
+            BlockState {
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        for release in [
+            MinecraftVersion::new(1, 13, 2),
+            MinecraftVersion::new(1, 20, 4),
+            MinecraftVersion::new(1, 21, 5),
+            MinecraftVersion::new(26, 3, 0),
+        ] {
+            let pushed = |keys: Vec3| {
+                let mut state = immobile_player(keys, false, false, Vec3::new(0.0, -0.0784, 0.05));
+                state.auto_jump = true;
+                state.sleeping = true;
+                tick_release(&mut state, &world, release);
+                state
+            };
+            assert_eq!(pushed(Vec3::ZERO).auto_jump_time, 0, "{release:?}");
+            let mut armed = pushed(Vec3::new(0.0, 0.0, 1.0));
+            assert_eq!(armed.auto_jump_time, 1, "{release:?}");
+            // still asleep: spent, no jump
+            let mut asleep = armed;
+            asleep.input = Vec3::ZERO;
+            tick_release(&mut asleep, &world, release);
+            assert_eq!(asleep.auto_jump_time, 0, "{release:?}");
+            assert_eq!(asleep.position.y, 1.0, "{release:?}");
+            // awake: it jumps with no jump key
+            armed.sleeping = false;
+            armed.input = Vec3::ZERO;
+            tick_release(&mut armed, &world, release);
+            assert!(armed.position.y > 1.4, "{release:?}");
+        }
+    }
+
+    fn rider(velocity: Vec3) -> SimulationState {
+        SimulationState {
+            position: Vec3::new(0.5, 3.5, 0.5),
+            velocity,
+            half_width: 0.3,
+            height: 1.8,
+            is_player: true,
+            passenger: true,
+            input: Vec3::new(1.0, 0.0, 1.0),
+            jump_requested: true,
+            sprinting: true,
+            ..SimulationState::default()
+        }
+    }
+
+    const RIDE_RELEASES: [MinecraftVersion; 8] = [
+        MinecraftVersion::new(1, 8, 8),
+        MinecraftVersion::new(1, 12, 2),
+        MinecraftVersion::new(1, 16, 5),
+        MinecraftVersion::new(1, 20, 4),
+        MinecraftVersion::new(1, 21, 3),
+        MinecraftVersion::new(1, 21, 4),
+        MinecraftVersion::new(1, 21, 11),
+        MinecraftVersion::new(26, 3, 0),
+    ];
+
+    #[test]
+    fn a_passenger_tick_is_a_ride_tick_not_ordinary_travel() {
+        // Entity.rideTick zeroes the motion, ticks, and the vehicle's positionRider puts the rider
+        // back; LivingEntity.rideTick resets the fall distance (1.8.9 Entity.java:1321-1330,
+        // LivingEntity.java:1519-1524; 1.12.2 Entity.java:1639-1649, LivingEntity.java:1943-1948;
+        // 1.20.4 Entity.java:1843-1847; 26.3 Entity.java:2465-2470, LivingEntity.java:3233-3236)
+        let world = immobile_floor();
+        for release in RIDE_RELEASES {
+            let mut state = rider(Vec3::new(0.7, 0.9, -0.4));
+            state.fall_distance = 7.0;
+            let result = tick_release(&mut state, &world, release);
+            assert_eq!(state.position, Vec3::new(0.5, 3.5, 0.5), "{release:?}");
+            assert_eq!(result.displacement, Vec3::ZERO, "{release:?}");
+            assert_eq!(state.fall_distance, 0.0, "{release:?}");
+            // the motion it came with is gone: what is left is one air travel of its keys from
+            // rest (the rider's own aiStep runs): gravity (0 - 0.08) * 0.98F and the air's input
+            assert_eq!(state.velocity.y, -0.08 * f64::from(0.98_f32), "{release:?}");
+            assert!(state.velocity.x.abs() < 0.05 && state.velocity.z.abs() < 0.05, "{release:?}");
+            // a walker with the same keys does go
+            let mut walker = rider(Vec3::ZERO);
+            walker.passenger = false;
+            tick_release(&mut walker, &world, release);
+            assert_ne!(walker.position, Vec3::new(0.5, 3.5, 0.5), "{release:?}");
+        }
+    }
+
+    #[test]
+    fn a_ride_tick_ends_on_the_seat_the_caller_moves() {
+        // positionRider follows the vehicle, which the engine does not know: each tick the seat is
+        // what the caller hands in, and dismounted the same state walks on from where it sat with
+        // the motion the last ride tick left (Entity.removeVehicle leaves it, 26.3 Entity.java:2568-2579)
+        let world = immobile_floor();
+        for release in RIDE_RELEASES {
+            let mut state = rider(Vec3::ZERO);
+            for seat in [Vec3::new(1.5, 3.5, 0.5), Vec3::new(2.0, 3.0, 1.0)] {
+                state.position = seat;
+                tick_release(&mut state, &world, release);
+                assert_eq!(state.position, seat, "{release:?}");
+            }
+            state.passenger = false;
+            let left = state.velocity;
+            tick_release(&mut state, &world, release);
+            assert_eq!(state.position.y, 3.0 + left.y, "{release:?}");
+        }
+    }
+
+    #[test]
+    fn a_passenger_keeps_the_ground_only_before_1_21_4() {
+        // Player.tick: isSpectator() alone to 1.21.3, || isPassenger from 1.21.4 (1.21.3
+        // PlayerEntity.java:256, 1.21.4 :259-260, 26.3 Player.java:219-221): a rider on the ground
+        // can jump in its own tick before it, not after
+        let world = immobile_floor();
+        let run = |release: MinecraftVersion| {
+            let mut state = rider(Vec3::ZERO);
+            state.position.y = 1.0;
+            state.on_ground = true;
+            state.sprinting = false;
+            state.input = Vec3::ZERO;
+            tick_release(&mut state, &world, release);
+            assert_eq!(state.position.y, 1.0, "{release:?}");
+            state.jump_ticks
+        };
+        assert_eq!(run(MinecraftVersion::new(1, 20, 4)), 10);
+        assert_eq!(run(MinecraftVersion::new(1, 21, 3)), 10);
+        assert_eq!(run(MinecraftVersion::new(1, 21, 4)), 0);
+        assert_eq!(run(MinecraftVersion::new(26, 3, 0)), 0);
+    }
+
+    #[test]
+    fn a_flying_passenger_takes_the_plain_travel() {
+        // Player.travel's flight is !isPassenger (1.8.9 PlayerEntity.java:1303, 1.12.2 :1419, 1.20.4
+        // :1488, 26.3 Player.java:1294-1296): the jump key's impulse is LocalPlayer.aiStep's, then
+        // gravity and drag as ever, and no 0.6
+        let air = immobile_floor();
+        for release in RIDE_RELEASES {
+            let mut state = rider(Vec3::ZERO);
+            state.flying = true;
+            state.flying_speed = f64::from(0.05_f32);
+            state.input = Vec3::ZERO;
+            state.sprinting = false;
+            tick_release(&mut state, &air, release);
+            assert_eq!(state.position, Vec3::new(0.5, 3.5, 0.5), "{release:?}");
+            let impulse = f64::from(0.05_f32 * 3.0);
+            let expected = (impulse - 0.08) * f64::from(0.98_f32);
+            assert!((state.velocity.y - expected).abs() < 1.0e-9, "{release:?}: {}", state.velocity.y);
+            assert!(state.flying, "{release:?}");
+            // not riding, the 0.6 of its flight
+            let mut flying = rider(Vec3::ZERO);
+            flying.passenger = false;
+            flying.flying = true;
+            flying.flying_speed = f64::from(0.05_f32);
+            flying.input = Vec3::ZERO;
+            flying.sprinting = false;
+            tick_release(&mut flying, &air, release);
+            assert!((flying.velocity.y - impulse * 0.6).abs() < 1.0e-9, "{release:?}: {}", flying.velocity.y);
+        }
+    }
+
+    #[test]
+    fn a_passenger_is_pushed_out_of_blocks_until_26_3() {
+        // !isPassenger in the aiStep's moveTowardsClosestSpace from 26.3 (26.2 LocalPlayer.java:753,
+        // 26.3 :774); its push is the motion it leaves, the seat stays either way
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 3, 0),
+            BlockState {
+                shape: Some(BlockShape::full_block()),
+                suffocating: Some(true),
+                ..BlockState::default()
+            },
+        );
+        let run = |release: MinecraftVersion| {
+            let mut state = rider(Vec3::ZERO);
+            state.position = Vec3::new(0.9, 3.0, 0.5);
+            state.input = Vec3::ZERO;
+            state.jump_requested = false;
+            state.sprinting = false;
+            tick_release(&mut state, &world, release);
+            assert_eq!(state.position, Vec3::new(0.9, 3.0, 0.5), "{release:?}");
+            state.velocity.x.abs() + state.velocity.z.abs()
+        };
+        assert_eq!(run(MinecraftVersion::new(26, 3, 0)), 0.0);
+        assert_ne!(run(MinecraftVersion::new(26, 2, 0)), 0.0);
+    }
+
+    #[test]
+    fn a_rocket_before_the_ride_tick_leaves_the_rider_nothing() {
+        // the boost comes before the rider's tick and rideTick takes it away: the raw input too
+        let air = WorldSnapshot::new();
+        for release in RIDE_RELEASES {
+            let mut boosted = rider(Vec3::ZERO);
+            boosted.firework_boost = Vec3::new(0.3, 0.3, 0.3);
+            let mut plain = rider(Vec3::ZERO);
+            tick_release(&mut boosted, &air, release);
+            tick_release(&mut plain, &air, release);
+            assert_eq!(boosted.velocity, plain.velocity, "{release:?}");
+            assert_eq!(boosted.position, plain.position, "{release:?}");
+        }
+    }
+
+    #[test]
+    fn the_raw_firework_boost_reaches_the_gravity_choice() {
+        // Slow Falling's gravity is chosen on the motion the rocket already changed (26.3
+        // LivingEntity.java:2337-2339): vy +0.1, so 0.08: (0.1 - 0.08 * 0.25) * 0.98F
+        for version in ["1.13.2", "1.20.4", "1.21.2", "1.21.11", "26.3"] {
+            let glide = |velocity_y: f64, boost_y: f64| {
+                let mut state = SimulationState {
+                    is_player: true,
+                    fall_flying: true,
+                    slow_falling: true,
+                    position: Vec3::new(0.5, 20.0, 0.5),
+                    velocity: Vec3::new(0.0, velocity_y, 0.0),
+                    firework_boost: Vec3::new(0.0, boost_y, 0.0),
+                    look: Vec3::new(0.0, 0.0, 1.0),
+                    half_width: 0.3,
+                    height: 1.8,
+                    controlled_by_local_instance: true,
+                    ..SimulationState::default()
+                };
+                let world = WorldSnapshot::new();
+                crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                    .unwrap();
+                state.velocity.y
+            };
+            let raw = glide(-0.1, 0.2);
+            assert!((raw - 0.0784).abs() < 1.0e-7, "{version}: {raw}");
+            assert_eq!(raw, glide(0.1, 0.0), "{version}");
+        }
+    }
+
+    /// One level glide tick of a Slow Falling player, by 26.3 LivingEntity.updateFallFlyingMovement
+    /// (:2526-2543): gravity * (-1 + 0.75), the drop turned forward, then 0.98F. The look is level,
+    /// so cos(lean)^2 = 1.
+    fn source_level_glide_y(velocity_y: f64, gravity: f64) -> f64 {
+        let mut y = velocity_y + gravity * (-1.0 + 0.75);
+        if y < 0.0 {
+            y += y * -0.1;
+        }
+        y * 0.9800000190734863
+    }
+
+    fn raw_glide(version: &str, velocity: Vec3, boost: Vec3, slow_falling: bool) -> SimulationState {
+        let mut state = SimulationState {
+            is_player: true,
+            fall_flying: true,
+            slow_falling,
+            position: Vec3::new(0.5, 20.0, 0.5),
+            velocity,
+            firework_boost: boost,
+            look: Vec3::new(0.0, 0.0, 1.0),
+            half_width: 0.3,
+            height: 1.8,
+            controlled_by_local_instance: true,
+            ..SimulationState::default()
+        };
+        crate::versioned::dispatch(version, &mut state, &WorldSnapshot::new(), PhysicsConfig::default())
+            .unwrap();
+        state
+    }
+
+    #[test]
+    fn the_raw_firework_boost_crosses_zero_either_way_as_a_pre_tick_impulse() {
+        // FireworkRocketEntity.tick writes the motion before the player's tick (26.3
+        // FireworkRocketEntity.java:123-128) and getEffectiveGravity tests the motion's sign (26.3
+        // LivingEntity.java:2337-2339, 1.13.2 :1511-1513): the raw input is that same impulse
+        for version in ["1.13.2", "1.20.4", "1.21.2", "1.21.11", "26.3"] {
+            for (velocity_y, boost_y, gravity) in [
+                // up across zero: no longer falling, the full 0.08 (the ticket's 0.0784000015)
+                (-0.1, 0.2, 0.08),
+                // down across zero: falling now, Slow Falling's 0.01
+                (0.1, -0.2, 0.01),
+                // a zero impulse leaves the choice to the motion
+                (-0.1, 0.0, 0.01),
+                (0.1, 0.0, 0.08),
+                // landing on exactly zero is falling (getDeltaMovement().y <= 0.0)
+                (-0.25, 0.25, 0.01),
+            ] {
+                let total = velocity_y + boost_y;
+                let raw = raw_glide(version, Vec3::new(0.0, velocity_y, 0.0), Vec3::new(0.0, boost_y, 0.0), true);
+                let impulse = raw_glide(version, Vec3::new(0.0, total, 0.0), Vec3::ZERO, true);
+                assert_eq!(raw.velocity, impulse.velocity, "{version} {velocity_y} {boost_y}");
+                assert_eq!(raw.position, impulse.position, "{version} {velocity_y} {boost_y}");
+                let expected = source_level_glide_y(total, gravity);
+                assert!((raw.velocity.y - expected).abs() < 1.0e-9, "{version} {velocity_y} {boost_y}: {} against {expected}", raw.velocity.y);
+            }
+            let ticket = raw_glide(version, Vec3::new(0.0, -0.1, 0.0), Vec3::new(0.0, 0.2, 0.0), true);
+            assert!((ticket.velocity.y - 0.0784000015).abs() < 1.0e-9, "{version}");
+        }
+    }
+
+    #[test]
+    fn the_raw_firework_boost_reaches_a_glide_without_slow_falling() {
+        // no Slow Falling before 1.13, the impulse's boundary is the same (1.9.4 and 1.12.2
+        // LivingEntity.travel read the motion the rocket left, FireworkRocketEntity from 1.11 only)
+        for version in ["1.9.4", "1.12.2", "1.20.4"] {
+            for (velocity_y, boost_y) in [(-0.1, 0.2), (0.1, -0.2), (0.1, 0.0)] {
+                let total = velocity_y + boost_y;
+                let raw = raw_glide(version, Vec3::new(0.0, velocity_y, 0.0), Vec3::new(0.0, boost_y, 0.0), false);
+                let impulse = raw_glide(version, Vec3::new(0.0, total, 0.0), Vec3::ZERO, false);
+                assert_eq!(raw.velocity, impulse.velocity, "{version}");
+                let expected = source_level_glide_y(total, 0.08);
+                assert!((raw.velocity.y - expected).abs() < 1.0e-9, "{version}: {}", raw.velocity.y);
+            }
+        }
+    }
+
+    #[test]
+    fn the_negligible_cut_reads_the_motion_the_raw_firework_boost_left() {
+        // the rocket's tick comes before aiStep's 0.003 cut (26.3 LivingEntity.java:2973-2996): the
+        // boost can bring a motion into the cut and take one out of it
+        for version in ["1.13.2", "1.20.4", "1.21.5", "26.3"] {
+            // into it: -0.0025 is cut to 0, which falls: Slow Falling's 0.01
+            let into = raw_glide(version, Vec3::new(0.0, -0.1, 0.0), Vec3::new(0.0, 0.0975, 0.0), true);
+            let expected = source_level_glide_y(0.0, 0.01);
+            assert!((into.velocity.y - expected).abs() < 1.0e-12, "{version}: {}", into.velocity.y);
+            // into it from above, the same: a cut after the gravity's choice would have taken 0.08
+            let above = raw_glide(version, Vec3::new(0.0, 0.01, 0.0), Vec3::new(0.0, -0.0075, 0.0), true);
+            assert_eq!(above.velocity.y, into.velocity.y, "{version}");
+            // out of it: 0.001 alone would be cut, 0.011 rises and takes 0.08
+            let out = raw_glide(version, Vec3::new(0.0, 0.001, 0.0), Vec3::new(0.0, 0.01, 0.0), true);
+            let expected = source_level_glide_y(0.001 + 0.01, 0.08);
+            assert!((out.velocity.y - expected).abs() < 1.0e-9, "{version}: {}", out.velocity.y);
+            // a horizontal motion: from 1.21.5 the player's cut reads the length, before each axis
+            let raw = raw_glide(version, Vec3::new(0.2, -0.1, 0.0), Vec3::new(-0.1985, 0.0, 0.0), true);
+            let impulse = raw_glide(version, Vec3::new(0.2 - 0.1985, -0.1, 0.0), Vec3::ZERO, true);
+            assert_eq!(raw.velocity, impulse.velocity, "{version}");
+            assert_eq!(raw.position, impulse.position, "{version}");
+            assert_eq!(raw.position.x, 0.5, "{version}");
+        }
+    }
+
+    #[test]
+    fn the_raw_firework_boost_falls_between_the_scene_rockets() {
+        // the rockets the client ticks before the player move it first, the raw input is the last
+        // thing before the player's tick, those after it see what the tick left (26.3
+        // FireworkRocketEntity.java:123-128: motion + look * 0.1 + (look * 1.5 - motion) * 0.5)
+        let rocket = |velocity: Vec3, look: Vec3| {
+            velocity
+                + Vec3::new(
+                    look.x * 0.1 + (look.x * 1.5 - velocity.x) * 0.5,
+                    look.y * 0.1 + (look.y * 1.5 - velocity.y) * 0.5,
+                    look.z * 0.1 + (look.z * 1.5 - velocity.z) * 0.5,
+                )
+        };
+        let look = Vec3::new(0.0, 0.0, 1.0);
+        let start = Vec3::new(0.0, -0.1, 0.4);
+        let boost = Vec3::new(0.0, 0.05, 0.0);
+        let world = WorldSnapshot::new();
+        for (version, release) in [
+            ("1.12.2", MinecraftVersion::new(1, 12, 2)),
+            ("1.20.4", MinecraftVersion::new(1, 20, 4)),
+            ("26.3", MinecraftVersion::new(26, 3, 0)),
+        ] {
+            let scene = |rockets: (u32, u32), velocity: Vec3, firework_boost: Vec3| {
+                let mut state = SimulationState {
+                    is_player: true,
+                    fall_flying: true,
+                    position: Vec3::new(0.5, 20.0, 0.5),
+                    velocity,
+                    firework_boost,
+                    look,
+                    half_width: 0.3,
+                    height: 1.8,
+                    controlled_by_local_instance: true,
+                    ..SimulationState::default()
+                };
+                let mut world = world.clone();
+                crate::simulation::tick_local_player_scene(
+                    &mut world,
+                    &mut state,
+                    None,
+                    &[],
+                    rockets,
+                    false,
+                    &[],
+                    &mut [0.0; 3],
+                    PhysicsConfig::default(),
+                    release,
+                    |state, world| {
+                        crate::versioned::dispatch(version, state, world, PhysicsConfig::default())
+                    },
+                )
+                .unwrap();
+                state
+            };
+            // before the player: rocket, then raw, then the tick
+            let before = scene((1, 1), start, boost);
+            assert_eq!(before.velocity, scene((0, 0), rocket(start, look) + boost, Vec3::ZERO).velocity, "{version}");
+            // after the player: raw, then the tick, then the rocket, once
+            let after = scene((1, 0), start, boost);
+            let ticked = scene((0, 0), start + boost, Vec3::ZERO);
+            assert_eq!(after.velocity, rocket(ticked.velocity, look), "{version}");
+            // the raw input is no rocket: with none attached it adds only itself
+            assert_eq!(scene((0, 0), start, boost).velocity, ticked.velocity, "{version}");
+        }
+    }
+
+    #[test]
+    fn a_contracted_lava_box_is_reordered_before_1_14() {
+        // Entity.isInLava's expand(-0.1F, -0.4F, -0.1F) makes a Box, whose constructor sorts the
+        // corners (1.13.2 Box.java:42-48, Entity.java:1144-1145): an elytra-sized 0.6 high box at
+        // y 64.7 spans 64.9..65.1 and reaches the lava in 64 (1.9.4 PlayerEntity.java:366-367)
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 64, 0),
+            BlockState {
+                fluid: FluidState::Lava,
+                fluid_source: true,
+                ..BlockState::default()
+            },
+        );
+        let height = f64::from(0.6_f32);
+        for release in [MinecraftVersion::new(1, 9, 4), MinecraftVersion::new(1, 13, 2)] {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 64.7, 0.5),
+                half_width: 0.3,
+                height,
+                is_player: true,
+                ..SimulationState::default()
+            };
+            tick_release(&mut state, &world, release);
+            assert!(state.in_lava, "{release:?}");
+        }
+    }
+
+    fn water_under(ceiling: BlockState) -> WorldSnapshot {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                fluid: FluidState::Water,
+                fluid_source: true,
+                ..BlockState::default()
+            },
+        );
+        world.set_block((0, 1, 0), ceiling);
+        for (chunk_x, chunk_z) in [(-1, -1), (-1, 0), (0, -1), (0, 0)] {
+            world.set_chunk_loaded(chunk_x, chunk_z, true);
+        }
+        world
+    }
+
+    #[test]
+    fn the_eyes_take_the_camera_height_of_a_source_under_a_sturdy_block_from_26_3() {
+        // 26.3 EntityFluidInteraction.java:84-88 reads getHeightForCamera, 1 here (FluidState.java:
+        // 53-61); 26.2 :70-71 the 8/9F of getHeight. The contact stays at getHeight.
+        let stone = BlockState {
+            shape: Some(BlockShape::full_block()),
+            ..BlockState::default()
+        };
+        let body = Aabb::new(Vec3::new(0.46, 0.81, 0.46), Vec3::new(0.54, 0.99, 0.54));
+        let eyes = |world: &WorldSnapshot, eye_y: f64, release: MinecraftVersion| {
+            world.eyes_in_fluid(FluidState::Water, body, (0.5, eye_y, 0.5), release)
+        };
+        let sturdy = water_under(stone);
+        let new = MinecraftVersion::new(26, 3, 0);
+        let old = MinecraftVersion::new(26, 2, 0);
+        assert!(eyes(&sturdy, 0.972, new));
+        assert!(!eyes(&sturdy, 0.972, old));
+        assert!(eyes(&sturdy, 0.8, old));
+        assert!(!eyes(&sturdy, 1.0 + 1.0e-9, new));
+        // the block's own word beats its boxes: leaves have an empty support shape
+        let leaves = water_under(BlockState {
+            bottom_face_sturdy: Some(false),
+            ..stone
+        });
+        assert!(!eyes(&leaves, 0.972, new));
+        // a bottom face not full is no sturdy one, two halves are
+        let half = BlockShape {
+            bounds: Aabb::new(Vec3::ZERO, Vec3::new(0.5, 1.0, 1.0)),
+            ..BlockShape::full_block()
+        };
+        let mut world = water_under(BlockState::default());
+        world.set_block_shapes((0, 1, 0), BlockState::default(), vec![half]);
+        assert!(!eyes(&world, 0.972, new));
+        let other_half = BlockShape {
+            bounds: Aabb::new(Vec3::new(0.5, 0.0, 0.0), Vec3::new(1.0, 1.0, 1.0)),
+            ..half
+        };
+        world.set_block_shapes((0, 1, 0), BlockState::default(), vec![half, other_half]);
+        assert!(eyes(&world, 0.972, new));
+        // a top slab has no bottom face
+        world.set_block_shapes(
+            (0, 1, 0),
+            BlockState::default(),
+            vec![BlockShape {
+                bounds: Aabb::new(Vec3::new(0.0, 0.5, 0.0), Vec3::new(1.0, 1.0, 1.0)),
+                ..half
+            }],
+        );
+        assert!(!eyes(&world, 0.972, new));
+        // flowing water keeps its height
+        let mut flowing = water_under(stone);
+        flowing.set_block(
+            (0, 0, 0),
+            BlockState {
+                fluid: FluidState::Water,
+                fluid_level: 1,
+                ..BlockState::default()
+            },
+        );
+        assert!(!eyes(&flowing, 0.972, new));
+    }
+
+    /// The fluid `cell` at the origin, under `ceiling`.
+    fn fluid_under(cell: BlockState, ceiling: BlockState) -> WorldSnapshot {
+        let mut world = water_under(ceiling);
+        world.set_block((0, 0, 0), cell);
+        world
+    }
+
+    fn source_of(fluid: FluidState) -> BlockState {
+        BlockState {
+            fluid,
+            fluid_source: true,
+            ..BlockState::default()
+        }
+    }
+
+    fn solid_ceiling() -> BlockState {
+        BlockState {
+            shape: Some(BlockShape::full_block()),
+            ..BlockState::default()
+        }
+    }
+
+    /// Whether eyes at each height in the origin's column are in `fluid`, for a body from 0.5 up to
+    /// the ceiling.
+    fn eye_heights(
+        world: &WorldSnapshot,
+        fluid: FluidState,
+        heights: &[f64],
+        release: MinecraftVersion,
+    ) -> Vec<bool> {
+        let body = Aabb::new(Vec3::new(0.46, 0.5, 0.46), Vec3::new(0.54, 0.99, 0.54));
+        heights
+            .iter()
+            .map(|&eye_y| world.eyes_in_fluid(fluid, body, (0.5, eye_y, 0.5), release))
+            .collect()
+    }
+
+    #[test]
+    fn the_eyes_end_at_the_camera_height_itself_with_both_fluids() {
+        // 26.3 EntityFluidInteraction.java:84-88: eyeY >= fluidBottom and eyeY <= the top for the
+        // camera, both ends included; FluidState.java:53-61: 1 for a source under a face sturdy
+        // down, else getHeight, 8/9F for a source alone (FlowingFluid.getOwnHeight)
+        let top = f64::from(8.0_f32 / 9.0);
+        let step = 1.0e-9;
+        let new = MinecraftVersion::new(26, 3, 0);
+        let old = MinecraftVersion::new(26, 2, 0);
+        let heights = [-step, 0.0, top - step, top, top + step, 1.0 - step, 1.0, 1.0 + step];
+        let at_8_9 = vec![false, true, true, true, false, false, false, false];
+        let at_1 = vec![false, true, true, true, true, true, true, false];
+        for fluid in [FluidState::Water, FluidState::Lava] {
+            let sturdy = fluid_under(source_of(fluid), solid_ceiling());
+            assert_eq!(eye_heights(&sturdy, fluid, &heights, new), at_1, "{fluid:?}");
+            assert_eq!(eye_heights(&sturdy, fluid, &heights, old), at_8_9, "{fluid:?}");
+
+            let open = fluid_under(source_of(fluid), BlockState::default());
+            assert_eq!(eye_heights(&open, fluid, &heights, new), at_8_9, "{fluid:?}");
+            assert_eq!(eye_heights(&open, fluid, &heights, old), at_8_9, "{fluid:?}");
+
+            let unsturdy = fluid_under(
+                source_of(fluid),
+                BlockState {
+                    bottom_face_sturdy: Some(false),
+                    ..solid_ceiling()
+                },
+            );
+            assert_eq!(eye_heights(&unsturdy, fluid, &heights, new), at_8_9, "{fluid:?}");
+
+            // the other fluid's eyes see nothing in the same cells
+            let other = if fluid == FluidState::Water {
+                FluidState::Lava
+            } else {
+                FluidState::Water
+            };
+            assert_eq!(
+                eye_heights(&sturdy, other, &[0.5, 1.0], new),
+                vec![false, false],
+                "{fluid:?}"
+            );
+        }
+        // a waterlogged block's water is a source too (the water query takes it)
+        let waterlogged = fluid_under(source_of(FluidState::Waterlogged), solid_ceiling());
+        assert_eq!(eye_heights(&waterlogged, FluidState::Water, &heights, new), at_1);
+    }
+
+    #[test]
+    fn a_flowing_fluid_keeps_its_height_under_a_sturdy_face() {
+        // FluidState.getHeightForCamera asks isSource first (26.3 FluidState.java:53-55): amount 7
+        // stands 7/9F, a falling cell 8/9F, under stone too
+        let step = 1.0e-9;
+        for release in [MinecraftVersion::new(26, 2, 0), MinecraftVersion::new(26, 3, 0)] {
+            for fluid in [FluidState::Water, FluidState::Lava] {
+                let flowing = fluid_under(
+                    BlockState {
+                        fluid,
+                        fluid_level: 1,
+                        ..BlockState::default()
+                    },
+                    solid_ceiling(),
+                );
+                let top = f64::from(7.0_f32 / 9.0);
+                assert_eq!(
+                    eye_heights(&flowing, fluid, &[top - step, top, top + step, 1.0], release),
+                    vec![true, true, false, false],
+                    "{fluid:?}"
+                );
+                let falling = fluid_under(
+                    BlockState {
+                        fluid,
+                        fluid_falling: true,
+                        ..BlockState::default()
+                    },
+                    solid_ceiling(),
+                );
+                let top = f64::from(8.0_f32 / 9.0);
+                assert_eq!(
+                    eye_heights(&falling, fluid, &[top - step, top, top + step, 1.0], release),
+                    vec![true, true, false, false],
+                    "{fluid:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_same_fluid_above_tops_a_source_at_1_in_both_releases() {
+        // FlowingFluid.getHeight: 1 under the same fluid (26.2 and 26.3 alike), not the camera rule
+        let mut world = fluid_under(source_of(FluidState::Water), BlockState::default());
+        world.set_block((0, 1, 0), source_of(FluidState::Water));
+        for release in [MinecraftVersion::new(26, 2, 0), MinecraftVersion::new(26, 3, 0)] {
+            assert_eq!(
+                eye_heights(&world, FluidState::Water, &[1.0, 1.0 + 1.0e-9], release),
+                vec![true, false]
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_full_bottom_face_lifts_the_camera_height() {
+        // BlockState.isFaceSturdy(DOWN) with SupportType.FULL is Block.isFaceFull of the support
+        // shape: the slice 1.0E-7 in covers the whole face (26.3 BlockBehaviour, VoxelShape
+        // getFaceShape): eyes between 8/9F and 1 are in the source under a full face only
+        let piece = |min: (f64, f64, f64), max: (f64, f64, f64)| BlockShape {
+            bounds: Aabb::new(Vec3::new(min.0, min.1, min.2), Vec3::new(max.0, max.1, max.2)),
+            ..BlockShape::full_block()
+        };
+        let full_plan = |y0, y1| vec![piece((0.0, y0, 0.0), (1.0, y1, 1.0))];
+        let cases: [(&str, Vec<BlockShape>, bool); 8] = [
+            ("bottom slab", full_plan(0.0, 0.5), true),
+            ("carpet", full_plan(0.0, 1.0 / 16.0), true),
+            ("top slab", full_plan(0.5, 1.0), false),
+            ("raised plate", full_plan(1.0 / 16.0, 0.5), false),
+            ("half", vec![piece((0.0, 0.0, 0.0), (0.5, 1.0, 1.0))], false),
+            (
+                "two halves",
+                vec![
+                    piece((0.0, 0.0, 0.0), (0.5, 1.0, 1.0)),
+                    piece((0.5, 0.0, 0.0), (1.0, 0.5, 1.0)),
+                ],
+                true,
+            ),
+            (
+                "a ring with a hole",
+                vec![
+                    piece((0.0, 0.0, 0.0), (0.25, 1.0, 1.0)),
+                    piece((0.75, 0.0, 0.0), (1.0, 1.0, 1.0)),
+                    piece((0.25, 0.0, 0.0), (0.75, 1.0, 0.25)),
+                    piece((0.25, 0.0, 0.75), (0.75, 1.0, 1.0)),
+                ],
+                false,
+            ),
+            (
+                "a stair's bottom half with its upper step",
+                vec![
+                    piece((0.0, 0.0, 0.0), (1.0, 0.5, 1.0)),
+                    piece((0.5, 0.5, 0.0), (1.0, 1.0, 1.0)),
+                ],
+                true,
+            ),
+        ];
+        let new = MinecraftVersion::new(26, 3, 0);
+        let old = MinecraftVersion::new(26, 2, 0);
+        for fluid in [FluidState::Water, FluidState::Lava] {
+            for (name, shapes, sturdy) in &cases {
+                let mut world = fluid_under(source_of(fluid), BlockState::default());
+                world.set_block_shapes((0, 1, 0), BlockState::default(), shapes.clone());
+                assert_eq!(world.bottom_face_sturdy((0, 1, 0)), *sturdy, "{name}");
+                assert_eq!(
+                    eye_heights(&world, fluid, &[0.95, 1.0], new),
+                    vec![*sturdy, *sturdy],
+                    "{name}"
+                );
+                assert_eq!(
+                    eye_heights(&world, fluid, &[0.95, 1.0], old),
+                    vec![false, false],
+                    "{name}"
+                );
+            }
+            // the block's own word for a support shape its collision does not show
+            let told = fluid_under(
+                source_of(fluid),
+                BlockState {
+                    bottom_face_sturdy: Some(true),
+                    ..BlockState::default()
+                },
+            );
+            assert_eq!(eye_heights(&told, fluid, &[0.95], new), vec![true]);
+        }
+    }
+
+    #[test]
+    fn the_bottom_face_of_collision_boxes_is_the_jars_for_every_shape_of_26_3() {
+        // scripts/java-oracle/OracleSturdy.java: `face full n box...` for each distinct collision
+        // shape, full by Block.isFaceFull(DOWN). A block's word covers what its support shape adds
+        // (leaves, snow, the chorus flower); BlockMapper was checked against every state of the jar
+        let text = include_str!("../fixtures/java-oracle-bottom-face-26.3.txt");
+        let mut shapes_checked = 0;
+        for line in text.lines() {
+            let tokens: Vec<&str> = line.split(' ').collect();
+            let values: Vec<f64> = tokens[3..].iter().map(|token| token.parse().unwrap()).collect();
+            let shapes: Vec<BlockShape> = values
+                .chunks(6)
+                .map(|at| BlockShape {
+                    bounds: Aabb::new(Vec3::new(at[0], at[1], at[2]), Vec3::new(at[3], at[4], at[5])),
+                    ..BlockShape::full_block()
+                })
+                .collect();
+            let mut world = WorldSnapshot::new();
+            world.set_block_shapes((0, 1, 0), BlockState::default(), shapes);
+            assert_eq!(world.bottom_face_sturdy((0, 1, 0)), tokens[1] == "1", "{line}");
+            shapes_checked += 1;
+        }
+        assert!(shapes_checked > 100);
+    }
+
+    #[test]
+    fn the_camera_height_reaches_only_the_cells_the_ordinary_height_lets_through() {
+        // EntityFluidInteraction skips a fluid whose getHeight top is under the box's foot before it
+        // reads the camera height (26.3 EntityFluidInteraction.java:73-74, 84): feet above 8/9F
+        // have no eyes in a source that reaches 1 for the camera
+        let world = fluid_under(source_of(FluidState::Water), solid_ceiling());
+        let new = MinecraftVersion::new(26, 3, 0);
+        let eyes = |foot: f64| {
+            let body = Aabb::new(Vec3::new(0.46, foot, 0.46), Vec3::new(0.54, 0.99, 0.54));
+            world.eyes_in_fluid(FluidState::Water, body, (0.5, 0.95, 0.5), new)
+        };
+        // the query deflates the box by 0.001 (26.3 Entity.getFluidInteractionBox)
+        let top = f64::from(8.0_f32 / 9.0);
+        assert!(eyes(top - 0.001));
+        assert!(!eyes(top - 0.0009));
+    }
+
+    #[test]
+    fn the_camera_height_leaves_the_tick_but_for_the_eye_flags() {
+        // Only the eye test reads getHeightForCamera: the height and the current read getHeight and
+        // getFlow (26.3 EntityFluidInteraction.java:73, 91-99), so a player scaled to fit under
+        // stone has the same contact and the same move in both releases and both ceilings
+        let flow = Vec3::new(0.6, 0.0, 0.8);
+        let foot = 0.3;
+        let top = f64::from(8.0_f32 / 9.0);
+        for fluid in [FluidState::Water, FluidState::Lava] {
+            let cell = BlockState {
+                fluid_flow: flow,
+                ..source_of(fluid)
+            };
+            let under_stone = fluid_under(cell, solid_ceiling());
+            let in_the_open = fluid_under(cell, BlockState::default());
+            let player = SimulationState {
+                position: Vec3::new(0.5, foot, 0.5),
+                half_width: 0.04,
+                height: 0.69,
+                eye_height: Some(0.66),
+                is_player: true,
+                controlled_by_local_instance: true,
+                client_side: true,
+                no_gravity: true,
+                ..SimulationState::default()
+            };
+            let new = MinecraftVersion::new(26, 3, 0);
+            let old = MinecraftVersion::new(26, 2, 0);
+            let contact = entity_fluid_contact(&player, &under_stone, fluid, new);
+            assert!(contact.touching);
+            assert_eq!(contact.height, top - foot);
+            assert_eq!(contact.flow, flow);
+            assert_eq!(contact.flowing_blocks, 1);
+            assert_eq!(entity_fluid_contact(&player, &under_stone, fluid, old), contact);
+            assert_eq!(entity_fluid_contact(&player, &in_the_open, fluid, new), contact);
+
+            let ticked = |world: &WorldSnapshot, version: &str| {
+                let mut state = player;
+                crate::versioned::dispatch(version, &mut state, world, PhysicsConfig::default())
+                    .unwrap();
+                state
+            };
+            let (lifted, plain) = (ticked(&under_stone, "26.3"), ticked(&under_stone, "26.2"));
+            let open = ticked(&in_the_open, "26.3");
+            // the native outputs themselves, with no adapter recomputing them
+            let eye_flags = |state: &SimulationState| (state.eye_in_water, state.eye_in_lava);
+            let is_water = fluid == FluidState::Water;
+            assert_eq!(eye_flags(&lifted), (is_water, !is_water), "{fluid:?}");
+            assert_eq!(eye_flags(&plain), (false, false), "{fluid:?}");
+            assert_eq!(eye_flags(&open), (false, false), "{fluid:?}");
+            for other in [&plain, &open] {
+                assert_eq!(lifted.position, other.position, "{fluid:?}");
+                assert_eq!(lifted.velocity, other.velocity, "{fluid:?}");
+                assert_eq!(lifted.in_water, other.in_water, "{fluid:?}");
+                assert_eq!(lifted.in_lava, other.in_lava, "{fluid:?}");
+            }
+        }
+    }
+
+    fn boat_fluid_state(underwater: bool) -> SimulationState {
+        SimulationState {
+            position: Vec3::new(0.5, 0.2, 0.5),
+            half_width: 0.2,
+            height: 1.6,
+            eye_height: Some(0.4),
+            is_player: true,
+            controlled_by_local_instance: true,
+            client_side: true,
+            passenger: true,
+            no_gravity: true,
+            boat_vehicle: Some(BoatVehicle {
+                bounding_box: Aabb::new(Vec3::new(0.0, -1.0, 0.0), Vec3::new(1.0, 3.0, 1.0)),
+                underwater,
+            }),
+            ..SimulationState::default()
+        }
+    }
+
+    fn boat_fluid_world(fluid: FluidState) -> WorldSnapshot {
+        let mut world = fluid_block_world(fluid);
+        load_chunks_around_origin(&mut world);
+        world.set_block((0, 0, 0), BlockState {
+            fluid,
+            fluid_source: true,
+            fluid_flow: Vec3::new(1.0, 0.0, 0.0),
+            ..BlockState::default()
+        });
+        world
+    }
+
+    #[test]
+    fn boat_passenger_water_exclusion_changes_at_1_9_and_1_19_3() {
+        // 1.8.9 Entity has no boat guard (the registered 1.8.8 source stand-in); 1.9.4 :948
+        // skips every boat, 1.19.3 :1080 first permits an underwater boat's passenger.
+        let world = boat_fluid_world(FluidState::Water);
+        for (version, dry_boat_water, underwater_boat_water) in [
+            ("1.8.8", true, true),
+            ("1.9.4", false, false),
+            ("1.12.2", false, false),
+            ("1.13.2", false, false),
+            ("1.15.2", false, false),
+            ("1.16.1", false, false),
+            ("1.19.2", false, false),
+            ("1.19.3", false, true),
+            ("1.21.11", false, true),
+        ] {
+            for (underwater, expected) in [(false, dry_boat_water), (true, underwater_boat_water)] {
+                let mut state = boat_fluid_state(underwater);
+                crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default()).unwrap();
+                assert_eq!(state.in_water, expected, "{version}, underwater={underwater}");
+                assert_eq!(state.velocity.x > 0.0, expected, "{version}: current");
+            }
+            let mut ordinary = SimulationState { passenger: false, ..boat_fluid_state(false) };
+            crate::versioned::dispatch(version, &mut ordinary, &world, PhysicsConfig::default()).unwrap();
+            assert!(ordinary.in_water, "{version}: inactive context");
+        }
+        // The old water exclusion is not a blanket fluid exclusion.
+        let mut state = boat_fluid_state(false);
+        crate::versioned::dispatch("1.21.11", &mut state, &boat_fluid_world(FluidState::Lava), PhysicsConfig::default()).unwrap();
+        assert!(state.in_lava);
+        assert!(state.velocity.x > 0.0);
+    }
+
+    #[test]
+    fn boat_passenger_eyes_keep_their_historical_containment_and_offset_rules() {
+        // 1.16.1 updateFluidOnEyes calls AABB.contains (all axes, maxima exclusive),
+        // 1.16.2 tests only minY <= eye <= maxY; 1.20.5 removes the eye offset.
+        let mut state = SimulationState {
+            position: Vec3::new(0.5, 0.0, 0.5),
+            eye_height: Some(0.6),
+            ..boat_fluid_state(false)
+        };
+        let sampled_y = java_float(0.6) - f64::from(0.11111111_f32);
+        for fluid in [FluidState::Water, FluidState::Lava] {
+            let world = boat_fluid_world(fluid);
+            let eyes = |state: &SimulationState, version: &str| {
+                entity_eyes_in_fluid(state, &world, fluid, MinecraftVersion::parse(version).unwrap())
+            };
+            // Before 1.16 the guard is unconditional even for an underwater boat.
+            let old = boat_fluid_state(true);
+            assert!(!eyes(&old, "1.9.4"));
+            assert!(!eyes(&old, "1.15.2"));
+            state.boat_vehicle.as_mut().unwrap().bounding_box = Aabb::new(
+                Vec3::new(2.0, sampled_y - 0.1, 2.0), Vec3::new(3.0, sampled_y + 0.1, 3.0),
+            );
+            assert!(eyes(&state, "1.16.1"));
+            assert!(!eyes(&state, "1.16.2"));
+            state.boat_vehicle.as_mut().unwrap().bounding_box = Aabb::new(
+                Vec3::new(0.0, -1.0, 0.0), Vec3::new(1.0, sampled_y, 1.0),
+            );
+            assert!(eyes(&state, "1.16.1"), "exclusive maximum");
+            assert!(!eyes(&state, "1.16.2"), "inclusive maximum");
+            state.boat_vehicle.as_mut().unwrap().bounding_box = Aabb::new(
+                Vec3::new(0.0, sampled_y, 0.0), Vec3::new(1.0, sampled_y + 0.1, 1.0),
+            );
+            assert!(!eyes(&state, "1.16.1"), "inclusive minimum");
+            assert!(!eyes(&state, "1.16.2"), "inclusive minimum");
+            state.boat_vehicle.as_mut().unwrap().bounding_box = Aabb::new(
+                Vec3::new(0.0, 0.55, 0.0), Vec3::new(1.0, 0.65, 1.0),
+            );
+            assert!(eyes(&state, "1.20.4"));
+            assert!(!eyes(&state, "1.20.5"));
+            state.boat_vehicle.as_mut().unwrap().underwater = true;
+            assert!(eyes(&state, "1.20.5"));
+            state.boat_vehicle.as_mut().unwrap().underwater = false;
+        }
+    }
+
+    #[test]
+    fn boat_passenger_modern_scan_keeps_original_depth_and_deflates_only_once() {
+        // 26.1 Entity.getFluidInteractionBox deflates before the boat trims; the tracker
+        // still subtracts the original entity minY (26.3 EntityFluidInteraction.java:57,91).
+        for version in ["26.1", "26.1.1", "26.1.2", "26.2", "26.3"] {
+            let release = MinecraftVersion::parse(version).unwrap();
+            for fluid in [FluidState::Water, FluidState::Lava] {
+                let world = boat_fluid_world(fluid);
+                let mut trimmed = SimulationState {
+                    position: Vec3::new(0.5, 0.6, 0.5),
+                    ..boat_fluid_state(false)
+                };
+                trimmed.boat_vehicle.as_mut().unwrap().bounding_box.max.y = 0.8;
+                let original_bounds = trimmed.bounds();
+                let area = trimmed.fluid_interaction_area().unwrap();
+                assert_eq!(area.min.y, 0.8);
+                assert_eq!(area.max.y, original_bounds.max.y - 0.001);
+                assert_eq!(area.min.x, original_bounds.min.x + 0.001);
+                let ordinary = SimulationState { boat_vehicle: None, ..trimmed };
+                let plain_contact = entity_fluid_contact(&ordinary, &world, fluid, release);
+                let contact = entity_fluid_contact(&trimmed, &world, fluid, release);
+                assert_eq!(contact, plain_contact, "{version}: same fluid cells and original depth");
+                assert_eq!(contact.height, f64::from(8.0_f32 / 9.0) - 0.6);
+                assert_eq!(contact.flow.x, contact.height, "shallow current uses original depth");
+                assert_eq!(trimmed.bounds(), original_bounds, "query must not resize entity");
+                trimmed.boat_vehicle.as_mut().unwrap().bounding_box.max.y = original_bounds.max.y - 0.001;
+                assert_eq!(trimmed.fluid_interaction_area(), None, "coverage compares deflated maxY");
+                assert_eq!(entity_fluid_contact(&trimmed, &world, fluid, release), Default::default());
+                assert!(!entity_eyes_in_fluid(&trimmed, &world, fluid, release));
+                trimmed.boat_vehicle.as_mut().unwrap().underwater = true;
+                assert_eq!(entity_fluid_contact(&trimmed, &world, fluid, release), plain_contact);
+            }
+        }
+    }
+
+    #[test]
+    fn boat_passenger_null_scan_clears_stale_flags_and_dismount_restores_queries() {
+        for version in ["26.1", "26.2", "26.3"] {
+            let world = boat_fluid_world(FluidState::Water);
+            for no_physics in [false, true] {
+                let mut state = SimulationState {
+                    in_water: true, in_lava: true, eye_in_water: true, eye_in_lava: true,
+                    no_physics,
+                    ..boat_fluid_state(false)
+                };
+                let before = state.bounds();
+                crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default()).unwrap();
+                assert!(!state.in_water && !state.in_lava && !state.eye_in_water && !state.eye_in_lava, "{version}");
+                assert_eq!(state.velocity, Vec3::ZERO, "null scan applies no current");
+                assert_eq!(state.bounds(), before, "fluid exclusion preserves physical bounds");
+                state.passenger = false;
+                crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default()).unwrap();
+                assert!(state.in_water && state.eye_in_water, "{version}: dismount");
+                assert!(state.velocity.x > 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn boat_passenger_fall_refresh_does_not_restore_excluded_water() {
+        // LivingEntity.checkFallDamage rechecks fluids after movement. Passing the vehicle
+        // context only to baseTick would let this second query erase the falling distance.
+        let world = boat_fluid_world(FluidState::Water);
+        for version in ["1.12.2", "1.20.4", "1.21.11", "26.1", "26.3"] {
+            let release = MinecraftVersion::parse(version).unwrap();
+            let mut state = SimulationState {
+                in_water: false, fall_distance: 2.0,
+                ..boat_fluid_state(false)
+            };
+            let before = state.bounds();
+            crate::simulation::check_fall_damage(
+                &mut state, &world,
+                VersionPhysicsRules { release, ..VersionPhysicsRules::default() },
+                None, -0.1, false,
+                crate::simulation::FallDamageRules {
+                    landing_damage_rounding: LandingDamageRounding::Floor,
+                    restitution_enabled: release.at_least(26, 2, 0),
+                    modern_fall_damage: release.at_least(1, 20, 5),
+                },
+            );
+            assert!(!state.in_water, "{version}: post-move water exclusion");
+            assert!(state.fall_distance > 2.0, "{version}: fall not reset by excluded water");
+            assert_eq!(state.velocity, Vec3::ZERO, "no post-move current");
+            assert_eq!(state.bounds(), before);
+        }
+    }
+
+    #[test]
+    fn the_supporting_block_takes_the_shape_test_of_block_collisions() {
+        // findSupportingBlock reads BlockCollisions (26.3 CollisionGetter.java): a partial shape
+        // overlapped within 1e-7 does not support, Shapes.block() by the strict test does
+        let context = EntityCollisionContext::default();
+        let area = Aabb::new(Vec3::new(0.1, 0.5 - 5.0e-8, 0.1), Vec3::new(0.9, 1.0, 0.9));
+        let mut world = WorldSnapshot::new();
+        world.set_block_shapes(
+            (0, 0, 0),
+            BlockState::default(),
+            vec![BlockShape {
+                bounds: Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.5, 1.0)),
+                ..BlockShape::full_block()
+            }],
+        );
+        assert_eq!(world.supporting_block_position(area, Vec3::new(0.5, 0.5, 0.5), &context, MinecraftVersion::new(26, 3, 0)), None);
+        let mut world = WorldSnapshot::new();
+        world.set_block_shapes((0, 0, 0), BlockState::default(), vec![BlockShape::full_block()]);
+        let area = Aabb::new(Vec3::new(0.1, 1.0 - 5.0e-8, 0.1), Vec3::new(0.9, 1.5, 0.9));
+        assert_eq!(
+            world.supporting_block_position(area, Vec3::new(0.5, 1.0, 0.5), &context, MinecraftVersion::new(26, 3, 0)),
+            Some((0, 0, 0))
+        );
+    }
+
+    // ---- B097: fall history ----
+
+    fn faller(y: f64) -> SimulationState {
+        SimulationState {
+            position: Vec3::new(0.5, y, 0.5),
+            half_width: 0.3,
+            height: 1.8,
+            safe_fall_distance: 3.0,
+            is_player: true,
+            controlled_by_local_instance: true,
+            ..SimulationState::default()
+        }
+    }
+
+    fn step(version: &str, state: &mut SimulationState, world: &WorldSnapshot) {
+        crate::versioned::dispatch(version, state, world, PhysicsConfig::default()).unwrap();
+    }
+
+    #[test]
+    fn a_long_fractional_descent_counts_each_move_in_the_precision_of_the_release() {
+        // Java's intermediates, written out here rather than through accumulated_fall_distance:
+        // 1.18.1 Entity.java:1019 `(float)((double)fd - dy)`, 1.19 :1005 `fd -= (float)dy`,
+        // 1.21.5 :1286 and 26.3 :1598 `fd -= (double)(float)dy`
+        let world = WorldSnapshot::new();
+        let families: [(&str, fn(f64, f64) -> f64); 5] = [
+            ("1.16.5", |fd, dy| f64::from((fd - dy) as f32)),
+            ("1.18.1", |fd, dy| f64::from((fd - dy) as f32)),
+            ("1.19", |fd, dy| f64::from(fd as f32 - dy as f32)),
+            ("1.21.5", |fd, dy| fd - f64::from(dy as f32)),
+            ("26.3", |fd, dy| fd - f64::from(dy as f32)),
+        ];
+        for (version, count) in families {
+            let mut state = faller(300.0);
+            let (mut fall_distance, mut velocity) = (0.0_f64, 0.0_f64);
+            for tick_number in 0..40 {
+                step(version, &mut state, &world);
+                if velocity < 0.0 {
+                    fall_distance = count(fall_distance, velocity);
+                }
+                velocity = (velocity - 0.08) * java_float(0.98);
+                assert_eq!(state.velocity.y, velocity, "{version} tick {tick_number}");
+                assert_eq!(state.fall_distance, fall_distance, "{version} tick {tick_number}");
+            }
+            assert_eq!(state.fall_damage, 0.0, "{version}");
+        }
+    }
+
+    #[test]
+    fn upward_motion_leaves_the_fall_distance_for_the_drop_to_count_on() {
+        // Entity.checkFallDamage counts only a move going down and a rise in the air leaves the
+        // distance as it is (1.20.4 Entity.java:1116-1130, 26.3 :1596-1610)
+        let world = WorldSnapshot::new();
+        for version in ["1.8.8", "1.20.4", "26.3"] {
+            let mut state = SimulationState {
+                velocity: Vec3::new(0.0, 0.1, 0.0),
+                fall_distance: 2.0,
+                ..faller(300.0)
+            };
+            step(version, &mut state, &world);
+            assert_eq!(state.fall_distance, 2.0, "{version}");
+            while state.velocity.y >= 0.0 {
+                step(version, &mut state, &world);
+                assert_eq!(state.fall_distance, 2.0, "{version}");
+            }
+            step(version, &mut state, &world);
+            assert!(state.fall_distance > 2.0, "{version}");
+        }
+    }
+
+    #[test]
+    fn a_step_up_lands_with_no_drop_of_its_own() {
+        // Entity.move: a fall that steps onto a slab ends on the ground (verticalCollisionBelow
+        // goes by the movement it asked for), and the movement it made goes up, so the 1.21.5
+        // checkFallDamage adds nothing before the landing (26.3 Entity.java:1597-1599) and the
+        // distance stays 4.97: floor 1 where the 0.05 of the way down would have made it 2;
+        // ceil 2 before 1.21.5 either way (1.20.4 LivingEntity.java:1564)
+        let mut world = WorldSnapshot::new();
+        for x in -1..3 {
+            world.set_block(
+                (x, 0, 0),
+                BlockState {
+                    id: 1,
+                    shape: Some(BlockShape::full_block()),
+                    ..BlockState::default()
+                },
+            );
+        }
+        world.set_block(
+            (1, 1, 0),
+            BlockState {
+                id: 2,
+                shape: Some(BlockShape {
+                    bounds: Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.5, 1.0)),
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        for (version, damage) in [("1.20.4", 2.0), ("26.3", 1.0)] {
+            let mut state = SimulationState {
+                velocity: Vec3::new(0.6, -0.1, 0.0),
+                fall_distance: 4.97,
+                ..faller(1.05)
+            };
+            step(version, &mut state, &world);
+            assert_eq!(state.position.y, 1.5, "{version}");
+            assert!(state.on_ground, "{version}");
+            assert_eq!(state.fall_damage, damage, "{version}");
+            assert_eq!(state.fall_distance, 0.0, "{version}");
+        }
+    }
+
+    #[test]
+    fn a_state_reseeded_through_its_entity_state_keeps_its_fall_history() {
+        // merge_entity_state replaces what EntityState holds and nothing else: a tick reseeded from
+        // its own prediction goes on with the same fall distance and landing as an unbroken one
+        use crate::entity::EntityState;
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        for version in ["1.18.1", "1.20.4", "26.3"] {
+            let mut unbroken = faller(9.0);
+            let mut reseeded = unbroken;
+            let mut landed = 0.0_f64;
+            for tick_number in 0..40 {
+                step(version, &mut unbroken, &world);
+                step(version, &mut reseeded, &world);
+                let prediction = EntityState::from(reseeded);
+                reseeded.merge_entity_state(prediction);
+                let at = format!("{version} tick {tick_number}");
+                assert_eq!(reseeded.position, unbroken.position, "{at}");
+                assert_eq!(reseeded.fall_distance, unbroken.fall_distance, "{at}");
+                assert_eq!(reseeded.fall_damage, unbroken.fall_damage, "{at}");
+                landed = landed.max(unbroken.fall_damage);
+            }
+            assert_eq!(landed, 5.0, "{version}: a fall of 8 blocks hurts");
+        }
+    }
+
+    // ---- B098: the landing damage ----
+
+    #[test]
+    fn the_modern_epsilon_decides_a_fall_ending_on_a_whole_point() {
+        use crate::simulation::attribute_landing_damage;
+        // calculateFallPower `fallDistance + 1.0E-6 - safe`, then Mth.floor (1.21.5
+        // LivingEntity.java:1672-1682, 26.3 :1783-1790): just under a point counts as the point
+        // within the epsilon, and no further
+        let modern = MinecraftVersion::new(26, 3, 0);
+        let floor = LandingDamageRounding::Floor;
+        for (fall_distance, safe, damage) in [
+            (4.0, 3.0, 1.0),
+            (4.0 - 1.0e-7, 3.0, 1.0),
+            (4.0 - 2.0e-6, 3.0, 0.0),
+            (3.0, 3.0, 0.0),
+            (5.0 - 1.0e-7, 3.0, 2.0),
+            (1.0 - 1.0e-7, 0.0, 1.0),
+            (0.5, 0.0, 0.0),
+            (11.0, 10.0, 1.0),
+            (9.0, 10.0, 0.0),
+        ] {
+            assert_eq!(
+                attribute_landing_damage(fall_distance, safe, 1.0, 1.0, floor, modern),
+                damage,
+                "{fall_distance} {safe}"
+            );
+        }
+        // the attribute multiplies after the block's, in double
+        assert_eq!(attribute_landing_damage(5.0, 3.0, 0.2, 2.5, floor, modern), 1.0);
+        assert_eq!(attribute_landing_damage(5.0, 3.0, 1.0, 0.0, floor, modern), 0.0);
+        // 1.20.5 - 1.21.4: ceil on a float, so any excess is a point (1.20.5 LivingEntity.java:1602-1610)
+        let attribute = MinecraftVersion::new(1, 21, 4);
+        let ceil = LandingDamageRounding::Ceil;
+        let just_over = f64::from(f32::from_bits(3.0_f32.to_bits() + 1));
+        assert_eq!(attribute_landing_damage(just_over, 3.0, 1.0, 1.0, ceil, attribute), 1.0);
+        assert_eq!(attribute_landing_damage(3.0, 3.0, 1.0, 0.5, ceil, attribute), 0.0);
+        assert_eq!(attribute_landing_damage(0.25, 0.0, 1.0, 1.0, ceil, attribute), 1.0);
+        assert_eq!(attribute_landing_damage(5.0, 3.0, 1.0, 0.25, ceil, attribute), 1.0);
+    }
+
+    #[test]
+    fn a_bounced_landing_reports_its_damage_on_its_own_tick_only() {
+        // The damage is the amount of the tick's Entity.checkFallDamage -> causeFallDamage (1.20.4
+        // Entity.java:1116-1130, 26.3 LivingEntity.java:1722-1745): a bed bounces the player up and
+        // the next tick, in the air, lands on nothing
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                id: 1,
+                shape: Some(BlockShape {
+                    effect: BlockEffect::Bed,
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        for version in ["1.20.4", "1.21.11"] {
+            let mut state = SimulationState {
+                velocity: Vec3::new(0.0, -1.0, 0.0),
+                fall_distance: 13.0,
+                ..faller(1.5)
+            };
+            step(version, &mut state, &world);
+            assert!(state.on_ground, "{version}");
+            assert!(state.fall_damage > 0.0, "{version}");
+            assert!(state.velocity.y > 0.0, "{version}: the bed bounces it");
+            step(version, &mut state, &world);
+            assert!(!state.on_ground, "{version}");
+            assert_eq!(state.fall_damage, 0.0, "{version}");
+        }
+    }
+
+    // ---- B108: the jump's counter ----
+
+    fn on_the_floor(fields: SimulationState) -> (WorldSnapshot, SimulationState) {
+        let mut world = WorldSnapshot::new();
+        for x in -3..4 {
+            for z in -3..4 {
+                world.set_block(
+                    (x, 0, z),
+                    BlockState {
+                        id: 1,
+                        shape: Some(BlockShape::full_block()),
+                        ..BlockState::default()
+                    },
+                );
+            }
+        }
+        (
+            world,
+            SimulationState {
+                position: Vec3::new(0.5, 1.0, 0.5),
+                velocity: Vec3::new(0.0, -0.0784000015258789, 0.0),
+                half_width: 0.3,
+                height: 1.8,
+                on_ground: true,
+                is_player: true,
+                controlled_by_local_instance: true,
+                jump_requested: true,
+                ..fields
+            },
+        )
+    }
+
+    #[test]
+    fn a_jump_with_no_power_still_arms_the_delay_and_moves_nothing() {
+        // LivingEntity.aiStep sets noJumpDelay = 10 after jumpFromGround, which from 1.20.5 returns
+        // at once for a power of at most 1.0E-5F (26.3 LivingEntity.java:2303-2306, :3024-3026)
+        for version in ["1.20.5", "1.21.11", "26.3"] {
+            for strength in [0.0, 1.0e-5] {
+                let (world, mut state) = on_the_floor(SimulationState {
+                    jump_strength: Some(strength),
+                    sprinting: true,
+                    ..SimulationState::default()
+                });
+                step(version, &mut state, &world);
+                assert_eq!(state.jump_ticks, 10, "{version} {strength}");
+                assert_eq!(state.position.y, 1.0, "{version} {strength}");
+                assert_eq!(state.velocity.z, 0.0, "{version}: no sprint impulse either");
+                assert!(state.on_ground, "{version} {strength}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_jump_counts_down_before_it_tests_the_delay() {
+        // LivingEntity.aiStep: `if (noJumpDelay > 0) --noJumpDelay` first, the test `== 0` later in
+        // the same tick (1.8.9 LivingEntity.java:1405-1406, :1456; 1.20.4 :2513-2514, :2576;
+        // 26.3 :2959-2960, :3024)
+        for version in ["1.8.8", "1.20.4", "26.3"] {
+            for (delay, launches, left) in [(0, true, 10), (1, true, 10), (2, false, 1), (10, false, 9)] {
+                let (world, mut state) = on_the_floor(SimulationState {
+                    jump_ticks: delay,
+                    ..SimulationState::default()
+                });
+                step(version, &mut state, &world);
+                assert_eq!(state.position.y > 1.0, launches, "{version} {delay}");
+                assert_eq!(state.jump_ticks, left, "{version} {delay}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_held_jump_traces_the_delay_tick_by_tick() {
+        // The launch arms 10, the air ticks count it down with the key still down, and the landing
+        // after it ran out launches at once: physrec/j_hop_held records the same on every release
+        for version in ["1.8.8", "1.20.4", "26.3"] {
+            let (world, mut state) = on_the_floor(SimulationState::default());
+            let mut launches = Vec::new();
+            let mut trace = Vec::new();
+            for tick_number in 0..40 {
+                let grounded = state.on_ground;
+                step(version, &mut state, &world);
+                trace.push(state.jump_ticks);
+                if grounded && state.position.y > 1.0 {
+                    launches.push(tick_number);
+                    assert_eq!(state.jump_ticks, 10, "{version} tick {tick_number}");
+                }
+            }
+            assert_eq!(&trace[..11], &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0], "{version}");
+            assert!(launches.len() >= 3, "{version}: {launches:?}");
+            assert_eq!(launches[0], 0, "{version}");
+            assert!(launches.windows(2).all(|pair| pair[1] - pair[0] > 10), "{version}: {launches:?}");
+        }
+    }
+
+    #[test]
+    fn releasing_the_key_clears_the_delay_and_a_repress_jumps_at_once() {
+        // `else { noJumpDelay = 0 }` (1.8.9 LivingEntity.java:1461, 1.20.4 :2587, 26.3 :3035)
+        for version in ["1.8.8", "1.20.4", "26.3"] {
+            let (world, mut state) = on_the_floor(SimulationState {
+                jump_ticks: 7,
+                ..SimulationState::default()
+            });
+            state.jump_requested = false;
+            step(version, &mut state, &world);
+            assert_eq!(state.jump_ticks, 0, "{version}");
+            assert_eq!(state.position.y, 1.0, "{version}");
+            state.jump_requested = true;
+            step(version, &mut state, &world);
+            assert_eq!(state.jump_ticks, 10, "{version}");
+            assert!(state.position.y > 1.0, "{version}");
+        }
+    }
+
+    #[test]
+    fn a_jump_held_in_the_air_or_swimming_only_counts_down() {
+        // Only the ground branch arms the delay and only the released key clears it: a swim up
+        // (jumpInLiquid) and a tick in the air leave it to run out (26.3 LivingEntity.java:3016-3035)
+        let mut world = WorldSnapshot::new();
+        for y in 0..4 {
+            world.set_block(
+                (0, y, 0),
+                BlockState {
+                    fluid: FluidState::Water,
+                    fluid_level: 8,
+                    ..BlockState::default()
+                },
+            );
+        }
+        for version in ["1.20.4", "26.3"] {
+            let mut swimming = SimulationState {
+                in_water: true,
+                jump_requested: true,
+                jump_ticks: 5,
+                ..faller(1.5)
+            };
+            step(version, &mut swimming, &world);
+            assert_eq!(swimming.jump_ticks, 4, "{version}");
+            let mut airborne = SimulationState {
+                jump_requested: true,
+                jump_ticks: 3,
+                ..faller(50.0)
+            };
+            step(version, &mut airborne, &WorldSnapshot::new());
+            assert_eq!(airborne.jump_ticks, 2, "{version}");
+        }
+    }
+
+    #[test]
+    fn a_head_clip_ends_the_rise_and_keeps_the_delay() {
+        // A ceiling 2 above the feet stops the 0.42 launch inside its first tick (Entity.collide):
+        // the blocked motion goes to 0, then gravity and drag, and the delay stays armed
+        for version in ["1.20.4", "26.3"] {
+            let (mut world, mut state) = on_the_floor(SimulationState::default());
+            world.set_block(
+                (0, 3, 0),
+                BlockState {
+                    id: 1,
+                    shape: Some(BlockShape::full_block()),
+                    ..BlockState::default()
+                },
+            );
+            let top = state.height;
+            step(version, &mut state, &world);
+            assert!((state.position.y - (3.0 - top)).abs() < 1.0e-9, "{version}");
+            assert!(state.collided_vertically, "{version}");
+            assert!(!state.on_ground, "{version}");
+            assert_eq!(state.velocity.y, (0.0 - 0.08) * java_float(0.98), "{version}");
+            assert_eq!(state.jump_ticks, 10, "{version}");
+        }
+    }
+
+    #[test]
+    fn a_jump_over_a_faster_rise_keeps_it_and_arms_the_delay_from_1_21_2() {
+        // jumpFromGround's `Math.max((double)jumpPower, movement.y)` (26.3 LivingEntity.java:2307-2308);
+        // before 1.21.2 the power replaces the motion
+        for (version, kept) in [("1.21.1", false), ("1.21.2", true), ("26.3", true)] {
+            let (world, mut state) = on_the_floor(SimulationState::default());
+            state.velocity.y = 0.6;
+            step(version, &mut state, &world);
+            let want = if kept { 0.6 } else { f64::from(0.42_f32) };
+            assert!((state.position.y - 1.0 - want).abs() < 1.0e-12, "{version}");
+            assert_eq!(state.jump_ticks, 10, "{version}");
+        }
+    }
+
+    #[test]
+    fn a_jump_leaves_the_fall_distance_to_the_landing() {
+        // Nothing in LivingEntity.jumpFromGround touches fallDistance (1.8.9 LivingEntity.java:1109,
+        // 1.20.4 :2009, 26.3 :2303): a state seeded on the ground with one still has it after the launch
+        for version in ["1.8.8", "1.20.4", "26.3"] {
+            let (world, mut state) = on_the_floor(SimulationState {
+                fall_distance: 2.0,
+                ..SimulationState::default()
+            });
+            step(version, &mut state, &world);
+            assert!(state.position.y > 1.0, "{version}");
+            assert_eq!(state.fall_distance, 2.0, "{version}");
+        }
+    }
+
+    // ---- B114: gravity by travel family ----
+
+    #[test]
+    fn levitation_outranks_no_gravity_in_the_air_and_gravity_goes_on_under_slow_falling() {
+        // LivingEntity.travelInAir (26.3 :2382-2397): the Levitation branch comes first whatever the
+        // gravity; without it getEffectiveGravity is min(gravity, 0.01) falling under Slow Falling
+        // (:2338-2340) and 0 with NoGravity (Entity.java:1563-1565)
+        let world = WorldSnapshot::new();
+        let drag = java_float(0.98);
+        for version in ["1.20.5", "1.21.11", "26.3"] {
+            let run = |no_gravity: bool, levitation: bool, slow_falling: bool, gravity: Option<f64>, velocity: f64| {
+                let mut state = SimulationState {
+                    velocity: Vec3::new(0.0, velocity, 0.0),
+                    no_gravity,
+                    levitation,
+                    slow_falling,
+                    gravity,
+                    ..faller(300.0)
+                };
+                step(version, &mut state, &world);
+                state.velocity.y
+            };
+            let lifted = (-0.25 + (0.05 + 0.25) * 0.2) * drag;
+            assert_eq!(run(true, true, false, None, -0.25), lifted, "{version}");
+            assert_eq!(run(false, true, false, None, -0.25), lifted, "{version}");
+            assert_eq!(run(true, false, true, None, -0.25), -0.25 * drag, "{version}");
+            assert_eq!(run(true, false, false, None, 0.25), 0.25 * drag, "{version}");
+            // Slow Falling caps a falling move and leaves a rising one
+            assert_eq!(run(false, false, true, None, -0.25), (-0.25 - 0.01) * drag, "{version}");
+            assert_eq!(run(false, false, true, None, 0.25), (0.25 - 0.08) * drag, "{version}");
+            // zero and negative gravity go through the cap as they are
+            assert_eq!(run(false, false, true, Some(-0.02), -0.25), (-0.25 + 0.02) * drag, "{version}");
+            assert_eq!(run(false, false, true, Some(0.0), -0.25), -0.25 * drag, "{version}");
+            assert_eq!(run(false, false, false, Some(0.5), -0.25), (-0.25 - 0.5) * drag, "{version}");
+            // RangedAttribute clamps to -1..1 (1.21.11 Attributes.java:46, RangedAttribute.java:35-37)
+            assert_eq!(run(false, false, false, Some(2.0), -0.25), (-0.25 - 1.0) * drag, "{version}");
+            assert_eq!(run(false, false, false, Some(-2.0), -0.25), (-0.25 + 1.0) * drag, "{version}");
+        }
+    }
+
+    #[test]
+    fn slow_falling_chooses_by_the_sign_and_counts_zero_as_falling() {
+        // `<= 0.0`: 1.21 LivingEntity.java:2098, 26.3 :2338-2339. The motion stays above 0.003, or
+        // aiStep zeroes it first (26.3 :2992).
+        let world = WorldSnapshot::new();
+        for version in ["1.20.4", "1.21.1", "1.21.2", "26.3"] {
+            for (velocity, gravity) in [(0.005, 0.08), (0.0, 0.01), (-0.005, 0.01)] {
+                let mut state = SimulationState {
+                    velocity: Vec3::new(0.0, velocity, 0.0),
+                    slow_falling: true,
+                    ..faller(300.0)
+                };
+                step(version, &mut state, &world);
+                assert_eq!(
+                    state.velocity.y,
+                    (velocity - gravity) * java_float(0.98),
+                    "{version} {velocity}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_gravity_stops_fluid_gravity_but_not_a_swim_up() {
+        // travelInLava's `if (baseGravity != 0.0)` (26.3 LivingEntity.java:2454-2456); the jump's
+        // 0.04 comes before travel and is no gravity (:3016-3019)
+        let mut world = WorldSnapshot::new();
+        for y in 0..8 {
+            world.set_block(
+                (0, y, 0),
+                BlockState {
+                    fluid: FluidState::Lava,
+                    fluid_level: 8,
+                    ..BlockState::default()
+                },
+            );
+        }
+        // (from 26.1 the fluid needs the chunks around its cells, EntityFluidInteraction.java:94-110)
+        for x in -1..=0 {
+            for z in -1..=0 {
+                world.set_chunk_loaded(x, z, true);
+            }
+        }
+        for version in ["1.20.4", "26.3"] {
+            let mut sinking = SimulationState {
+                in_lava: true,
+                no_gravity: true,
+                velocity: Vec3::new(0.0, -0.1, 0.0),
+                ..faller(3.5)
+            };
+            step(version, &mut sinking, &world);
+            assert_eq!(sinking.velocity.y, -0.05, "{version}");
+            let mut swimming = SimulationState {
+                in_lava: true,
+                no_gravity: true,
+                jump_requested: true,
+                velocity: Vec3::new(0.0, -0.1, 0.0),
+                ..faller(3.5)
+            };
+            step(version, &mut swimming, &world);
+            assert_eq!(swimming.velocity.y, (-0.1 + 0.03999999910593033) * 0.5, "{version}");
+        }
+    }
+
+    // ---- B121: the border and the columns between ticks ----
+
+    fn walking_east_at(world: &WorldSnapshot, version: &str, x: f64) -> SimulationState {
+        let mut state = SimulationState {
+            position: Vec3::new(x, 0.0, 0.5),
+            velocity: Vec3::new(0.25, 0.0, 0.0),
+            no_gravity: true,
+            ..faller(0.0)
+        };
+        step(version, &mut state, world);
+        state
+    }
+
+    #[test]
+    fn a_shrinking_border_collides_at_the_snapshot_of_each_tick() {
+        // Entity.collide offers the border by the edges of the moment (26.3 Entity.java:1262-1263,
+        // WorldBorder.java:121-123, from 1.21.11 the extent's previousSize, :346-357): the snapshot
+        // a caller gives is that tick's, and an edge that has passed the player stops nothing
+        let mut world = WorldSnapshot::new();
+        for version in ["1.16.5", "1.21.11", "26.3"] {
+            world.set_world_bounds(-64, 320, 0.0, 0.0, 20.0);
+            let free = walking_east_at(&world, version, 8.5);
+            assert_eq!(free.position.x, 8.5 + 0.25, "{version}");
+            world.set_world_bounds(-64, 320, 0.0, 0.0, 18.0);
+            let stopped = walking_east_at(&world, version, 8.5);
+            assert_eq!(stopped.position.x, 8.5 + (9.0 - (8.5 + 0.3)), "{version}");
+            assert!(stopped.collided_horizontally, "{version}");
+            world.set_world_bounds(-64, 320, 0.0, 0.0, 14.0);
+            let outside = walking_east_at(&world, version, 8.5);
+            assert_eq!(outside.position.x, 8.5 + 0.25, "{version}");
+        }
+    }
+
+    #[test]
+    fn a_player_outside_the_border_walks_in_and_meets_it_from_inside_next() {
+        // The border's shape has nothing between an entity outside it and the inside
+        // (WorldBorder.getCollisionShape, 26.3 Entity.java:1262-1263), which then stops a move out
+        let mut world = WorldSnapshot::new();
+        world.set_world_bounds(-64, 320, 0.0, 0.0, 10.0);
+        for version in ["1.16.5", "26.3"] {
+            let mut state = SimulationState {
+                position: Vec3::new(5.6, 0.0, 0.5),
+                velocity: Vec3::new(-0.5, 0.0, 0.0),
+                no_gravity: true,
+                ..faller(0.0)
+            };
+            step(version, &mut state, &world);
+            assert_eq!(state.position.x, 5.6 - 0.5, "{version}");
+            assert!(!state.collided_horizontally, "{version}");
+            let mut state = SimulationState {
+                position: Vec3::new(4.5, 0.0, 0.5),
+                velocity: Vec3::new(0.5, 0.0, 0.0),
+                no_gravity: true,
+                ..faller(0.0)
+            };
+            step(version, &mut state, &world);
+            assert_eq!(state.position.x, 4.5 + (5.0 - (4.5 + 0.3)), "{version}");
+            assert!(state.collided_horizontally, "{version}");
+        }
+    }
+
+    #[test]
+    fn a_column_unloaded_and_loaded_again_keeps_the_fallback_to_itself() {
+        // Known air falls by gravity, missing data sinks at 0.1 and the reload ends it (1.13.2
+        // LivingEntity.java travel); from 1.14 a client's world says every chunk is there
+        // (26.3 ClientLevel.java:490-492) and it falls on
+        let mut world = WorldSnapshot::new();
+        let fall = |world: &WorldSnapshot, version: &str| {
+            let mut state = SimulationState { client_side: true, ..faller(50.0) };
+            step(version, &mut state, world);
+            state.velocity.y
+        };
+        let sinking = -0.1 * java_float(0.98);
+        let falling = -0.08 * java_float(0.98);
+        for (version, missing) in [("1.8.8", sinking), ("1.13.2", sinking), ("1.14.4", falling), ("26.3", falling)] {
+            world.set_chunk_loaded(0, 0, true);
+            assert_eq!(fall(&world, version), falling, "{version} loaded");
+            world.set_chunk_loaded(0, 0, false);
+            assert_eq!(fall(&world, version), missing, "{version} unloaded");
+            world.set_chunk_loaded(0, 0, true);
+            assert_eq!(fall(&world, version), falling, "{version} reloaded");
+        }
+    }
+
+    /// A client tick of a frozen player on `world`, with the attribute's parts; the value it leaves.
+    fn tick_with_frost(
+        version: &str,
+        world: &WorldSnapshot,
+        mut state: SimulationState,
+        attribute: &mut crate::simulation::MovementSpeedAttribute,
+    ) -> f64 {
+        let release = MinecraftVersion::parse(version).unwrap();
+        crate::simulation::tick_local_player_scene(
+            &mut world.clone(),
+            &mut state,
+            Some(attribute),
+            &[],
+            (0, 0),
+            false,
+            &[],
+            &mut [0.0; 3],
+            PhysicsConfig::default(),
+            release,
+            |state, world| {
+                crate::versioned::dispatch(version, state, world, PhysicsConfig::default())
+            },
+        )
+        .unwrap();
+        state.movement_speed_value.unwrap()
+    }
+
+    const BASE_SPEED: f64 = 0.10000000149011612;
+
+    fn frozen_player(y: f64, ticks_frozen: u32) -> SimulationState {
+        SimulationState {
+            client_side: true,
+            ticks_frozen,
+            ticks_required_to_freeze: 140,
+            movement_speed_value: Some(BASE_SPEED),
+            no_gravity: true,
+            ..faller(y)
+        }
+    }
+
+    fn speed_attribute(frost: Option<f64>) -> crate::simulation::MovementSpeedAttribute {
+        crate::simulation::MovementSpeedAttribute { base: BASE_SPEED, frost, ..Default::default() }
+    }
+
+    fn stone() -> BlockState {
+        BlockState { id: 1, shape: Some(BlockShape::full_block()), ..BlockState::default() }
+    }
+
+    #[test]
+    fn the_client_makes_its_frost_modifier_at_the_end_of_ai_step_up_to_1_21_4() {
+        // fy_powder_snow at t=12 on 1.20.4: one frozen tick and no packet yet, the value after
+        // aiStep and the modifier as the client holds it (1.17 LivingEntity.java:2555-2556, :523)
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), stone());
+        for version in ["1.17", "1.20.4", "1.21.1", "1.21.4"] {
+            let mut attribute = speed_attribute(None);
+            let value = tick_with_frost(version, &world, frozen_player(1.1, 1), &mut attribute);
+            assert_eq!(value, 0.09964285863679834, "{version}");
+            assert_eq!(attribute.frost, Some(-0.0003571428533177823), "{version}");
+        }
+        // frozen past the limit, the scale stops at 1
+        let mut attribute = speed_attribute(None);
+        tick_with_frost("1.20.4", &world, frozen_player(1.1, 300), &mut attribute);
+        assert_eq!(attribute.frost, Some(f64::from(-0.05_f32)));
+        // not a client's from 1.21.5 (1.21.5 LivingEntity.java:2775), and no frost before 1.17
+        for version in ["1.16.5", "1.21.5", "26.3"] {
+            let mut attribute = speed_attribute(None);
+            let value = tick_with_frost(version, &world, frozen_player(1.1, 1), &mut attribute);
+            assert_eq!(value, BASE_SPEED, "{version}");
+            assert_eq!(attribute.frost, None, "{version}");
+        }
+    }
+
+    #[test]
+    fn the_frost_modifier_goes_when_the_landing_block_is_air_or_nothing_is_frozen() {
+        // addPowderSnowSlowIfNeeded asks for a landing block that is not air and frozen ticks
+        // (1.17 LivingEntity.java:514-527, 1.21.4 :518-531); removeFrost has taken the old one
+        let held = f64::from(-0.05_f32 * (20.0_f32 / 140.0));
+        let mut stone_world = WorldSnapshot::new();
+        stone_world.set_block((0, 0, 0), stone());
+        for version in ["1.17", "1.20.4", "1.21.4"] {
+            let mut attribute = speed_attribute(Some(held));
+            let mut state = frozen_player(1.1, 20);
+            state.movement_speed_value = Some(BASE_SPEED + held);
+            let value = tick_with_frost(version, &WorldSnapshot::new(), state, &mut attribute);
+            assert_eq!((value, attribute.frost), (BASE_SPEED, None), "{version}");
+            let mut attribute = speed_attribute(Some(held));
+            let mut state = frozen_player(1.1, 0);
+            state.movement_speed_value = Some(BASE_SPEED + held);
+            let value = tick_with_frost(version, &stone_world, state, &mut attribute);
+            assert_eq!((value, attribute.frost), (BASE_SPEED, None), "{version}");
+        }
+    }
+
+    #[test]
+    fn a_frost_modifier_that_stays_leaves_the_value_the_caller_gave() {
+        // (the caller's value is vanilla's own fold, in an order of modifiers the engine does not know)
+        let held = f64::from(-0.05_f32 * (20.0_f32 / 140.0));
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), stone());
+        let mut attribute = speed_attribute(Some(held));
+        let mut state = frozen_player(1.1, 20);
+        state.movement_speed_value = Some(0.0625);
+        assert_eq!(tick_with_frost("1.20.4", &world, state, &mut attribute), 0.0625);
+    }
+
+    #[test]
+    fn the_frost_value_folds_every_modifier_as_the_attribute_does() {
+        // the frost adds to the base before the multipliers (1.17 EntityAttributeInstance.java:132-150)
+        use crate::simulation::{AttributeModifier, AttributeOperation};
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), stone());
+        let frost = f64::from(-0.05_f32 * (1.0_f32 / 140.0));
+        let mut attribute = crate::simulation::MovementSpeedAttribute {
+            base: BASE_SPEED,
+            modifiers: vec![
+                AttributeModifier { amount: 0.3, operation: AttributeOperation::AddMultipliedTotal },
+                AttributeModifier { amount: 0.2, operation: AttributeOperation::AddMultipliedBase },
+                AttributeModifier { amount: 0.01, operation: AttributeOperation::AddValue },
+            ],
+            frost: None,
+        };
+        let added = BASE_SPEED + 0.01 + frost;
+        let value = tick_with_frost("1.20.4", &world, frozen_player(1.1, 1), &mut attribute);
+        assert_eq!(value, (added + added * 0.2) * 1.3);
+    }
+
+    /// A block with getOnPos's tag bits, standing 1.5 tall.
+    fn fence_like(tags: u32) -> BlockState {
+        BlockState {
+            id: 2,
+            tags,
+            shape: Some(BlockShape {
+                bounds: Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.5, 1.0)),
+                ..BlockShape::full_block()
+            }),
+            ..BlockState::default()
+        }
+    }
+
+    #[test]
+    fn get_on_pos_stops_at_a_supporting_wall_or_gate_and_a_fence_up_to_half_a_block() {
+        // 26.3 Entity.java:1115, 1.20 :812; the height decides, so stand high enough over the block
+        // to tell the offsets apart: a support kept from the last move while the position moved
+        use crate::simulation::on_position;
+        use crate::world::{FENCE_LIKE, WALL_OR_GATE};
+        let release = MinecraftVersion::new(1, 20, 0);
+        let state = SimulationState { position: Vec3::new(0.5, 10.5, 0.5), ..SimulationState::default() };
+        let support = Some((0, 0, 0));
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), fence_like(FENCE_LIKE));
+        assert_eq!(on_position(&world, &state, support, 0.2, release), (0, 0, 0));
+        assert_eq!(on_position(&world, &state, support, 0.5, release), (0, 0, 0));
+        assert_eq!(on_position(&world, &state, support, 0.500_001, release), (0, 9, 0));
+        assert_eq!(on_position(&world, &state, support, 0.999_999, release), (0, 9, 0));
+        world.set_block((0, 0, 0), fence_like(FENCE_LIKE | WALL_OR_GATE));
+        assert_eq!(on_position(&world, &state, support, 0.2, release), (0, 0, 0));
+        assert_eq!(on_position(&world, &state, support, 0.500_001, release), (0, 0, 0));
+        assert_eq!(on_position(&world, &state, support, 0.999_999, release), (0, 0, 0));
+        world.set_block((0, 0, 0), BlockState::default());
+        assert_eq!(on_position(&world, &state, support, 0.2, release), (0, 10, 0));
+        assert_eq!(on_position(&world, &state, None, 0.2, release), (0, 10, 0));
+    }
+
+    #[test]
+    fn landing_on_a_fence_like_block_reads_it_and_not_what_stands_on_it() {
+        use crate::simulation::landing_position;
+        use crate::world::{FENCE_LIKE, WALL_OR_GATE};
+        let tip = BlockState {
+            id: 3,
+            shape: Some(BlockShape { effect: BlockEffect::PointedDripstoneTip, ..BlockShape::full_block() }),
+            ..BlockState::default()
+        };
+        let state = SimulationState { position: Vec3::new(0.5, 1.5, 0.5), ..SimulationState::default() };
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 1, 0), tip);
+        for tags in [FENCE_LIKE, FENCE_LIKE | WALL_OR_GATE] {
+            world.set_block((0, 0, 0), fence_like(tags));
+            let support = Some((0, 0, 0));
+            let modern = MinecraftVersion::new(1, 20, 0);
+            assert_eq!(landing_position(&world, &state, support, modern), (0, 0, 0));
+            // before 1.20 the fence is only looked through to from air (1.19.4 Entity.java:738-744)
+            let legacy = MinecraftVersion::new(1, 19, 4);
+            assert_eq!(landing_position(&world, &state, None, legacy), (0, 1, 0));
+        }
+        world.set_block((0, 1, 0), BlockState::default());
+        for version in [MinecraftVersion::new(1, 8, 8), MinecraftVersion::new(1, 19, 4)] {
+            assert_eq!(landing_position(&world, &state, None, version), (0, 0, 0));
+        }
+    }
+
+    #[test]
+    fn a_fence_under_the_landing_height_keeps_the_frost() {
+        // floor(y - 0.2F) is the air over a fence's top half, and Entity.getLandingPos gives the
+        // fence: under the air before 1.20 (1.17 Entity.java:683-688), the supporting block after
+        let fence = BlockState {
+            id: 2,
+            tags: crate::world::FENCE_LIKE,
+            shape: Some(BlockShape {
+                bounds: Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.5, 1.0)),
+                ..BlockShape::full_block()
+            }),
+            ..BlockState::default()
+        };
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), fence);
+        for version in ["1.17", "1.19.4", "1.20", "1.21.4"] {
+            let mut state = frozen_player(1.5, 1);
+            state.on_ground = true;
+            state.supporting_block = Some((0, 0, 0));
+            state.supporting_block_kept = true;
+            state.no_gravity = false;
+            state.velocity.y = -0.0784;
+            let mut attribute = speed_attribute(None);
+            tick_with_frost(version, &world, state, &mut attribute);
+            assert!(attribute.frost.is_some(), "{version}");
+        }
+    }
+
+    /// Entity.move records the move split by the collided movement before 1.21.9 (1.21.8 Entity.java:702, its `true`
+    /// reads lv2) and by the requested one from it (1.21.9 Entity.java:715, its arg2), where the two can order axes apart.
+    #[test]
+    fn the_recorded_move_splits_by_the_requested_axes_from_1_21_9() {
+        let state = SimulationState { position: Vec3::new(0.3, 1.0, 0.0), ..SimulationState::default() };
+        let (old, requested, moved) = (Vec3::new(0.0, 1.1, 0.0), Vec3::new(0.3, -0.5, 0.0), Vec3::new(0.3, -0.1, 0.0));
+        let order = |release| {
+            crate::simulation::movements_this_tick(&state, old, requested, moved, release)[0].axis_order
+        };
+        assert_eq!(order(MinecraftVersion::new(1, 21, 8)), Some(moved));
+        assert_eq!(order(MinecraftVersion::new(1, 21, 9)), Some(requested));
+        assert_eq!(order(MinecraftVersion::new(26, 3, 0)), Some(requested));
+        assert_eq!(order(MinecraftVersion::new(1, 21, 5)), Some(moved));
+        assert_eq!(order(MinecraftVersion::new(1, 21, 4)), None);
     }
 }

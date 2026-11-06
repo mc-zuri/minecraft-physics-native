@@ -1,0 +1,30 @@
+import xyz.wagyourtail.unimined.internal.minecraft.MinecraftProvider
+
+plugins {
+    id 'rec-mc-conventions'
+}
+
+// no obfuscation from 26.1, and class files of Java 25
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(25))
+    }
+}
+
+unimined.minecraft {
+    version '26.1.2'
+
+    mappings {
+        devFallbackNamespace 'official'
+    }
+
+    customPatcher(new CustomOfficialFabricMinecraftTransformer(project, delegate as MinecraftProvider)) {
+        it.loader libs.versions.fabric.loader.get()
+    }
+
+    runs.config('client') {
+        javaVersion = JavaVersion.VERSION_25
+    }
+
+    defaultRemapJar = true
+}

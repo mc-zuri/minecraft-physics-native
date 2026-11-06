@@ -1,0 +1,9 @@
+1.9.4
+="1.9.4" "1.8.8"
+=110; 47;
+=net.minecraft.world.phys.Vec3.ZERO new net.minecraft.world.phys.Vec3(0.0,0.0,0.0)
+=Vec3.ZERO new Vec3(0.0,0.0,0.0)
+=box.deflate(1e-7) box.deflate(1e-7,1e-7,1e-7)
+=inflate(ENTITY_MARGIN) inflate(ENTITY_MARGIN,ENTITY_MARGIN,ENTITY_MARGIN)
+=mc.options.keySwapHands mc.options.keyDrop
+=GameMode.byName(mode,null) GameMode.byName(mode)

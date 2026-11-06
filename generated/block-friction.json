@@ -1,0 +1,1799 @@
+{
+  "schema": 1,
+  "generatedBy": "scripts/generate-block-friction.cjs",
+  "standIns": {
+    "1.8.8": "1.8.9"
+  },
+  "unverified": [],
+  "releases": {
+    "1.8.8": {
+      "source": "mc-decompiled 1.8.9",
+      "file": "net/minecraft/block/Block.java",
+      "sha256": "7898cf8cc7ce66f6b54e71447c643828bf85459b419e6291faf6d3fa34861516",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148",
+          "via": "IceBlock"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148",
+          "via": "PackedIceBlock"
+        },
+        "slime": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd",
+          "via": "SlimeBlock"
+        }
+      }
+    },
+    "1.9.4": {
+      "source": "mc-decompiled 1.9.4",
+      "file": "net/minecraft/block/Block.java",
+      "sha256": "e73391436829ced40353f53e059d41612aad2eed34c3472f0d78dcff6c5f72e1",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148",
+          "via": "IceBlock"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148",
+          "via": "IceBlock"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148",
+          "via": "PackedIceBlock"
+        },
+        "slime": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd",
+          "via": "SlimeBlock"
+        }
+      }
+    },
+    "1.10.2": {
+      "source": "mc-decompiled 1.10.2",
+      "file": "net/minecraft/block/Block.java",
+      "sha256": "04a9f489ace759f0a9d6a5bed4ac3dae6d4f27ea5754ffcf72525c2517c94b77",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148",
+          "via": "IceBlock"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148",
+          "via": "IceBlock"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148",
+          "via": "PackedIceBlock"
+        },
+        "slime": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd",
+          "via": "SlimeBlock"
+        }
+      }
+    },
+    "1.11.2": {
+      "source": "mc-decompiled 1.11.2",
+      "file": "net/minecraft/block/Block.java",
+      "sha256": "7cb2ffdf8ba4284926f7d69ab92061b5adf7c259611d1c67e05c6c63e3547f37",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148",
+          "via": "IceBlock"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148",
+          "via": "IceBlock"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148",
+          "via": "PackedIceBlock"
+        },
+        "slime": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd",
+          "via": "SlimeBlock"
+        }
+      }
+    },
+    "1.12.2": {
+      "source": "mc-decompiled 1.12.2",
+      "file": "net/minecraft/block/Block.java",
+      "sha256": "6bc8ca9f5eb6dcc8e9f975c639ace7d547ad3c47ec8cb07eb9750e480094b43b",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148",
+          "via": "IceBlock"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148",
+          "via": "IceBlock"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148",
+          "via": "PackedIceBlock"
+        },
+        "slime": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd",
+          "via": "SlimeBlock"
+        }
+      }
+    },
+    "1.13.2": {
+      "source": "mc-decompiled 1.13.2",
+      "file": "net/minecraft/block/Block.java",
+      "sha256": "b0afa04f9affcacf08fbc51178c5c8b109466b29b66e2892a76ed443a40c8ab7",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.14.4": {
+      "source": "origin/client1.14.4 16d77f2e0928e7c2c452e4c7917ab32b199f0034",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "6c31c3cea08aea450d0d3a5de1027c94a1a077aeb5930165ca8e7fccf67cb9b5",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.15": {
+      "source": "client 7b07fd09d1e3aae1bc7a1304fedc73bfe5d81800",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "47d07b610be1c2867e2718532f6d345537e86c04f2c21f0f48076630b3f9f3d7",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.15.1": {
+      "source": "client 8b11614bea9293592a947ea8f4fd72981ea66677",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "47d07b610be1c2867e2718532f6d345537e86c04f2c21f0f48076630b3f9f3d7",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.15.2": {
+      "source": "client e3f78cd16f9eb9a52307ed96ebec64241cc5b32d",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "47d07b610be1c2867e2718532f6d345537e86c04f2c21f0f48076630b3f9f3d7",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.16": {
+      "source": "client 228fdf45541c4c2fe8aec4f20e880cb8fcd46621",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "dfd07c711b49f44cab7c21f7ebec1bc46691c3ffa1f8774359ea301040f10c90",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.16.1": {
+      "source": "client c9abbe8ee4fa490751ca70635340b7cf00db83ff",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "dfd07c711b49f44cab7c21f7ebec1bc46691c3ffa1f8774359ea301040f10c90",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.16.2": {
+      "source": "client 653e97a2d1d76f87653f02242d243cdee48a5144",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "84e17bbe65fb6476907b0b9c09fe12f89cc6583483abace12ce4f990458e5d44",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.16.3": {
+      "source": "client 1321521b2caf934f7fc9665aab7e059a7b2bfcdf",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "84e17bbe65fb6476907b0b9c09fe12f89cc6583483abace12ce4f990458e5d44",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.16.4": {
+      "source": "client 1952d94a0784e7abda230aae6a1e8fc0522dba99",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "84e17bbe65fb6476907b0b9c09fe12f89cc6583483abace12ce4f990458e5d44",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.16.5": {
+      "source": "client 37fd3c903861eeff3bc24b71eed48f828b5269c8",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "84e17bbe65fb6476907b0b9c09fe12f89cc6583483abace12ce4f990458e5d44",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.17": {
+      "source": "client 1cf89c77ed5e72401b869f66410934804f3d6f52",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "e209db2cda87814880d88e1dd472b35958f5a093377460d383a3b75c9c242138",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.17.1": {
+      "source": "client 8d9b65467c7913fcf6f5b2e729d44a1e00fde150",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "e209db2cda87814880d88e1dd472b35958f5a093377460d383a3b75c9c242138",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.18": {
+      "source": "client d49eb6caed53d23927648c97451503442f9e26fd",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "3666d39d71a465239ff58e68daeae16811a8d702d62602fc16c567826024db45",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.18.1": {
+      "source": "origin/client1.18.1 b558d004f45790b779d46f99a48da8230f8ed305",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "8382b0e349ee9810f2b668416723f850073b164926c29961720bedac400a7970",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.18.2": {
+      "source": "client 2e9a3e3107cca00d6bc9c97bf7d149cae163ef21",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "3666d39d71a465239ff58e68daeae16811a8d702d62602fc16c567826024db45",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.19": {
+      "source": "mc-decompiled 1.19",
+      "file": "net/minecraft/block/Blocks.java",
+      "sha256": "017c884c1e009d0b8c6c4c38c1f57a4d4e5ac3af34c2c31dff5ccdff6df8a066",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.19.1": {
+      "source": "origin/client1.19.1 38b266a376a7c3a1f6466359f8a18926fbb89acf",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "3e478ec83c202fc89ee20245321bb6dfcf94c243cc88b02017b518c3e94f0191",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.19.2": {
+      "source": "client 055b30d860ead928cba3849ba920c88b6950b654",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "13bf49266b5123060b2473de8a7fe1d580d54515a227466ad052f6ec32d57abf",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.19.3": {
+      "source": "mc-decompiled 1.19.3",
+      "file": "net/minecraft/block/Blocks.java",
+      "sha256": "16ca5e7e4985c5cdb07a45a5cc2ab50b805d0c017a1e79e2b0dcdb92480c2717",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.19.4": {
+      "source": "mc-decompiled 1.19.4",
+      "file": "net/minecraft/block/Blocks.java",
+      "sha256": "71c87df30bed53d6072c6d3756f8d029c2ea3f126ccae8ffcf8cbb58fed20637",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.20": {
+      "source": "mc-decompiled 1.20",
+      "file": "net/minecraft/block/Blocks.java",
+      "sha256": "30afca7678b96f631a47607b2a510e13c64040d636dab0d693a1e1939756f912",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.20.1": {
+      "source": "origin/client1.20.1 d4cef5e3a820a44e909f9bf2774ac47a6d345279",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "e6c007ef8099bc0d0806ec6d18db23cf2e379ecc16bdff91534352694af1244f",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.20.2": {
+      "source": "mc-decompiled 1.20.2",
+      "file": "net/minecraft/block/Blocks.java",
+      "sha256": "19f2cb2274ff8ef4654355ed444e9fa1e9952345d8f71a857d415cc0ed2f4657",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.20.3": {
+      "source": "origin/client1.20.3 ff36e37f7f228d6c5ab53ad7632c39edc39fe50f",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "30afb6aacc7a6296e9055cca976503f03936807892e23e39869fd60a5ee5a146",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.20.4": {
+      "source": "mc-decompiled 1.20.4",
+      "file": "net/minecraft/block/Blocks.java",
+      "sha256": "2354115275ad1f4ae44014a95ec8a05464931603ccfbcc4f487c322a82eef67f",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.20.5": {
+      "source": "mc-decompiled 1.20.5",
+      "file": "net/minecraft/block/Blocks.java",
+      "sha256": "4efd3dd4ec9d4de37fd99ee312e56cf981b3b9ce8984fa5206ee26ca048d0480",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.20.6": {
+      "source": "origin/client1.20.6 705aa0bfd647f073bfe01b54f7481b5e73c0eb9f",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "61bc4415f8a722db5039b43b9e0310bc9523b30d2e37d21ae3a5b686a94170c7",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.21": {
+      "source": "mc-decompiled 1.21",
+      "file": "net/minecraft/block/Blocks.java",
+      "sha256": "51f754f4f5aeb9446a4e4784001090c465edbdc14a06889aa8184c639081b69a",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.21.1": {
+      "source": "origin/client1.21.1 ffa803ec96617e6d6dd820d974608f4ad866c8ae",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "ac7d8900eb142434c2099bff55a0b8fa0925c7c13cc765cf6e9c89261a15d176",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.21.2": {
+      "source": "origin/client1.21.2 5039f20f44683c70125a85e62880c2e78798228e",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "d9f975c975cf79e847cb6df061789c605bf486f9647e088a9361b608af2b77c6",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.21.3": {
+      "source": "mc-decompiled 1.21.3",
+      "file": "net/minecraft/block/Blocks.java",
+      "sha256": "43e1bac9aa80ba01c1d19f4af3ba723ca11276a7f767fa2741dd353590c17f06",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.21.4": {
+      "source": "mc-decompiled 1.21.4",
+      "file": "net/minecraft/block/Blocks.java",
+      "sha256": "77c30de03d39e923df7e5ccfd4370e27b1bf273b97de659a705750594698ae10",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.21.5": {
+      "source": "mc-decompiled 1.21.5",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "8686173427fb4277cc6868e7fd8dc3931ccdd77913aaf06c1ed98461e069c757",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.21.6": {
+      "source": "mc-decompiled 1.21.6",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "b874436a05128caeaca2debeef3e0deb84c5213e4eff92b00192de5857c2f21d",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.21.7": {
+      "source": "mc-decompiled 1.21.7",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "b874436a05128caeaca2debeef3e0deb84c5213e4eff92b00192de5857c2f21d",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.21.8": {
+      "source": "mc-decompiled 1.21.8",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "b874436a05128caeaca2debeef3e0deb84c5213e4eff92b00192de5857c2f21d",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.21.9": {
+      "source": "mc-decompiled 1.21.9",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "803be9cd499ef2e7e3864b348f4eb831b8ac6f244018e528c38c2f5708c03a42",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.21.10": {
+      "source": "mc-decompiled 1.21.10",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "803be9cd499ef2e7e3864b348f4eb831b8ac6f244018e528c38c2f5708c03a42",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "1.21.11": {
+      "source": "mc-decompiled 1.21.11",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "f491a17785c58b15b1a363e65a1c53441262876055133969f8a6bc6548ecebd3",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "26.1": {
+      "source": "origin/client26.1 250494672ff7a6ef66607c785c91a56a5c32c9f3",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "4fad3a55226476fd39def15a67d8988767052dcc5048fcedcc93d4d65a2d065b",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "26.1.1": {
+      "source": "origin/client26.1.1 2322018b5712b13eacbbb324b7f9dd359091cdc7",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "4fad3a55226476fd39def15a67d8988767052dcc5048fcedcc93d4d65a2d065b",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "26.1.2": {
+      "source": "client 4e618f09a0c649dde3fdf829df443ce0b8831e65",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "e10e487049f7e3728a784f15d4335c82c2a6550c67507072a55c3974b7e72f7d",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "26.2": {
+      "source": "mc-source 26.2",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "a536a9359e3c3bb0a9434949d7130ea29f5d312c7aca81f66dbadeb0e532d6bb",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    },
+    "26.3": {
+      "source": "mc-source 26.3",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "94611711e82dac409f5f2f029116af8566e8d87ac0c782986bd4bca17e43096a",
+      "default": {
+        "expression": "0.6F",
+        "value": 0.6000000238418579
+      },
+      "frictions": {
+        "blue_ice": {
+          "expression": "0.989F",
+          "value": 0.9890000224113464,
+          "bits": "0x3f7d2f1b"
+        },
+        "frosted_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "packed_ice": {
+          "expression": "0.98F",
+          "value": 0.9800000190734863,
+          "bits": "0x3f7ae148"
+        },
+        "slime_block": {
+          "expression": "0.8F",
+          "value": 0.800000011920929,
+          "bits": "0x3f4ccccd"
+        }
+      }
+    }
+  }
+}

@@ -9,7 +9,44 @@ const SIN_SCALE: f64 = 10430.378350470453;
 const ATAN_LUT_SIZE: usize = 257;
 const ATAN_FRAC_BIAS: f64 = f64::from_bits(4_805_340_802_404_319_232);
 
-fn sine_table() -> &'static [f32; 65536] {
+/// LivingEntity.getFrictionInfluencedSpeed on the ground: every step in float, the cube of the
+/// friction before the division. From 26.2 a friction up to 0.6 returns the speed; the comparison
+/// widens the float (26.3 LivingEntity.java:2640-2643), so 0.6F, above 0.6, takes the formula.
+pub(crate) fn friction_influenced_speed(
+    speed: f64,
+    friction: f64,
+    release: MinecraftVersion,
+) -> f64 {
+    if !release.at_least(1, 14, 0) {
+        let inertia = friction as f32 * 0.91;
+        let acceleration = if release.at_least(1, 13, 0) {
+            0.16277137_f32
+        } else {
+            0.16277136_f32
+        };
+        return f64::from(speed as f32 * (acceleration / (inertia * inertia * inertia)));
+    }
+    let friction = friction as f32;
+    if release.at_least(26, 2, 0) && f64::from(friction) <= 0.6 {
+        return f64::from(speed as f32);
+    }
+    f64::from(speed as f32 * (0.21600002_f32 / (friction * friction * friction)))
+}
+
+/// The horizontal push of a sprint jump for the float angle in radians: `-sin * 0.2F` and `cos *
+/// 0.2F` in float before 1.20.5 (1.20.4 LivingEntity.java), `(double)-sin * 0.2` from it
+/// (26.3 LivingEntity.java:2309).
+pub(crate) fn sprint_jump_push(angle: f64, release: MinecraftVersion) -> (f64, f64) {
+    let sin = mth_sin(angle, release);
+    let cos = mth_cos(angle, release);
+    if release.at_least(1, 20, 5) {
+        (-sin * 0.2, cos * 0.2)
+    } else {
+        (f64::from(-(sin as f32) * 0.2), f64::from(cos as f32 * 0.2))
+    }
+}
+
+pub(crate) fn sine_table() -> &'static [f32; 65536] {
     static TABLE: OnceLock<[f32; 65536]> = OnceLock::new();
     TABLE.get_or_init(|| {
         let mut table = [0.0; 65536];
@@ -270,13 +307,33 @@ impl Vec3 {
         )
     }
 
+    /// Vec3.length of the release: MathHelper.sqrt narrows it to a float before 1.17 (1.8.9
+    /// Vec3d.java:77-79, 1.16.5 :140-142, 1.17 :118-120).
     #[must_use]
-    pub fn normalized(self) -> Self {
+    pub fn length_in(self, release: MinecraftVersion) -> f64 {
         let length = self.length();
-        if length < 1.0e-5 {
+        if release.at_least(1, 17, 0) {
+            length
+        } else {
+            java_float(length)
+        }
+    }
+
+    /// Vec3.normalize: each component divided by the length (a reciprocal rounds differently),
+    /// and a vector under 1.0E-4 (1.0E-5F from 1.21.2) is zero (1.8.9 Vec3d.java:45-47, 1.16.5
+    /// :74-76, 1.17 :48-50, 1.21.1 Vec3.java:63-65, 1.21.2 :71-73, 26.3 :73-75).
+    #[must_use]
+    pub fn normalized(self, release: MinecraftVersion) -> Self {
+        let length = self.length_in(release);
+        let minimum = if release.at_least(1, 21, 2) {
+            f64::from(1.0e-5_f32)
+        } else {
+            1.0e-4
+        };
+        if length < minimum {
             Self::ZERO
         } else {
-            self.scale(1.0 / length)
+            Self::new(self.x / length, self.y / length, self.z / length)
         }
     }
 }
@@ -364,6 +421,22 @@ pub fn java_min_f64(left: f64, right: f64) -> f64 {
         return right;
     }
     if left <= right {
+        left
+    } else {
+        right
+    }
+}
+
+/// java.lang.Math.max(double, double): NaN if either argument is NaN, and +0.0 above -0.0.
+#[must_use]
+pub fn java_max_f64(left: f64, right: f64) -> f64 {
+    if left.is_nan() {
+        return left;
+    }
+    if left == 0.0 && right == 0.0 && left.is_sign_negative() {
+        return right;
+    }
+    if left >= right {
         left
     } else {
         right
@@ -519,7 +592,7 @@ pub fn degrees_to_radians(degrees: f64) -> f64 {
 pub fn floor_i32(value: f64) -> i32 {
     let truncated = value as i32;
     if value < f64::from(truncated) {
-        truncated - 1
+        truncated.wrapping_sub(1)
     } else {
         truncated
     }
@@ -529,7 +602,7 @@ pub fn floor_i32(value: f64) -> i32 {
 pub fn floor_f32(value: f32) -> i32 {
     let truncated = value as i32;
     if value < truncated as f32 {
-        truncated - 1
+        truncated.wrapping_sub(1)
     } else {
         truncated
     }
@@ -539,7 +612,7 @@ pub fn floor_f32(value: f32) -> i32 {
 pub fn ceil_i32(value: f64) -> i32 {
     let truncated = value as i32;
     if value > f64::from(truncated) {
-        truncated + 1
+        truncated.wrapping_add(1)
     } else {
         truncated
     }
@@ -549,9 +622,61 @@ pub fn ceil_i32(value: f64) -> i32 {
 pub fn ceil_f32(value: f32) -> i32 {
     let truncated = value as i32;
     if value > truncated as f32 {
-        truncated + 1
+        truncated.wrapping_add(1)
     } else {
         truncated
+    }
+}
+
+/// Mth.floor(double) of a release: the cast then one down, wrapping past the int range, until
+/// 1.21.11 (1.8.9 MathHelper.java:141-144, 1.21.11 Mth.java:67-70), `(int)Math.floor(v)`, which
+/// saturates, from 26.1 (26.1 and 26.3 Mth.java:69-71). They part only outside the int range.
+#[must_use]
+pub fn floor_i32_for(release: MinecraftVersion, value: f64) -> i32 {
+    if release.at_least(26, 1, 0) {
+        value.floor() as i32
+    } else {
+        floor_i32(value)
+    }
+}
+
+/// Mth.ceil(double) of a release, as [`floor_i32_for`].
+#[must_use]
+pub fn ceil_i32_for(release: MinecraftVersion, value: f64) -> i32 {
+    if release.at_least(26, 1, 0) {
+        value.ceil() as i32
+    } else {
+        ceil_i32(value)
+    }
+}
+
+/// Mth.floor(float) of a release, as [`floor_i32_for`] (1.21.11 Mth.java:62-65, 26.3 :65-67).
+#[must_use]
+pub fn floor_f32_for(release: MinecraftVersion, value: f32) -> i32 {
+    if release.at_least(26, 1, 0) {
+        value.floor() as i32
+    } else {
+        floor_f32(value)
+    }
+}
+
+/// Mth.ceil(float) of a release, as [`floor_i32_for`] (1.21.11 Mth.java:85-88, 26.3 :85-87).
+#[must_use]
+pub fn ceil_f32_for(release: MinecraftVersion, value: f32) -> i32 {
+    if release.at_least(26, 1, 0) {
+        value.ceil() as i32
+    } else {
+        ceil_f32(value)
+    }
+}
+
+/// Mth.lfloor of a release, as [`floor_i32_for`].
+#[must_use]
+pub fn floor_i64_for(release: MinecraftVersion, value: f64) -> i64 {
+    if release.at_least(26, 1, 0) {
+        value.floor() as i64
+    } else {
+        floor_i64(value)
     }
 }
 
@@ -597,15 +722,15 @@ pub fn clamp_f32_for(release: MinecraftVersion, value: f32, min: f32, max: f32) 
 }
 
 #[must_use]
-pub fn frac_f32(value: f32) -> f32 {
-    value - floor_f32(value) as f32
+pub fn frac_f32(value: f32, release: MinecraftVersion) -> f32 {
+    value - floor_f32_for(release, value) as f32
 }
 
 #[must_use]
 pub fn floor_i64(value: f64) -> i64 {
     let truncated = value as i64;
     if value < truncated as f64 {
-        truncated - 1
+        truncated.wrapping_sub(1)
     } else {
         truncated
     }
@@ -615,7 +740,7 @@ pub fn floor_i64(value: f64) -> i64 {
 pub fn ceil_i64(value: f64) -> i64 {
     let truncated = value as i64;
     if value > truncated as f64 {
-        truncated + 1
+        truncated.wrapping_add(1)
     } else {
         truncated
     }
@@ -712,6 +837,18 @@ pub fn frac_f64(value: f64) -> f64 {
     value - floor_i64(value) as f64
 }
 
+/// Mth.frac(double) of a release: `value - Math.floor(value)` until 1.13.2 (1.8.9
+/// MathHelper.java:57-59, 1.13.2 :100-102), `value - lfloor(value)` from 1.14.4 (client1.14.4
+/// Mth.java:318-320, 26.3 :324-326). They part past the long range, where the first gives 0.
+#[must_use]
+pub fn frac_f64_for(release: MinecraftVersion, value: f64) -> f64 {
+    if release.at_least(1, 14, 0) {
+        value - floor_i64_for(release, value) as f64
+    } else {
+        value - value.floor()
+    }
+}
+
 #[must_use]
 pub fn degrees_difference(from: f32, to: f32) -> f32 {
     wrap_degrees_f32(to - from)
@@ -790,8 +927,8 @@ pub fn is_multiple_of(value: i32, divisor: i32) -> bool {
 }
 
 #[must_use]
-pub fn pack_degrees(degrees: f64) -> i8 {
-    floor_i32(degrees * 256.0 / 360.0) as i8
+pub fn pack_degrees(degrees: f64, release: MinecraftVersion) -> i8 {
+    floor_i32_for(release, degrees * 256.0 / 360.0) as i8
 }
 
 #[must_use]
@@ -988,14 +1125,14 @@ pub fn positive_ceil_div(value: i32, divisor: i32) -> i32 {
 }
 
 #[must_use]
-pub fn lerp_i32(amount: f32, start: i32, end: i32) -> i32 {
-    start + floor_f32(amount * (end - start) as f32)
+pub fn lerp_i32(amount: f32, start: i32, end: i32, release: MinecraftVersion) -> i32 {
+    start + floor_f32_for(release, amount * (end - start) as f32)
 }
 
 #[must_use]
-pub fn lerp_discrete(amount: f32, start: i32, end: i32) -> i32 {
+pub fn lerp_discrete(amount: f32, start: i32, end: i32, release: MinecraftVersion) -> i32 {
     let difference = end - start;
-    start + floor_f32(amount * (difference - 1) as f32) + i32::from(amount > 0.0)
+    start + floor_f32_for(release, amount * (difference - 1) as f32) + i32::from(amount > 0.0)
 }
 
 #[must_use]
@@ -1054,8 +1191,8 @@ pub fn round_toward(value: i32, divisor: i32) -> i32 {
 }
 
 #[must_use]
-pub fn quantize(value: f64, step: i32) -> i32 {
-    floor_i32(value / f64::from(step)) * step
+pub fn quantize(value: f64, step: i32, release: MinecraftVersion) -> i32 {
+    floor_i32_for(release, value / f64::from(step)) * step
 }
 
 pub fn out_from_origin(
@@ -1106,6 +1243,12 @@ pub fn mul_and_truncate(numerator: i32, denominator: i32, value: i32) -> Result<
     Ok(numerator.wrapping_mul(value).wrapping_div(denominator))
 }
 
+/// Mth.equal(float, float): the difference in float, below 1.0E-5F.
+#[must_use]
+pub fn equal_f32(left: f32, right: f32) -> bool {
+    (right - left).abs() < 1.0e-5_f32
+}
+
 #[must_use]
 pub fn equal_f64(left: f64, right: f64) -> bool {
     // Mth.equal(double, double) compares against the float 1.0E-5F
@@ -1114,7 +1257,15 @@ pub fn equal_f64(left: f64, right: f64) -> bool {
 
 #[must_use]
 pub fn round_i32(value: f64) -> i32 {
-    floor_i32(value + 0.5)
+    java_round(value) as i32
+}
+
+/// Math.round(double): the floor of the exact `value + 0.5` (not of its rounded sum, so the double
+/// below 0.5 gives 0), saturating to the long range, NaN 0. `(int)` of it wraps.
+#[must_use]
+pub fn java_round(value: f64) -> i64 {
+    let floor = value.floor();
+    (if value - floor >= 0.5 { floor + 1.0 } else { floor }) as i64
 }
 
 #[must_use]
@@ -1184,6 +1335,9 @@ mod tests {
         wrap_degrees_f32, wrap_degrees_i32, wrap_degrees_i64, Aabb, Vec3,
     };
     use crate::version::MinecraftVersion;
+    use super::{
+        ceil_f32_for, floor_f32_for, floor_i32_for, floor_i64_for, frac_f64_for, java_round,
+    };
 
     #[test]
     fn atan_tables_hold_java_values_where_msvc_differs() {
@@ -1319,6 +1473,55 @@ mod tests {
     }
 
     #[test]
+    fn the_gated_rounding_parts_from_the_old_only_past_the_int_range() {
+        let (old, new) = (MinecraftVersion::new(1, 21, 11), MinecraftVersion::new(26, 1, 0));
+        for value in [-2147483648.0, -2147483647.5, -1.5, -0.0, 0.0, 0.5, 2147483647.0, f64::NAN] {
+            assert_eq!(floor_i32_for(old, value), floor_i32_for(new, value), "{value}");
+            assert_eq!(floor_i64_for(old, value), floor_i64_for(new, value), "{value}");
+            assert_eq!(ceil_f32_for(old, value as f32), ceil_f32_for(new, value as f32), "{value}");
+        }
+        // below the range the old form takes one off i32::MIN, and above it adds one to i32::MAX
+        assert_eq!(floor_i32_for(old, -3.0e9), i32::MAX);
+        assert_eq!(floor_i32_for(new, -3.0e9), i32::MIN);
+        assert_eq!(ceil_f32_for(old, 3.0e9), i32::MIN);
+        assert_eq!(ceil_f32_for(new, 3.0e9), i32::MAX);
+        assert_eq!(floor_f32_for(old, 3.0e9), i32::MAX);
+    }
+
+    #[test]
+    fn frac_changes_form_at_1_14_and_again_with_lfloor() {
+        let (flat, old, new) = (
+            MinecraftVersion::new(1, 13, 2),
+            MinecraftVersion::new(1, 14, 4),
+            MinecraftVersion::new(26, 3, 0),
+        );
+        for release in [flat, old, new] {
+            assert_eq!(frac_f64_for(release, -1.25), 0.75);
+            assert_eq!(frac_f64_for(release, 3.0e9 + 0.5), 0.5);
+            assert_eq!(frac_f64_for(release, 1.0e18), 0.0);
+        }
+        // past the long range Math.floor keeps the value, lfloor does not
+        assert_eq!(frac_f64_for(flat, 1.0e19), 0.0);
+        assert_eq!(frac_f64_for(old, 1.0e19), 1.0e19 - 9.223372036854775807e18);
+        assert_eq!(frac_f64_for(old, -1.0e19), -1.0e19 - 9.223372036854775807e18);
+        assert_eq!(frac_f64_for(new, -1.0e19), -1.0e19 + 9.223372036854775807e18);
+    }
+
+    #[test]
+    fn math_round_is_javas() {
+        assert_eq!(java_round(0.49999999999999994), 0);
+        assert_eq!(java_round(0.5), 1);
+        assert_eq!(java_round(-0.5), 0);
+        assert_eq!(java_round(-1.5), -1);
+        assert_eq!(java_round(-2.5), -2);
+        assert_eq!(java_round(4503599627370497.0), 4503599627370497);
+        assert_eq!(java_round(f64::NAN), 0);
+        assert_eq!(java_round(1.0e30), i64::MAX);
+        assert_eq!(java_round(-1.0e30), i64::MIN);
+        assert_eq!(round_i32(3.0e9), 3_000_000_000_i64 as i32);
+    }
+
+    #[test]
     fn floor_ceil_clamp_and_wrap_match_vanilla_boundaries() {
         assert_eq!(floor_i32(-1.2), -2);
         assert_eq!(floor_i32(1.0), 1);
@@ -1337,7 +1540,7 @@ mod tests {
         assert_eq!(abs_i32(i32::MIN), i32::MIN);
         assert_eq!(clamp_f32(-1.0, 0.0, 1.0), 0.0);
         assert!(clamp_f32(f32::NAN, 0.0, 1.0).is_nan());
-        assert_eq!(frac_f32(-1.25), 0.75);
+        assert_eq!(frac_f32(-1.25, MinecraftVersion::new(26, 3, 0)), 0.75);
         assert_eq!(wrap_degrees_i32(540), -180);
         assert_eq!(wrap_degrees_i64(-181), 179.0);
         assert_eq!(wrap_degrees_f32(540.0), -180.0);
@@ -1358,7 +1561,7 @@ mod tests {
         assert_eq!(floor_div_i32(-5, 2), -3);
         assert!(is_multiple_of(12, 3));
         assert!(!is_multiple_of(13, 3));
-        assert_eq!(pack_degrees(180.0), -128_i8);
+        assert_eq!(pack_degrees(180.0, MinecraftVersion::new(26, 3, 0)), -128_i8);
         assert_eq!(unpack_degrees(-128_i8), -180.0);
         assert_eq!(square(-3.0), 9.0);
         assert_eq!(cube(-2.0), -8.0);
@@ -1374,7 +1577,7 @@ mod tests {
         assert_eq!(length_3_f32(2.0, 3.0, 6.0), 7.0);
         assert_eq!(positive_ceil_div(5, 2), 3);
         assert_eq!(round_toward(5, 2), 6);
-        assert_eq!(quantize(-5.5, 4), -8);
+        assert_eq!(quantize(-5.5, 4, MinecraftVersion::new(26, 3, 0)), -8);
         assert_eq!(
             out_from_origin(5, 0, 10, 1).unwrap(),
             vec![5, 6, 4, 7, 3, 8, 2, 9, 1, 10, 0]
@@ -1395,11 +1598,11 @@ mod tests {
         assert!((atan2_vanilla(0.0, 1.0)).abs() < 1.0e-12);
         assert!((atan2_vanilla(1.0, 0.0) - std::f64::consts::FRAC_PI_2).abs() < 0.001);
         assert!((atan2_vanilla(-1.0, -1.0) + 3.0 * std::f64::consts::PI / 4.0).abs() < 0.001);
-        assert_eq!(lerp_i32(0.5, 0, 10), 5);
-        assert_eq!(lerp_discrete(0.5, 0, 10), 5);
+        assert_eq!(lerp_i32(0.5, 0, 10, MinecraftVersion::new(26, 3, 0)), 5);
+        assert_eq!(lerp_discrete(0.5, 0, 10, MinecraftVersion::new(26, 3, 0)), 5);
         // Mth.lerpInt(float, int, int): floor(f * (float)(j - i)) in float (1.21.11
         // Mth.java:534-536); in double 0.29F * 100 floors to 28
-        assert_eq!(lerp_i32(0.29, 0, 100), 29);
+        assert_eq!(lerp_i32(0.29, 0, 100, MinecraftVersion::new(26, 3, 0)), 29);
         assert_eq!(smallest_square_side(10), 4);
         assert_eq!(degrees_difference_abs(170.0, -170.0), 20.0);
         assert_eq!(seed_from_block(1, 2, 3), seed_from_block(1, 2, 3));
@@ -1445,7 +1648,152 @@ mod tests {
         assert_eq!(vector.horizontal_length(), 153.0_f64.sqrt());
         assert_eq!(vector.dot(other), 26.0);
         assert_eq!(vector.cross(other), Vec3::new(-56.0, -27.0, 23.0));
-        assert_eq!(Vec3::new(1.0e-6, 0.0, 0.0).normalized(), Vec3::ZERO);
+    }
+
+    /// Bit patterns from a Java 25 run of the three shipped Vec3.normalize forms: the input, then
+    /// the float-length 1.0E-4 form (to 1.16.5), the double-length 1.0E-4 form (1.17 - 1.21.1) and
+    /// the 1.0E-5F form (1.21.2+). The inputs sit on both sides of 1.0E-4, 1.0E-5F and 1.0E-5; the
+    /// mixed ones are where a reciprocal would round differently from a division.
+    #[test]
+    fn vec3_normalize_matches_java_at_each_cutoff_and_era() {
+        let eras = [
+            MinecraftVersion::new(1, 16, 5),
+            MinecraftVersion::new(1, 21, 1),
+            MinecraftVersion::new(1, 21, 2),
+        ];
+        let bits = |[x, y, z]: [u64; 3]| {
+            Vec3::new(f64::from_bits(x), f64::from_bits(y), f64::from_bits(z))
+        };
+        #[rustfmt::skip]
+        let fixtures: [[[u64; 3]; 4]; 14] = [
+            [
+                [0x3f1a36e2eb1c432c, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+                [0x3ff0000000000000, 0x0, 0x0],
+            ],
+            [
+                [0x3f1a36e2eb1c432d, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+                [0x3ff0000000000000, 0x0, 0x0],
+                [0x3ff0000000000000, 0x0, 0x0],
+            ],
+            [
+                [0x3f1a36e2eb1c432e, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+                [0x3ff0000000000000, 0x0, 0x0],
+                [0x3ff0000000000000, 0x0, 0x0],
+            ],
+            [
+                [0x3ee4f8b57fffffff, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+            ],
+            [
+                [0x3ee4f8b580000000, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+                [0x3ff0000000000000, 0x0, 0x0],
+            ],
+            [
+                [0x3ee4f8b580000001, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+                [0x3ff0000000000000, 0x0, 0x0],
+            ],
+            [
+                [0x3ee4f8b588e368f0, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+                [0x3ff0000000000000, 0x0, 0x0],
+            ],
+            [
+                [0x3ee4f8b588e368f1, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+                [0x3ff0000000000000, 0x0, 0x0],
+            ],
+            [
+                [0x3ee4f8b588e368f2, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+                [0x0, 0x0, 0x0],
+                [0x3ff0000000000000, 0x0, 0x0],
+            ],
+            [
+                [0x3fb999999999999a, 0x3fe6666666666666, 0x3fd3333333333333],
+                [0x3fc0aa07c063628f, 0x3fed298d90adec7a, 0x3fd8ff0ba09513d6],
+                [0x3fc0aa07bd7b7488, 0x3fed298d8b980bee, 0x3fd8ff0b9c392ecc],
+                [0x3fc0aa07bd7b7488, 0x3fed298d8b980bee, 0x3fd8ff0b9c392ecc],
+            ],
+            [
+                [0x4008000000000000, 0xbf1a36e2eb1c432d, 0x40934a456d5cfaad],
+                [0x3f63e8109b702acd, 0xbe75be4304b60b86, 0x3feffff9dda5c9c1],
+                [0x3f63e81092471d48, 0xbe75be42fab49f3c, 0x3feffff9ceec1786],
+                [0x3f63e81092471d48, 0xbe75be42fab49f3c, 0x3feffff9ceec1786],
+            ],
+            [
+                [0x3f50624dd2f1a9fc, 0x3f46f0068db8bac7, 0xbf33a92a30553261],
+                [0x3fe975349ac640a3, 0x3fe1d20b39246072, 0xbfce8ca5868780c3],
+                [0x3fe975348cb4238b, 0x3fe1d20b2f4ae5ae, 0xbfce8ca575a4f773],
+                [0x3fe975348cb4238b, 0x3fe1d20b2f4ae5ae, 0xbfce8ca575a4f773],
+            ],
+            [
+                [0x4048800000000000, 0x3e112e0be826d695, 0xbfb999999999999a],
+                [0x3feffffb97833831, 0x3db670600d73dcf3, 0xbf60b7e49e91e0c1],
+                [0x3feffffba1fcfef4, 0x3db6706014cc6046, 0xbf60b7e4a40af824],
+                [0x3feffffba1fcfef4, 0x3db6706014cc6046, 0xbf60b7e4a40af824],
+            ],
+            [
+                [0x3fb999999999999a, 0x3fc999999999999a, 0x3fd3333333333333],
+                [0x3fd11acee19bb60c, 0x3fe11acee19bb60c, 0x3fe9a83652699111],
+                [0x3fd11acee560242a, 0x3fe11acee560242a, 0x3fe9a8365810363e],
+                [0x3fd11acee560242a, 0x3fe11acee560242a, 0x3fe9a8365810363e],
+            ],
+        ];
+        for [input, outputs @ ..] in fixtures {
+            for (release, expected) in eras.into_iter().zip(outputs) {
+                let actual = bits(input).normalized(release);
+                assert_eq!(
+                    [actual.x.to_bits(), actual.y.to_bits(), actual.z.to_bits()],
+                    expected,
+                    "{input:x?} at {release:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn vec3_length_narrows_to_a_float_before_1_17() {
+        let vector = Vec3::new(0.1, 0.2, 0.3);
+        let exact = vector.length();
+        assert_eq!(vector.length_in(MinecraftVersion::new(1, 17, 0)), exact);
+        assert_eq!(
+            vector.length_in(MinecraftVersion::new(1, 16, 5)),
+            java_float(exact)
+        );
+        assert_ne!(java_float(exact), exact);
+    }
+
+    #[test]
+    fn vec3_products_keep_their_operands_and_ignore_y_where_vanilla_does() {
+        let vector = Vec3::new(1.5, -2.25, 3.0);
+        // parallel and antiparallel crosses cancel to +0, not -0: 26.3 Vec3.java:82-84
+        let parallel = vector.cross(vector.scale(2.0));
+        let antiparallel = vector.cross(vector.scale(-2.0));
+        for zero in [
+            parallel.x,
+            parallel.y,
+            parallel.z,
+            antiparallel.x,
+            antiparallel.y,
+            antiparallel.z,
+        ] {
+            assert_eq!(zero.to_bits(), 0);
+        }
+        let tall = Vec3::new(3.0, 1.0e6, 4.0);
+        assert_eq!(tall.horizontal_length(), 5.0);
+        assert_eq!(tall.horizontal_length_squared(), 25.0);
     }
 
     #[test]
@@ -1721,6 +2069,85 @@ mod tests {
     }
 
     #[test]
+    fn legacy_aabb_clip_hits_entries_and_exits_on_all_six_faces() {
+        let bounds = Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0));
+        let center = Vec3::new(0.5, 0.5, 0.5);
+        for direction in [
+            Vec3::new(-1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, -1.0, 0.0), Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, -1.0), Vec3::new(0.0, 0.0, 1.0),
+        ] {
+            let outside = center + direction.scale(1.5);
+            let face = center + direction.scale(0.5);
+            assert_eq!(bounds.clip_segment_legacy(center, outside), Some(face));
+            assert_eq!(bounds.clip_segment_legacy(outside, center), Some(face));
+            // Modern AABB.clip continues to select entering planes only.
+            assert_eq!(bounds.clip_segment(center, outside), None);
+            assert_eq!(bounds.clip_segment(outside, center), Some(face));
+        }
+    }
+
+    #[test]
+    fn legacy_aabb_clip_includes_segment_endpoints_and_exact_face_edges() {
+        let bounds = Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0));
+        let face = Vec3::new(0.0, 0.5, 0.5);
+        for end in [Vec3::new(0.5, 0.5, 0.5), Vec3::new(-1.0, 0.5, 0.5)] {
+            assert_eq!(bounds.clip_segment_legacy(face, end), Some(face));
+            assert_eq!(bounds.clip_segment_legacy(end, face), Some(face));
+        }
+        assert_eq!(
+            bounds.clip_segment_legacy(Vec3::new(-1.0, 1.0, 1.0), Vec3::new(2.0, 1.0, 1.0)),
+            Some(Vec3::new(0.0, 1.0, 1.0))
+        );
+        let outside = 1.0 + f64::EPSILON;
+        assert_eq!(
+            bounds.clip_segment_legacy(Vec3::new(-1.0, outside, 0.5), Vec3::new(2.0, outside, 0.5)),
+            None
+        );
+        assert_eq!(bounds.clip_segment_legacy(face, face), None);
+        assert_eq!(
+            bounds.clip_segment_legacy(Vec3::new(-1.0, 2.0, 0.5), Vec3::new(2.0, 2.0, 0.5)),
+            None
+        );
+        // A tied corner is still the exact corner, without an expanded face epsilon.
+        assert_eq!(
+            bounds.clip_segment_legacy(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(2.0, 2.0, 2.0)),
+            Some(Vec3::ZERO)
+        );
+        assert_eq!(
+            bounds.clip_segment_legacy(Vec3::new(0.5, 0.5, 0.5), Vec3::new(2.0, 2.0, 2.0)),
+            Some(Vec3::new(1.0, 1.0, 1.0))
+        );
+    }
+
+    #[test]
+    fn legacy_aabb_clip_uses_float_promoted_squared_axis_cutoff() {
+        // These straddle 1.0E-7F after squaring; both are above the double 1.0E-7.
+        let below = 0.000316227767_f64;
+        let above = 0.000316227768_f64;
+        assert!(below * below > 1.0e-7);
+        assert!(below * below < f64::from(1.0e-7_f32));
+        assert!(above * above >= f64::from(1.0e-7_f32));
+        let bounds = Aabb::new(Vec3::new(below * 0.5, -0.5, -0.5), Vec3::new(1.0, 0.5, 0.5));
+        assert_eq!(bounds.clip_segment_legacy(Vec3::ZERO, Vec3::new(below, 0.0, 0.0)), None);
+        assert_eq!(
+            bounds.clip_segment_legacy(Vec3::ZERO, Vec3::new(above, 0.0, 0.0)),
+            Some(Vec3::new(below * 0.5, 0.0, 0.0))
+        );
+    }
+
+    #[test]
+    fn legacy_aabb_clip_normalizes_the_hit_vectors_signed_zero() {
+        let bounds = Aabb::new(Vec3::new(0.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
+        let hit = bounds.clip_segment_legacy(
+            Vec3::new(0.0, -0.0, -0.0), Vec3::new(-1.0, -0.0, -0.0)
+        ).unwrap();
+        assert_eq!(hit.x.to_bits(), 0);
+        assert_eq!(hit.y.to_bits(), 0);
+        assert_eq!(hit.z.to_bits(), 0);
+    }
+
+    #[test]
     fn aabb_ray_intersection_matches_vanilla_axis_tests() {
         let bounds = Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0));
         assert!(bounds.ray_intersects(Vec3::new(-2.0, 0.5, 0.5), Vec3::new(1.0, 0.0, 0.0)));
@@ -1762,10 +2189,116 @@ pub struct Aabb {
     pub max: Vec3,
 }
 
+/// The block or box face a clip met (Direction).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HitFace {
+    Down,
+    Up,
+    North,
+    South,
+    West,
+    East,
+}
+
+impl HitFace {
+    /// Direction.getName.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Down => "down",
+            Self::Up => "up",
+            Self::North => "north",
+            Self::South => "south",
+            Self::West => "west",
+            Self::East => "east",
+        }
+    }
+
+    #[must_use]
+    pub const fn opposite(self) -> Self {
+        match self {
+            Self::Down => Self::Up,
+            Self::Up => Self::Down,
+            Self::North => Self::South,
+            Self::South => Self::North,
+            Self::West => Self::East,
+            Self::East => Self::West,
+        }
+    }
+
+    /// Direction.getApproximateNearest (getFacing before 1.21.5): the direction of VALUES order
+    /// whose normal the float vector meets most (26.3 Direction.java).
+    #[must_use]
+    pub fn nearest(x: f32, y: f32, z: f32) -> Self {
+        let mut best = Self::North;
+        let mut max = f32::from_bits(1); // Float.MIN_VALUE
+        for (face, dot) in [
+            (Self::Down, -y),
+            (Self::Up, y),
+            (Self::North, -z),
+            (Self::South, z),
+            (Self::West, -x),
+            (Self::East, x),
+        ] {
+            if dot > max {
+                max = dot;
+                best = face;
+            }
+        }
+        best
+    }
+}
+
+/// The most block cells one call may walk: a world query, or a tick's box swept along its move. Past
+/// it the walks of the engine (a cell at a time, in a box or along a move) stop being a bound on the
+/// call, so the bindings refuse the call; a release's own move budgets are far inside it.
+pub const MAX_WALKED_CELLS: f64 = (1_u64 << 26) as f64;
+/// The largest coordinate a call may name: every cell of it and its neighbours fits an i32.
+pub const MAX_COORDINATE: f64 = (1_u64 << 30) as f64;
+
 impl Aabb {
+    /// Whether the walks of the box end: within the cells a call may walk and the coordinates a cell has.
+    /// NaN stays walkable, its walks being empty.
+    #[must_use]
+    pub fn is_walkable(self) -> bool {
+        let reaches = |value: f64| value.abs() > MAX_COORDINATE;
+        !(self.cell_count() > MAX_WALKED_CELLS)
+            && ![self.min.x, self.min.y, self.min.z, self.max.x, self.max.y, self.max.z]
+                .into_iter()
+                .any(reaches)
+    }
+
+    /// How many block cells the box reaches, at the most. NaN for a box with no extent to count, whose
+    /// walks are empty.
+    #[must_use]
+    pub fn cell_count(self) -> f64 {
+        let cells = |min: f64, max: f64| (max - min) + 2.0;
+        cells(self.min.x, self.max.x) * cells(self.min.y, self.max.y) * cells(self.min.z, self.max.z)
+    }
+
     #[must_use]
     pub const fn new(min: Vec3, max: Vec3) -> Self {
         Self { min, max }
+    }
+
+    /// `new AABB(...)`: Math.min and Math.max of each pair of corners, so a box inverted by a
+    /// deflate, a contract or a disjoint intersect comes out the right way round rather than
+    /// empty (1.8.9 Box.java:13-20, 26.3 AABB.java:27-35). [`Self::new`] takes its corners as they
+    /// are.
+    #[must_use]
+    pub fn ordered(a: Vec3, b: Vec3) -> Self {
+        Self::new(
+            Vec3::new(
+                java_min_f64(a.x, b.x),
+                java_min_f64(a.y, b.y),
+                java_min_f64(a.z, b.z),
+            ),
+            Vec3::new(
+                java_max_f64(a.x, b.x),
+                java_max_f64(a.y, b.y),
+                java_max_f64(a.z, b.z),
+            ),
+        )
     }
 
     #[must_use]
@@ -1775,63 +2308,41 @@ impl Aabb {
 
     #[must_use]
     pub fn expand_towards(self, delta: Vec3) -> Self {
-        Self::new(
-            Vec3::new(
-                self.min.x.min(self.min.x + delta.x),
-                self.min.y.min(self.min.y + delta.y),
-                self.min.z.min(self.min.z + delta.z),
-            ),
-            Vec3::new(
-                self.max.x.max(self.max.x + delta.x),
-                self.max.y.max(self.max.y + delta.y),
-                self.max.z.max(self.max.z + delta.z),
-            ),
-        )
+        let (mut min, mut max) = (self.min, self.max);
+        for (delta, min, max) in [
+            (delta.x, &mut min.x, &mut max.x),
+            (delta.y, &mut min.y, &mut max.y),
+            (delta.z, &mut min.z, &mut max.z),
+        ] {
+            if delta < 0.0 {
+                *min += delta;
+            } else if delta > 0.0 {
+                *max += delta;
+            }
+        }
+        Self::ordered(min, max)
     }
 
     #[must_use]
     pub fn contract(self, delta: Vec3) -> Self {
-        Self::new(
-            Vec3::new(
-                if delta.x < 0.0 {
-                    self.min.x - delta.x
-                } else {
-                    self.min.x
-                },
-                if delta.y < 0.0 {
-                    self.min.y - delta.y
-                } else {
-                    self.min.y
-                },
-                if delta.z < 0.0 {
-                    self.min.z - delta.z
-                } else {
-                    self.min.z
-                },
-            ),
-            Vec3::new(
-                if delta.x > 0.0 {
-                    self.max.x - delta.x
-                } else {
-                    self.max.x
-                },
-                if delta.y > 0.0 {
-                    self.max.y - delta.y
-                } else {
-                    self.max.y
-                },
-                if delta.z > 0.0 {
-                    self.max.z - delta.z
-                } else {
-                    self.max.z
-                },
-            ),
-        )
+        let (mut min, mut max) = (self.min, self.max);
+        for (delta, min, max) in [
+            (delta.x, &mut min.x, &mut max.x),
+            (delta.y, &mut min.y, &mut max.y),
+            (delta.z, &mut min.z, &mut max.z),
+        ] {
+            if delta < 0.0 {
+                *min -= delta;
+            } else if delta > 0.0 {
+                *max -= delta;
+            }
+        }
+        Self::ordered(min, max)
     }
 
     #[must_use]
     pub fn inflate(self, amount: Vec3) -> Self {
-        Self::new(self.min - amount, self.max + amount)
+        Self::ordered(self.min - amount, self.max + amount)
     }
 
     #[must_use]
@@ -1841,32 +2352,32 @@ impl Aabb {
 
     #[must_use]
     pub fn intersect(self, other: Self) -> Self {
-        Self::new(
+        Self::ordered(
             Vec3::new(
-                self.min.x.max(other.min.x),
-                self.min.y.max(other.min.y),
-                self.min.z.max(other.min.z),
+                java_max_f64(self.min.x, other.min.x),
+                java_max_f64(self.min.y, other.min.y),
+                java_max_f64(self.min.z, other.min.z),
             ),
             Vec3::new(
-                self.max.x.min(other.max.x),
-                self.max.y.min(other.max.y),
-                self.max.z.min(other.max.z),
+                java_min_f64(self.max.x, other.max.x),
+                java_min_f64(self.max.y, other.max.y),
+                java_min_f64(self.max.z, other.max.z),
             ),
         )
     }
 
     #[must_use]
     pub fn minmax(self, other: Self) -> Self {
-        Self::new(
+        Self::ordered(
             Vec3::new(
-                self.min.x.min(other.min.x),
-                self.min.y.min(other.min.y),
-                self.min.z.min(other.min.z),
+                java_min_f64(self.min.x, other.min.x),
+                java_min_f64(self.min.y, other.min.y),
+                java_min_f64(self.min.z, other.min.z),
             ),
             Vec3::new(
-                self.max.x.max(other.max.x),
-                self.max.y.max(other.max.y),
-                self.max.z.max(other.max.z),
+                java_max_f64(self.max.x, other.max.x),
+                java_max_f64(self.max.y, other.max.y),
+                java_max_f64(self.max.z, other.max.z),
             ),
         )
     }
@@ -1923,22 +2434,99 @@ impl Aabb {
         x * x + y * y + z * z
     }
 
+    /// The six-face Box raycast before 1.13 (1.9.4 Box.java:233-307,
+    /// 1.12.2 Box.java:294-369; the 1.8.9 implementation tests the same faces).
+    /// Vec3d's axis interpolation uses a float-promoted squared cutoff and includes
+    /// both segment endpoints. Unlike the modern clip, this can hit an exit face.
+    #[must_use]
+    pub fn clip_segment_legacy(self, start: Vec3, end: Vec3) -> Option<Vec3> {
+        self.clip_segment_legacy_face(start, end).map(|(point, _)| point)
+    }
+
+    /// `clip_segment_legacy` with the face it met.
+    #[must_use]
+    pub fn clip_segment_legacy_face(self, start: Vec3, end: Vec3) -> Option<(Vec3, HitFace)> {
+        let delta = end - start;
+        let mut nearest = None;
+        for (origin, direction, plane, axis, face) in [
+            (start.x, delta.x, self.min.x, 0_u8, HitFace::West),
+            (start.x, delta.x, self.max.x, 0_u8, HitFace::East),
+            (start.y, delta.y, self.min.y, 1_u8, HitFace::Down),
+            (start.y, delta.y, self.max.y, 1_u8, HitFace::Up),
+            (start.z, delta.z, self.min.z, 2_u8, HitFace::North),
+            (start.z, delta.z, self.max.z, 2_u8, HitFace::South),
+        ] {
+            if direction * direction < f64::from(1.0e-7_f32) {
+                continue;
+            }
+            let t = (plane - origin) / direction;
+            if t < 0.0 || t > 1.0 {
+                continue;
+            }
+            // Legacy Vec3d(double, double, double) changes either signed zero to +0.
+            let zero = |value: f64| if value == 0.0 { 0.0 } else { value };
+            let point = Vec3::new(
+                zero(start.x + delta.x * t),
+                zero(start.y + delta.y * t),
+                zero(start.z + delta.z * t),
+            );
+            let in_bounds = match axis {
+                0 => {
+                    point.y >= self.min.y && point.y <= self.max.y
+                        && point.z >= self.min.z && point.z <= self.max.z
+                }
+                1 => {
+                    point.x >= self.min.x && point.x <= self.max.x
+                        && point.z >= self.min.z && point.z <= self.max.z
+                }
+                _ => {
+                    point.x >= self.min.x && point.x <= self.max.x
+                        && point.y >= self.min.y && point.y <= self.max.y
+                }
+            };
+            if in_bounds {
+                let distance = start.distance_squared(point);
+                // Strict comparison keeps the first face on a tie: west, east,
+                // down, up, north, south, exactly as Box.method_585.
+                if nearest.map_or(true, |(best, _, _)| distance < best) {
+                    nearest = Some((distance, point, face));
+                }
+            }
+        }
+        nearest.map(|(_, point, face)| (point, face))
+    }
+
     #[must_use]
     pub fn clip_segment(self, start: Vec3, end: Vec3) -> Option<Vec3> {
+        self.clip_segment_face(start, end).map(|(point, _)| point)
+    }
+
+    /// `clip_segment` with the face it entered by (AABB.clip's direction, 26.3 AABB.java).
+    #[must_use]
+    pub fn clip_segment_face(self, start: Vec3, end: Vec3) -> Option<(Vec3, HitFace)> {
         let delta = end - start;
         let mut best = 1.0;
-        let mut hit = false;
-        for (origin, direction, lower, upper, axis) in [
-            (start.x, delta.x, self.min.x, self.max.x, 0_u8),
-            (start.y, delta.y, self.min.y, self.max.y, 1_u8),
-            (start.z, delta.z, self.min.z, self.max.z, 2_u8),
+        let mut hit = None;
+        self.clip_faces(start, delta, &mut best, &mut hit);
+        hit.map(|face| (start + delta.scale(best), face))
+    }
+
+    /// AABB.getDirection: the entering face of this box, if the segment enters it before the
+    /// fraction `best`, which it lowers. AABB.clip(Iterable, ...) walks a shape's boxes with one
+    /// `best`, so a tie between boxes goes by the fraction and not by the hit's distance (26.3
+    /// AABB.java:302-316).
+    pub fn clip_faces(self, start: Vec3, delta: Vec3, best: &mut f64, hit: &mut Option<HitFace>) {
+        for (origin, direction, lower, upper, axis, entering) in [
+            (start.x, delta.x, self.min.x, self.max.x, 0_u8, (HitFace::West, HitFace::East)),
+            (start.y, delta.y, self.min.y, self.max.y, 1_u8, (HitFace::Down, HitFace::Up)),
+            (start.z, delta.z, self.min.z, self.max.z, 2_u8, (HitFace::North, HitFace::South)),
         ] {
             if direction.abs() <= 1.0e-7 {
                 continue;
             }
             let plane = if direction > 0.0 { lower } else { upper };
             let t = (plane - origin) / direction;
-            if !(0.0 < t && t < best) {
+            if !(0.0 < t && t < *best) {
                 continue;
             }
             let point = start + delta.scale(t);
@@ -1963,11 +2551,10 @@ impl Aabb {
                 }
             };
             if in_bounds {
-                best = t;
-                hit = true;
+                *best = t;
+                *hit = Some(if direction > 0.0 { entering.0 } else { entering.1 });
             }
         }
-        hit.then(|| start + delta.scale(best))
     }
 
     /// AABB.collidedAlongVector: the boxes, each inflated by half this box less `inset`, hold the

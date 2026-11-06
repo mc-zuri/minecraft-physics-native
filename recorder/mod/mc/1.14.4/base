@@ -1,0 +1,15 @@
+1.15
+=ClientLevel MultiPlayerLevel
+=keyShift keySneak
+=shiftKeyDown sneakKeyDown
+="wasShiftKeyDown" "wasTryingToSneak"
+=entity.getX() entity.x
+=entity.getZ() entity.z
+=player.getX() player.x
+=player.getY() player.y
+=player.getZ() player.z
+=mapping.setDown(down) ((dev.mcpn.recorder.mc.mixin.KeyMappingAccessor) mapping).recorder$setDown(down)
+=p.isShiftKeyDown() p.isSneaking()
+=p.isCrouching() p.isVisuallySneaking()
+=p.isSteppingCarefully() p.isSneaking()
+=p.isMovingSlowly() (p.isVisuallySneaking() || p.isVisuallyCrawling() || p.input.sneakKeyDown)

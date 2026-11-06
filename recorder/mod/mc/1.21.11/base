@@ -1,0 +1,12 @@
+1.21.10
+=ResourceLocation Identifier
+=net.minecraft.Util net.minecraft.util.Util
+=net.minecraft.world.entity.animal.HappyGhast net.minecraft.world.entity.animal.happyghast.HappyGhast
+=net.minecraft.world.entity.animal.Pig net.minecraft.world.entity.animal.pig.Pig
+=net.minecraft.world.entity.animal.horse.AbstractChestedHorse net.minecraft.world.entity.animal.equine.AbstractChestedHorse
+=net.minecraft.world.entity.animal.horse.AbstractHorse net.minecraft.world.entity.animal.equine.AbstractHorse
+=net.minecraft.world.entity.vehicle.AbstractBoat net.minecraft.world.entity.vehicle.boat.AbstractBoat
+=net.minecraft.world.entity.vehicle.Boat net.minecraft.world.entity.vehicle.boat.Boat
+=net.minecraft.world.level.GameRules net.minecraft.world.level.gamerules.GameRules
+=key().location key().identifier
+=k.location k.identifier

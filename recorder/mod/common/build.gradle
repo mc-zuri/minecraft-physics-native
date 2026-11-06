@@ -1,0 +1,12 @@
+plugins {
+    id 'rec-java-conventions'
+}
+
+// version-neutral: compiled for the oldest Java the adapters run on
+tasks.withType(JavaCompile).configureEach { options.release = 17 }
+
+sourceSets.main.java.srcDir 'src/generated/java'
+
+dependencies {
+    api 'com.google.code.gson:gson:2.13.1'
+}
