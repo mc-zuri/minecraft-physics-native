@@ -8,10 +8,11 @@
    "blocks": 198,
    "refused": {
     "piston_extension": [
-     "collision"
+     "collision",
+     "full"
     ]
    },
-   "sha256": "bcc7e853c63770e84a86f2a7549538b8bb14791a41069545d0156b128075a470"
+   "sha256": "7b0579db7f6cb2938762fab55d5298d428ea2443b33fb52a612ec053c4ce186a"
   },
   "1.9.4": {
    "status": "alone",
@@ -20,10 +21,11 @@
    "refused": {
     "piston_extension": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ]
    },
-   "sha256": "8d96b8b7eab5d2a7a7a94ceab5e7d75170a9ab95bd3f09bcc8b27969927c352a"
+   "sha256": "395e1fe931580da4c5b8d1789d7ff2e55c249c939c9c40e9ceba186948fccedd"
   },
   "1.10.2": {
    "status": "alone",
@@ -32,10 +34,11 @@
    "refused": {
     "piston_extension": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ]
    },
-   "sha256": "39eff7c05bb6ed1bc64d27e80522f398de148f51417115d2e21364def45cf312"
+   "sha256": "a9961846c52285289af5cc92861272cfc59dbf773958842f348ac8e4c9b1ecf4"
   },
   "1.11.2": {
    "status": "alone",
@@ -44,74 +47,91 @@
    "refused": {
     "black_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "blue_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "brown_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "cyan_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "gray_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "green_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "light_blue_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "lime_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "magenta_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "orange_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "pink_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "piston_extension": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "purple_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "red_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "silver_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "white_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "yellow_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ]
    },
-   "sha256": "1a8613e28b3c8e275ff3a918651f2c2785ba327ee2ea99b4ee31bb667f66485d"
+   "sha256": "3fa6d19c92583ebf8a23acfa4e5423f4b3fdb4dae2a1f42026aed98ba76fa31b"
   },
   "1.12.2": {
    "status": "alone",
@@ -120,74 +140,91 @@
    "refused": {
     "black_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "blue_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "brown_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "cyan_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "gray_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "green_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "light_blue_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "lime_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "magenta_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "orange_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "pink_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "piston_extension": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "purple_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "red_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "silver_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "white_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ],
     "yellow_shulker_box": [
      "collision",
-     "outline"
+     "outline",
+     "full"
     ]
    },
-   "sha256": "138d20c419da0ffff0c3182a1a0dabd46d98b9f4b611ff4cbc2fc27fe0e27e07"
+   "sha256": "31cdca33be3dbd5bf6049a154232e2bdbc0fedba2261c2420be2c38e62186444"
   },
   "1.13.2": {
    "status": "alone",
@@ -266,7 +303,7 @@
      "outline"
     ]
    },
-   "sha256": "f47764533ccff85b8d49cf0bbc79e302938bfa5767818a00f745d968efe75a5a"
+   "sha256": "1691e151ea9957af199fe06720cc4eb3f6ce90409e6720900e7a2d736fbc253e"
   }
  }
 }

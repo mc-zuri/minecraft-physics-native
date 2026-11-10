@@ -7,8 +7,8 @@ a passing smoke test does not name the binary it loaded.
 
 `node scripts/validation-record.cjs` prints the commit, a digest of any changes on top of it, the engine digest, each
 addon by content, the hash of each generated file, the toolchain, and the environment overrides that change what runs
-(`CARGO_TARGET_DIR`, `NODE_PATH`, `REPLAY_RECORDINGS`, `NAPI_RS_NATIVE_LIBRARY_PATH`, `MC_SOURCE_ROOT`,
-`MC_DECOMPILED_ROOT`). With `-- <command>` it runs the command and adds its exit code and an output hash.
+(`CARGO_TARGET_DIR`, `NODE_PATH`, `REPLAY_RECORDINGS`, `NAPI_RS_NATIVE_LIBRARY_PATH`,
+`MC_SOURCE_ROOT`). With `-- <command>` it runs the command and adds its exit code and an output hash.
 
 `recorder/replay/cli.ts --json` writes `replay` beside its results, with the addon's hash, codec, commit and dirty state.
 A pin in `generated/conformance-evidence.json` holds the same identities.

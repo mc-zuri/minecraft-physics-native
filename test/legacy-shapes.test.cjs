@@ -48,7 +48,10 @@ describe('the report', () => {
     it('reads a dump, and fails on a line it does not know or a dump that is short', () => {
         const rows = Array.from({ length: 101 }, (_, index) => ['state', `b${index}`, index, '', '0.0,0.0,0.0,1.0,1.0,1.0', '-'].join('\t'));
         const parsed = parseDump(rows.join('\n'), 'x');
-        assert.deepEqual(parsed.blocks.b1, [[1, '', 0, null]]);
+        // (no `full` column: a release from 1.13)
+        assert.deepEqual(parsed.blocks.b1, [[1, '', 0, null, null]]);
+        const full = parseDump([...rows.slice(1), ['state', 'stairs', 7, '', '0.0,0.0,0.0,1.0,0.5,1.0', '-', '1'].join('\t')].join('\n'), 'x');
+        assert.deepEqual(full.blocks.stairs, [[7, '', 1, null, 1]]);
         assert.throws(() => parseDump(['nonsense\tx', ...rows].join('\n'), 'x'), /unknown dump line/);
         assert.throws(() => parseDump(rows.slice(0, 5).join('\n'), 'x'), /only 5 blocks/);
     });

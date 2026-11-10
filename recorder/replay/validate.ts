@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { PLAYER_FIELDS, type FieldSpec } from '../schema/fields.ts';
 import { PLAYER_PHASES } from '../schema/phases.ts';
-import { inRange, SAME_DATA } from '../scenarios/dsl/names.ts';
+import { inRange } from '../scenarios/dsl/names.ts';
 import { RECORDER_ROOT } from './recordings.ts';
 import type { Recording, Snapshot } from '../schema/recording.ts';
 
@@ -71,7 +71,7 @@ export function validateRecording(recording: Recording, version: string, id: str
     const problems: string[] = [];
     if (header.mc !== version) problems.push(`recorded on ${header.mc}, filed under ${version}`);
     if (header.scenario.id !== id) problems.push(`scenario ${header.scenario.id}, filed as ${id}`);
-    const data = require('minecraft-data')(SAME_DATA[header.mc] ?? header.mc) as { version: { version: number } } | undefined;
+    const data = require('minecraft-data')(header.mc) as { version: { version: number } } | undefined;
     if (data && data.version.version !== header.protocol) problems.push(`protocol ${header.protocol}, ${header.mc} has ${data.version.version}`);
     if (header.provenance !== undefined && (typeof header.provenance.id !== 'string' || header.provenance.release !== version)) problems.push(`its provenance is for ${String(header.provenance.release)}`);
     if (current) {

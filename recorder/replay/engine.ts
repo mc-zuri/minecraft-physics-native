@@ -4,7 +4,6 @@
 // own. The tick's result is compared with vanilla's state at afterAiStep, where the engine's tick
 // ends (the pose, the packets and the entities after the player are the adapter's and the bot's).
 
-import { SAME_DATA } from '../scenarios/dsl/names.ts';
 import { createRequire } from 'node:module';
 import type { NativeMinecartState, NativeMovingPiston, NativePhysicsBinding, NativeSimulationState } from '../../dist/native.js';
 import type { ExpandedRow, Recording, Snapshot } from '../schema/recording.ts';
@@ -17,6 +16,7 @@ import { compareVehicleMove, comparePhases } from './phases.ts';
 import { packetBytes } from './load.ts';
 import { ReplayLids } from './lids.ts';
 import { movingBlocks } from './moving.ts';
+import { ServerDrivenMobs } from './mob-lerp.ts';
 import { leavesOverworld } from './packets.ts';
 import { nearbyEntities, toNative } from './seed.ts';
 import { SharedFlags } from './flags.ts';
@@ -34,7 +34,12 @@ const root = new URL('../../', import.meta.url);
 let binding: NativePhysicsBinding | undefined;
 /** The engine as this checkout built it (native/artifacts, through dist/). */
 export function nativeBinding(): NativePhysicsBinding {
-    binding ??= (require(new URL('dist/index.js', root).pathname.replace(/^\/([A-Za-z]:)/, '$1')) as { LoadNativePhysics(): NativePhysicsBinding }).LoadNativePhysics();
+    if (!binding) {
+        binding = (require(new URL('dist/index.js', root).pathname.replace(/^\/([A-Za-z]:)/, '$1')) as { LoadNativePhysics(): NativePhysicsBinding }).LoadNativePhysics();
+        // The recorder runs every release on Java 21 or 25 (each build's jdk, recordings/<v>/builds), whose Math.sin and
+        // Math.cos agree; left alone the engine follows the Java 8 that releases up to 1.16.5 declare (B315).
+        binding.setMathJava?.(21);
+    }
     return binding;
 }
 
@@ -53,9 +58,7 @@ export function worldSync(recording: Recording): { sync: WorldSyncLike; area: Ar
     const { NativeWorldSync } = require(new URL('dist/index.js', root).pathname.replace(/^\/([A-Za-z]:)/, '$1')) as {
         NativeWorldSync: new (binding: NativePhysicsBinding, registry: unknown, release: string) => WorldSyncLike;
     };
-    // (the release whose data it is: a registry must declare that, and 26.1.2 has 26.1's)
-    const data = require('minecraft-data')(SAME_DATA[recording.header.mc] ?? recording.header.mc) as { version: { minecraftVersion: string } };
-    const registry = require('prismarine-registry')(data.version.minecraftVersion);
+    const registry = require('prismarine-registry')(recording.header.mc);
     return { sync: new NativeWorldSync(nativeBinding(), registry, recording.header.mc), area: new AreaWorld(recording.header) };
 }
 
@@ -165,6 +168,7 @@ export function replayNative(recording: Recording, options: ReplayOptions = {}):
     const cartSummons = (recording.header.setup.summons ?? []).map(s => s.ref);
     let serverBefore: ExpandedRow['srv'];
     let seatedIn: unknown;
+    const serverMobs = new ServerDrivenMobs(recording.header.mc);
     const rain = new RainTracker(recording.header);
     let keysBefore: readonly string[] | undefined;
     const version = recording.header.mc;
@@ -188,6 +192,9 @@ export function replayNative(recording: Recording, options: ReplayOptions = {}):
     area.holds = (chunkX, chunkZ) => chunks.holds(chunkX, chunkZ);
     // Entity.isOutsideBorder before 1.14, which nothing records: the move sets it, and the next one reads it
     let outsideBorder = false;
+    // a shulker box's push after the tick stays in the player's movementThisTick for the next one from 1.21.5 (26.3
+    // ShulkerBoxBlockEntity.java:133, Entity.java:807, 960-963): the engine hands it back with the state
+    let pendingMovements: NativeSimulationState['pendingMovements'];
     // (the physrec/fd_* cases and these two cf_ falls are the falls in which only the landing moves the health)
     const landings = /^physrec\/fd_/.test(recording.header.scenario.id) ? [] as Landing[] : undefined;
     // 1.21.4's client runs no checkFallDamage for its player: its landing is the server's alone (handleFall, 1.21.4
@@ -203,6 +210,8 @@ export function replayNative(recording: Recording, options: ReplayOptions = {}):
     if (recording.rows.length === 0) problems.push('the recording has no rows');
     const lids = new ReplayLids(native as never, version, area);
     for (const [rowIndex, row] of recording.rows.entries()) {
+        const held = pendingMovements;
+        pendingMovements = undefined;
         // (a row that compared nothing still ticked the level: its lids moved on)
         if (rowIndex > 0) lids.tick(recording.rows[rowIndex - 1]!.t);
         lids.packets(row);
@@ -267,7 +276,8 @@ export function replayNative(recording: Recording, options: ReplayOptions = {}):
             const carts = compareCartTick(native, version, cartWorld.sync.world as never, cartRules, serverBefore, row, recording.header.player.id, cartSummons, cartVelocities.get(row.t), keysBefore, pushCart, rowIndex > 0 ? cartHits(recording.rows[rowIndex - 1]!) : []);
             compared += carts.compared;
             // (the packets a server tick sent are in the row with its view)
-            const divergences = [...carts.divergences, ...compareBlasts(version, carts.explosions ?? [], row)];
+            const stateAt = (x: number, y: number, z: number) => cartWorld.area.getBlock({ x, y, z }).name;
+            const divergences = [...carts.divergences, ...compareBlasts(version, carts.explosions ?? [], row, recording.rows[rowIndex + 1], stateAt)];
             if (divergences.length > 0) results.push({ t: row.t, divergences });
         }
         if (blasted) for (const [x, y, z, state] of row.blocks) setCartBlock(x, y, z, state);
@@ -299,10 +309,43 @@ export function replayNative(recording: Recording, options: ReplayOptions = {}):
             // a click that boosts a pig: before 1.11 the client starts the boost itself, after the row's pre and before the
             // pig ticks, so the tick starts from it
             const started = before?.mount && !before.mount.boosting && after?.mount?.boosting === true && after.mount.boostTime === 1;
-            const vehicle = started ? { ...before, mount: { ...before.mount!, boosting: true, boostTime: 0, boostTimeTotal: after!.mount!.boostTimeTotal } } : before;
-            // a vehicle the rider does not control (a llama, a pig without a carrot on a stick) is not simulated
-            // by the client at all: it follows the server's positions, so there is no physics to compare (a minecart's
-            // interpolation is compared with the engine's own, which reads no world)
+            const boosted = started ? { ...before, mount: { ...before.mount!, boosting: true, boostTime: 0, boostTimeTotal: after!.mount!.boostTimeTotal } } : before;
+            // before 1.11 a mob's controller is its first passenger whatever it holds, so the local player's client travels a mob
+            // it rides and does not steer, on the mob's own input: Mob.isControlledByLocalInstance asks canBeControlledByRider
+            // only from 1.11 (1.10.2 Entity.java:2285-2288, Pig.java:73-75, :245-248; 1.11.2 Mob.java:1084-1086). The recorded flag
+            // follows canBeControlledByRider, so there it says the mob is not steered: the engine's `saddled` false. 1.8.8 has no
+            // controlling passenger (getControllingPassenger and isControlledByLocalInstance arrive in 1.9.4 Entity.java:2175,
+            // 2243): its client does not travel a ridden mob, which follows the server (m_c_mount_click_* of 1.8.8)
+            const unsteered = boosted?.mount && boosted.controlledByLocalInstance === false && versionAtLeast(version, '1.9')
+                && !versionAtLeast(version, '1.11');
+            const vehicle = unsteered ? { ...boosted, controlledByLocalInstance: true, mount: { ...boosted.mount!, saddled: false } } : boosted;
+            // a mob the rider does not control (a llama, a pig without a carrot on a stick) does not travel on the client:
+            // it takes the step of the interpolation the server's packets started, then the pistons push it (mob-lerp.ts),
+            // and where that leaves it is compared
+            if (vehicle && vehicle.controlledByLocalInstance === false && !(vehicle as { minecart?: unknown }).minecart && after && after.id === vehicle.id) {
+                ride?.end('a vehicle the server drives');
+                const id = vehicle.id as number;
+                const at = { x: vehicle.pos[0]!, y: vehicle.pos[1]!, z: vehicle.pos[2]! };
+                const known = ((row.srv?.entities ?? []) as unknown as { id: number; pos: number[] }[]).find(e => e.id === id)?.pos ?? vehicle.pos;
+                serverMobs.packets(row as never, id, at, { x: known[0]!, y: known[1]!, z: known[2]! });
+                let position = serverMobs.step(id, at) ?? at;
+                const riding = movingBlocks(version, start, area, problems) as unknown as MovingBlock[];
+                if (riding.length > 0) {
+                    const box = vehicle.box as unknown as number[];
+                    sync.sync(area, swept(box as unknown as Box, vehicle.vel as Vec), 4);
+                    sync.setMovingBlocks(riding);
+                    position = native.simulateVersionedEntityPistonPush(version, sync.world as never, {
+                        position, velocity: { x: vehicle.vel[0]!, y: vehicle.vel[1]!, z: vehicle.vel[2]! }, halfWidth: (box[3]! - box[0]!) / 2, height: box[4]! - box[1]!,
+                        onGround: vehicle.onGround === true, living: true, clientSide: true, controlledByLocalInstance: false,
+                    }, sync.movingPistonsOf(riding)).position;
+                }
+                compared += 1;
+                const want = { x: after.pos[0]!, y: after.pos[1]!, z: after.pos[2]! };
+                const same = want.x === position.x && want.y === position.y && want.z === position.z;
+                results.push({ t: row.t, divergences: same ? [] : [{ tick: row.t, at: 'vehicle', source: 'native', field: 'vehicle.pos', expected: want, actual: position }] });
+                continue;
+            }
+            // a minecart the server drives: its interpolation is compared with the engine's own, which reads no world
             if (vehicle && vehicle.controlledByLocalInstance === false) {
                 interpolated += 1;
                 ride?.end('a vehicle the server drives');
@@ -338,14 +381,17 @@ export function replayNative(recording: Recording, options: ReplayOptions = {}):
             const boat = vehicle.boat ? { ...carried(toBoat(vehicle, row.pre)), ...nearby } : undefined;
             // (before 1.19.3 a horse's ambient sound, a roll of its random in baseTick, can make it rear within the tick; a rear no
             // released jump or stand slide explains is that roll, an input and not physics)
-            const mount = vehicle.boat ? undefined : { ...carried(toHorse(vehicle, row.pre, released,
-                !versionAtLeast(version, '1.19.3') && !vehicle.mount!.standing && after.mount?.standing === true && released === undefined && !after.mount.allowStandSliding)), ...nearby };
+            // (the roll is vanilla's to make in a continuous replay too: it stands over what the engine carried)
+            const rears = !vehicle.boat && !versionAtLeast(version, '1.19.3') && !vehicle.mount!.standing && after.mount?.standing === true && released === undefined && !after.mount.allowStandSliding;
+            const mount = vehicle.boat ? undefined : { ...carried(toHorse(vehicle, row.pre, released, rears)), ...(rears ? { standing: true, standCounter: 1 } : {}),
+                // (as is a boost the click started, before 1.11 the client's own: what was carried had none)
+                ...(started ? { boosting: true, boostTime: 0, boostTimeTotal: after!.mount!.boostTimeTotal } : {}), ...nearby };
             const moved = !tracing ? undefined : boat ? native.simulateVersionedBoatTickTraced(version, sync.world as never, boat) : native.simulateVersionedHorseTickTraced(version, sync.world as never, mount!);
             const simulated = moved?.state ?? (boat ? native.simulateVersionedBoatTick(version, sync.world as never, boat) : native.simulateVersionedHorseTick(version, sync.world as never, mount!));
             ride?.keep(simulated);
             compared += 1;
             if (moved) {
-                const move = compareVehicleMove(row, moved.moves, true);
+                const move = compareVehicleMove(row, moved.moves, true, pistons.length > 0 && !versionAtLeast(version, '1.11'));
                 problems.push(...move.problems);
                 if (move.divergences.length > 0) results.push({ t: row.t, divergences: move.divergences });
             }
@@ -356,6 +402,8 @@ export function replayNative(recording: Recording, options: ReplayOptions = {}):
             // (the block entities tick last: with a piston under way the tick ends where they left it, post)
             const ticked = vehicle.boat && pistons.length === 0 ? (vehicleOf(start) ?? after) : after;
             const want = (vehicle.boat ? toBoat(ticked, row.pre) : toHorse(ticked, row.pre, released)) as unknown as Record<string, unknown>;
+            // (the unsteered mob of a release before 1.11 is seeded as such, above: its saddle is no field of its travel)
+            if (unsteered) want.saddled = false;
             const got = { ...(simulated as unknown as Record<string, unknown>) };
             if (pistons.length > 0) {
                 const living = vehicle.mount !== undefined;
@@ -403,7 +451,7 @@ export function replayNative(recording: Recording, options: ReplayOptions = {}):
             continue;
         }
         // (the blocks around where the tick starts: the prediction's own, in a continuous replay)
-        sync.sync(area, swept((prediction?.box(start.box as Box, start.pos as Vec) ?? start.box) as Box, start.vel as Vec), 4);
+        sync.sync(area, swept((prediction?.box(start.box as Box, start.pos as Vec, row) ?? start.box) as Box, start.vel as Vec), 4);
         // (the block entities tick after the entities: the move meets them as the last tick left them)
         const moving = movingBlocks(version, start, area, problems) as unknown as MovingBlock[];
         sync.setMovingBlocks(moving);
@@ -416,6 +464,7 @@ export function replayNative(recording: Recording, options: ReplayOptions = {}):
         const slow = left && !versionAtLeast(version, '1.15') ? { ...left, movingSlowly: posed || decided?.movingSlowly === true } : left;
         const state = toNative(start, decided!, { version, pre: row.pre, post: row.post, swiftSneak, pushes: type => teams.pushes(type), ...(slow ? { slow } : {}) });
         state.outsideBorder = outsideBorder;
+        if (held && held.length > 0) state.pendingMovements = held;
         state.onFireFlag = flags.onFire;
         if (ultraWarm) state.ultraWarm = true;
         // (the pose is the adapter's, updated at the end of Player.tick: the entities after the player meet what it left)
@@ -437,17 +486,27 @@ export function replayNative(recording: Recording, options: ReplayOptions = {}):
         // what ticks before the player and moves it, the engine replays: it starts from before them. Nothing else may undo
         // what the tick's input did before them (a Riptide launch)
         const moved = (state.nearbyEntities ?? []).some(e => e.ticksBeforePlayer && e.kind !== 'inert' && e.kind !== 'still_living');
+        // (a hit that knocked back took 0.6 of the motion before the entities tick, Player.attack from the keybinds: no packet says so,
+        // and the engine has no attack of its own: vanilla's start says it, 1.8.8 EntityPlayer.attackTargetEntityWithCurrentItem,
+        // 26.3 Player.java attack)
+        const [vx, vy, vz] = row.pre.vel as [number, number, number];
+        const [sx, , sz] = start.vel as [number, number, number];
+        const hit = row.c2s.some(packet => /Interact|UseEntity|Attack/.test(packet.name)) && sx === vx * 0.6 && sz === vz * 0.6;
         if (scene && (moved || (state.fireworkRocketsBeforePlayer ?? 0) > 0)) {
-            const [vx, vy, vz] = row.pre.vel as [number, number, number];
-            state.velocity = { x: vx, y: vy, z: vz };
+            state.velocity = hit ? { x: sx, y: vy, z: sz } : { x: vx, y: vy, z: vz };
         }
         // the moving blocks tick after the entities and push what they meet, so the tick ends where they left it (post). The
         // limit of 0.51 a tick starts at nothing: the recorder clears Entity.pistonDeltas before a case's first row
         const same = (a: unknown, b: unknown) => (a as number[]).every((value, i) => Object.is(value, (b as number[])[i]));
-        const moves = moving.length > 0 && expected !== undefined && !(same(row.post.pos, expected.pos) && same(row.post.vel, expected.vel));
+        // (1.9 and 1.10 move what a piston pushes by Entity.moveEntity even when the move comes to nothing, which ends its ground
+        // contact, 1.10.2 TileEntityPiston.moveCollidedEntities: the tick ends where they left it then too)
+        const clearsGround = versionAtLeast(version, '1.9') && !versionAtLeast(version, '1.11');
+        const moves = moving.length > 0 && expected !== undefined && !(same(row.post.pos, expected.pos) && same(row.post.vel, expected.vel) && (!clearsGround || row.post.onGround === expected.onGround));
         if (moves) state.movingPistons = sync.movingPistonsOf(moving);
         if (options.reseed?.(row.t)) prediction?.end('the caller asked');
         prediction?.seed(state, row);
+        // (a continuous replay carries its own motion, which the hit takes 0.6 of as it did vanilla's)
+        if (prediction && hit && state.velocity) state.velocity = { x: state.velocity.x * 0.6, y: state.velocity.y, z: state.velocity.z * 0.6 };
         // (the release of a Riptide trident moves the player before the tick, with no packet: the tick's own start says it was
         // released, and the engine launches from where it predicted: TridentItem.releaseUsing, 26.3 TridentItem.java)
         const spin = (start.autoSpinAttackTicks as number | undefined) ?? 0;
@@ -475,6 +534,7 @@ export function replayNative(recording: Recording, options: ReplayOptions = {}):
             after = native.simulateVersionedShulkerBoxPush(rules, sync.world as never, after, lid.state, lid.x, lid.y, lid.z);
         }
         outsideBorder = after.outsideBorder ?? false;
+        pendingMovements = after.pendingMovements ?? undefined;
         compared += 1;
         if (landings && version === '1.21.4') {
             const server = native.simulateVersionedTick(version, sync.world as never, { ...state, clientSide: false, fallDistance: serverFall }, {});
@@ -554,7 +614,8 @@ export function replayNative(recording: Recording, options: ReplayOptions = {}):
         results.push({ t: row.t, divergences });
         if (traced) {
             // (with entities or rockets around, the seed's motion is from before them, and the trace's points are not vanilla's)
-            const seen = comparePhases(traced.phases, row, { version, pre: row.pre, post: row.post, swiftSneak }, { noTravel: state.removed === true, skip: new Set(moves || scene ? ['velocity'] : []) });
+            // (a lid pushes after the tick the trace ends with: that end is the push's, which `want` above holds to row.post)
+            const seen = comparePhases(traced.phases, row, { version, pre: row.pre, post: row.post, swiftSneak }, { noTravel: state.removed === true, skip: new Set(moves || scene ? ['velocity'] : []), skipPhases: new Set(lidsPushing.length > 0 ? ['clientTickEnd'] : []) });
             phaseValues += seen.compared;
             for (const [key, n] of Object.entries(seen.counts)) phaseFields[key] = (phaseFields[key] ?? 0) + n;
             problems.push(...seen.problems);

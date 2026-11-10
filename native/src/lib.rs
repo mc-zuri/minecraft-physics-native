@@ -35,7 +35,13 @@ pub mod shulker_box;
 pub mod simulation;
 mod simulation_tests;
 #[cfg(test)]
+mod gate_fixtures_tests;
+#[cfg(test)]
+mod helper_tests;
+#[cfg(test)]
 mod oracle_living_tests;
+#[cfg(test)]
+mod entity_move_tests;
 #[cfg(test)]
 mod oracle_move_tests;
 #[cfg(test)]
@@ -46,6 +52,10 @@ mod numeric_tests;
 mod robustness_tests;
 #[cfg(test)]
 mod entity_robustness_tests;
+#[cfg(test)]
+mod reach_fixtures_e2_tests;
+#[cfg(test)]
+mod reach_fixtures_e1_tests;
 pub mod trig;
 pub mod vehicle;
 pub mod version;
@@ -143,15 +153,14 @@ pub use world::{BlockEffect, BlockShape, BlockState, FluidState, WorldSnapshot};
 /// worker arrives without its native half. No call runs off the JavaScript thread, so a typed array is only
 /// borrowed for the length of a call. Any asynchronous call must own its data (`SimulationState` and
 /// `WorldSnapshot` can be moved to a thread as they are); the wasm builds are not covered by this.
-const _: () = {
-    const fn send_and_sync<T: Send + Sync>() {}
-    send_and_sync::<SimulationState>();
-    send_and_sync::<PhysicsConfig>();
-    send_and_sync::<WorldSnapshot>();
-    send_and_sync::<TickInputSnapshot>();
-    send_and_sync::<TickOutputSnapshot>();
-    #[cfg(feature = "bindings")]
-    send_and_sync::<napi_api::NativeWorld>();
-    #[cfg(feature = "bindings")]
-    send_and_sync::<napi_player::NativePlayer>();
-};
+// (a type whose parameter must be Send + Sync, named for each: the compiler refuses one that is not)
+struct SendAndSync<T: Send + Sync>(std::marker::PhantomData<T>);
+const _: [SendAndSync<SimulationState>; 0] = [];
+const _: [SendAndSync<PhysicsConfig>; 0] = [];
+const _: [SendAndSync<WorldSnapshot>; 0] = [];
+const _: [SendAndSync<TickInputSnapshot>; 0] = [];
+const _: [SendAndSync<TickOutputSnapshot>; 0] = [];
+#[cfg(feature = "bindings")]
+const _: [SendAndSync<napi_api::NativeWorld>; 0] = [];
+#[cfg(feature = "bindings")]
+const _: [SendAndSync<napi_player::NativePlayer>; 0] = [];

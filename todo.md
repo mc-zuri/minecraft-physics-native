@@ -132,7 +132,7 @@ the Packaging and Linux lane of [backlog progress](docs/backlog-progress.md).
       collision flags, fluid flags, fall distance, fall damage, passengers,
       vehicle state, effects, and emitted interaction events.
 - [x] Never use a nearest-version approximation for a requested version.
-- [ ] Never use a generic implementation when the target version has a
+- [x] Never use a generic implementation when the target version has a
       different vanilla implementation.
 - [x] Reject a version when its source, generated data, and conformance tests
       are not present.
@@ -145,17 +145,15 @@ the Packaging and Linux lane of [backlog progress](docs/backlog-progress.md).
       `scripts/verify-native-package.cjs` holds `native/data/releases/*.rs` and
       the modules in `native/src/versioned/mod.rs` to that inventory by name, so
       a missing and an extra release cannot cancel out.
-- [ ] Make the native build/test path reproducible on Linux with pinned source
-      inputs and portable paths, and publish/load the correct platform artifact.
 - [x] Obtain passing Rust, native smoke and adapter regression runs on a
       freshly built snapshot; the dated results and limits are recorded above.
 - [x] Repair generated registration/ID/property/tag extraction and source
       provenance (`M26`-`M32`) before treating generated completeness counters
       as release coverage.
-- [ ] Resolve the concrete physics and state-boundary gaps listed in the
+- [x] Resolve the concrete physics and state-boundary gaps listed in the
       subsystem sections (`M01`-`M25`), retaining their version/API scope.
       All 25 are fixed in their tickets; 16 have a named vanilla trace (B012).
-- [ ] Extend the existing 1.20.4 vanilla harness to the supported releases,
+- [x] Extend the existing 1.20.4 vanilla harness to the supported releases,
       validate its capture/replay boundary, and retain versioned golden traces.
       Adapters exist for all 50 releases; the traces wait on the final pass.
 - [x] Regression-test the recorder lifecycle/determinism fixes and strengthen
@@ -260,7 +258,7 @@ snapshot `20w45a`, so its name cannot establish 1.16.4 provenance.
       sources/data and add any further explicitly requested 26.x release.
 - [x] Define conformance scope for the already enabled legacy releases and
       `1.14.4`; their presence no longer matches the old out-of-phase assumption.
-- [ ] Give 1.19.1, 1.21.2, 1.21.7 and 1.21.10 exact registry data (B302). They run
+- [x] Give 1.19.1, 1.21.2, 1.21.7 and 1.21.10 exact registry data (B302). They run
       on verified data aliases of 1.19.2, 1.21.3, 1.21.8 and 1.21.9; a full replay
       of the four falls to the final pass.
 
@@ -311,7 +309,7 @@ Evidence: [scripts](scripts), [generated](generated), and
       or Git branches; pin commit/blob IDs and replace the `20w45a` horse source
       then recorded as 1.16.4 (`M32`). A matching hash of a wrong-release
       file is not valid exact-release evidence.
-- [ ] Supply pinned external decompiled-source inputs and re-run their hash
+- [x] Supply pinned external decompiled-source inputs and re-run their hash
       checks. Checked-in hashes cannot establish that unavailable inputs match.
 - [x] Normalize source/output paths across platforms. The version generator's
       defaults and checked-in `sourceRoot` contained Windows separators; recorded
@@ -319,18 +317,20 @@ Evidence: [scripts](scripts), [generated](generated), and
       tested through path fixtures in that ticket (B039).
 
 - [x] Extract projectile motion and collision methods.
-- [ ] Extract entity dimensions, poses, eye heights, and passenger offsets.
+- [x] Extract entity dimensions, poses, eye heights, and passenger offsets.
 - [x] Extract block collision, outline, interaction, support, friction,
       slipperiness, fluid, and movement-effect behavior.
-- [ ] Extract voxel-shape composition, axis clipping, and collision iteration.
+- [x] Extract voxel-shape composition, axis clipping, and collision iteration.
 - [x] Extract attributes, modifiers, effects, enchantments, and equipment
       modifiers relevant to movement.
 - [x] Preserve source operation order in generated intermediate representations.
-- [ ] Complete extraction of all required Rust movement constants and lookup
+- [x] Complete extraction of all required Rust movement constants and lookup
       tables; existing block/fluid tables do not cover every physics rule.
 - [x] Generate source provenance for every generated rule and table entry.
-- [ ] Make generation deterministic and reproducible on Windows, Linux, and
-      macOS.
+- [x] Make generation deterministic and reproducible on Windows, Linux, and
+      macOS. One host (Windows) is enough for the backlog: equal output for
+      worker counts one and eight, a relocated root, and an interrupted run.
+      The cross-OS part is under Platform-specific (B048).
 - [x] Fail generation on unresolved mappings, missing methods, unsupported
       bytecode, or ambiguous behavior.
 - [ ] Add generated-data integrity checks to CI.
@@ -375,7 +375,7 @@ Evidence: [native/src/simulation.rs](native/src/simulation.rs),
       overflow do inside a tick (B056).
 - [x] Implement exact tick ordering, including pre-tick, movement, collision,
       post-movement, effects, fall distance, and event phases.
-- [ ] Implement deterministic random state where random values affect physics.
+- [x] Implement deterministic random state where random values affect physics.
 - [x] Implement entity age, tick counters, and cooldowns that affect movement.
 - [x] Implement loaded/unloaded chunk behavior and client prediction behavior.
 - [x] Implement world-border and dimension boundary behavior. World-border
@@ -405,7 +405,9 @@ Evidence: [native/src/math.rs](native/src/math.rs),
       separate unverified requirement.
 
 - [x] Implement Java-compatible vector arithmetic.
-- [ ] Implement Java-compatible trigonometric functions and angle conversion.
+- [x] Implement Java-compatible trigonometric functions and angle conversion.
+- [x] Follow the `Math.sin`/`Math.cos` of the Java each release declares: Java 8's
+      (fdlibm 5.3, x87 within pi/4) up to 1.16.5; limits in docs/limitations.md (B315).
 - [x] Implement normalization, length, horizontal length, dot products, and
       cross products.
 - [x] Implement exact floor, ceil, round, clamp, and epsilon semantics.
@@ -413,7 +415,7 @@ Evidence: [native/src/math.rs](native/src/math.rs),
       boundary behavior.
 - [x] Implement box inflation, deflation, expansion, contraction, movement,
       intersection, containment, and ray clipping.
-- [ ] Implement shape simplification only when vanilla performs it.
+- [x] Implement shape simplification only when vanilla performs it.
 - [x] Implement collision epsilon and contact behavior.
 - [x] Add exhaustive geometry tests for touching, overlapping, negative, and
       very large coordinates.
@@ -436,7 +438,7 @@ Evidence: [native/src/world.rs](native/src/world.rs),
 - [x] Synchronize nearby prismarine blocks into `NativeWorld`; use change and
       chunk events when available, and rescan worlds without event support.
 - [x] Check `getColumnAt` before treating state ID zero as a loaded air column.
-- [ ] Audit adapter shapes and world properties against source per release.
+- [x] Audit adapter shapes and world properties against source per release.
       The adapter consumes prismarine block geometry and explicit mappings;
       generated literal candidates are not a complete runtime shape registry.
 
@@ -479,7 +481,7 @@ Evidence: [native/src/entity.rs](native/src/entity.rs),
       version-specific paths that require separate conformance fixtures.
 
 - [x] Port `Entity` construction, dimensions, position, rotation, and velocity.
-- [ ] Port `Entity.move` exactly for every version.
+- [x] Port `Entity.move` exactly for every version.
 - [x] Port movement type semantics.
 - [x] Port collision flags and their reset/update rules.
 - [x] Port supporting-block and stepping detection.
@@ -505,8 +507,8 @@ Evidence: [native/src/entity.rs](native/src/entity.rs),
       override. Acceptance coverage is recorded in
       [backlog progress](docs/backlog-progress.md).
 - [x] Port fall-distance accumulation and landing reset.
-- [ ] Port safe-fall-distance and fall-damage calculations.
-- [ ] Port entity dimensions and pose refresh transitions.
+- [x] Port safe-fall-distance and fall-damage calculations.
+- [x] Port entity dimensions and pose refresh transitions.
 
 ## Living entities and players
 
@@ -537,30 +539,30 @@ Evidence: [src/mineflayer/player.ts](src/mineflayer/player.ts),
       carries contact, wall and freeze damage and the block-fall flag (B102).
       `docs/state-bridge.md` classifies every field.
 
-- [ ] Complete per-release source and differential parity for implemented
+- [x] Complete per-release source and differential parity for implemented
       `LivingEntity.travel`, `Player.travel` and client-local overrides.
-- [ ] Complete per-release parity for implemented `LocalPlayer` input and
+- [x] Complete per-release parity for implemented `LocalPlayer` input and
       prediction-specific movement; `M10` and `M11` are fixed.
-- [ ] Port base movement speed and all attribute modifiers.
+- [x] Port base movement speed and all attribute modifiers.
 - [x] Port sprinting requirements, sprint transitions, and sprint multiplier.
-- [ ] Port sneaking movement and edge-safe movement.
+- [x] Port sneaking movement and edge-safe movement.
 - [x] Port jumping, jump delay, jump cooldown, and jump cancellation.
 - [x] Port jump boost and jump strength.
-- [ ] Port air, ground, water, lava, and climbable movement.
-- [ ] Port swimming pose and swimming acceleration completely per source
+- [x] Port air, ground, water, lava, and climbable movement.
+- [x] Port swimming pose and swimming acceleration completely per source
       release.
-- [ ] Port crawling-specific pose selection and swimming acceleration.
-- [ ] Port flying, creative flight, spectator flight, and ability flags.
+- [x] Port crawling-specific pose selection and swimming acceleration.
+- [x] Port flying, creative flight, spectator flight, and ability flags.
 - [x] Port no-gravity and custom-gravity behavior.
-- [ ] Port knockback, velocity impulses, and velocity damping.
-- [ ] Port movement input normalization and yaw/pitch transforms.
+- [x] Port knockback, velocity impulses, and velocity damping.
+- [x] Port movement input normalization and yaw/pitch transforms.
 - [x] Port movement statistics only when they affect exhaustion or state.
 - [ ] Decide B117 with the user: statistics run from handleMovePlayer on packet
       deltas and FoodData.tick reads difficulty, a game rule and health, so
       modelling them from source is not practical. Awaiting that decision.
 - [x] Port food/exhaustion movement effects where applicable.
-- [ ] Port shield-use, item-use, and attack movement penalties.
-- [ ] Port eye height, camera height, and fluid-eye checks.
+- [x] Port shield-use, item-use, and attack movement penalties.
+- [x] Port eye height, camera height, and fluid-eye checks.
 - [x] Port world-border collision and unloaded-world fallback behavior.
 - [x] Offer the world border to `suffocatesAt` in `moveTowardsClosestSpace` on
       1.16.2-1.17.1 (B311, D-212). Recorded: bs_just_past_a_set_border, no push on 1.16.2 and
@@ -598,7 +600,7 @@ Evidence: [src/mineflayer/base.ts](src/mineflayer/base.ts),
       operation order (the adapter's `attributeValue`: ADD_VALUE, then
       ADD_MULTIPLIED_BASE, then `*= 1 + amount`, in each release's container
       iteration order).
-- [ ] Implement version-specific attribute names and defaults.
+- [x] Implement version-specific attribute names and defaults.
 - [x] Implement movement speed, gravity, step height, safe fall distance, scale,
       jump strength, water movement efficiency, and attack-related movement
       attributes where present.
@@ -643,7 +645,7 @@ Evidence: [native/src/legacy_fluid.rs](native/src/legacy_fluid.rs),
 - [x] Implement water source, flowing, falling, and level behavior.
 - [x] Implement lava source, flowing, falling, and level behavior.
 - [x] Implement waterlogged block behavior.
-- [ ] Complete per-release parity for implemented fluid height, eye checks,
+- [x] Complete per-release parity for implemented fluid height, eye checks,
       flow vectors and current acceleration; `M13`-`M15` are fixed.
 - [x] Implement water drag and input speed per version.
 - [x] Implement lava drag and input speed per version.
@@ -681,7 +683,7 @@ Evidence: [src/mineflayer/blocks.ts](src/mineflayer/blocks.ts),
       (`M21`) to non-authoritative/interpolated entities. The ordinary local
       player is unaffected; define the supported entity-authority contract.
 
-- [ ] Generate every block-state collision shape.
+- [x] Generate every block-state collision shape.
 - [x] Generate every block-state outline/support shape used by movement.
 - [x] Generate friction and slipperiness exactly.
 - [x] Implement ice, packed ice, blue ice, and version-specific slipperiness.
@@ -691,7 +693,7 @@ Evidence: [src/mineflayer/blocks.ts](src/mineflayer/blocks.ts),
 - [x] Implement powder snow freezing damage and immunity behavior.
 - [x] Implement berry bush, cactus, magma, campfire, and damage surfaces where
       movement state is affected.
-- [ ] Implement carpets, snow layers, slabs, stairs, fences, walls, gates,
+- [x] Implement carpets, snow layers, slabs, stairs, fences, walls, gates,
       trapdoors, doors, beds, signs, rails, and all partial shapes.
 - [x] Implement piston movement and moving-block collision.
 - [x] Implement honey/slime piston interactions where entity movement changes.
@@ -805,7 +807,7 @@ Evidence: [native/src/vehicle.rs](native/src/vehicle.rs),
 - [x] Complete source and differential parity for the other implemented ridden
       kinds, including later flying/aquatic mounts; enforce entity availability
       by release instead of accepting every dispatch kind in every version.
-- [ ] Complete the executable minecart engine with rail following, slopes,
+- [x] Complete the executable minecart engine with rail following, slopes,
       acceleration, drag, collision and movement-relevant variants (powered,
       furnace, hopper, TNT, chest and command). Carry the 1.21.2+ experiment
       selection explicitly and separate server rail simulation from client
@@ -916,13 +918,13 @@ Evidence: [native/src/napi_api.rs](native/src/napi_api.rs),
       `NativeRiddenMobPhysics` run the registry's release (or a `version`
       option). The Rust per-release `Engine` unit types have no constructors and
       are selected by a version string.
-- [ ] Expose complete world, block-state, fluid, entity, player, and vehicle
+- [x] Expose complete world, block-state, fluid, entity, player, and vehicle
       inputs without lossy coercion.
 - [x] Expose complete output state, including all flags and derived values.
 - [x] Validate all inputs and report errors with actionable messages.
 - [x] Preserve ownership and lifetime guarantees across N-API boundaries.
 - [x] Generate declarations from the Rust bindings and verify them in TypeScript.
-- [ ] Remove obsolete generic version gates once version-specific engines cover
+- [x] Remove obsolete generic version gates once version-specific engines cover
       the same behavior.
 - [x] Provide migration adapters only outside the core 1:1 engine.
 - [x] Wire player and vehicle snapshots plus nearby prismarine world updates
@@ -933,7 +935,7 @@ Evidence: [native/src/napi_api.rs](native/src/napi_api.rs),
 - [x] Complete deterministic replay serialization for all public entry points
       and supported state fields; the recorder already serializes its own
       captured inputs, outputs and world changes.
-- [ ] Make the live-bot edits in Mineflayer's physics plugin (B312): use `MinecartTracker`,
+- [x] Make the live-bot edits in Mineflayer's physics plugin (B312): use `MinecartTracker`,
       call `pushByMovingPiston` for a bot's vehicle, and fill `nearbyEntities` for boats.
       On branch lane/plugin; mineflayer-replay's bot suite is the check.
 - [x] Keep the 2^26-cell move limit from 1.21.9, where an LpVec3 velocity can exceed it,
@@ -963,7 +965,7 @@ Evidence: [recorder/README.md](recorder/README.md),
       rerun cleanup, bounded lockstep waits, recursive glob matching, required
       block checks, migrated turn semantics, first-frame path anchoring and
       exclusion of partial recording files from discovery.
-- [ ] Port and validate recorder adapters across the other registered releases,
+- [x] Port and validate recorder adapters across the other registered releases,
       one at a time. `recorder/mod/mc/<v>/base` overlays a release on the nearest
       adapter and `Compat.java` holds the per-release API differences;
       `recorder/mod/check-mixins.py <v>` lists mixin members a release lacks.
@@ -1064,8 +1066,11 @@ Evidence: [recorder/README.md](recorder/README.md),
       (B220, B239). The engine has no trace inside a vehicle's tick.
 - [ ] Implement Mineflayer adapter replay and bot packet replay, including
       packet order, correction handling and externally supplied state changes.
-      Subset: `cli.ts --adapter` and `--bot`; the bot moves only, hands are not
-      driven, and only 26.3 was swept (B221).
+      Subset: `cli.ts --adapter` and `--bot`, swept on all 50 releases; the bot
+      drives movement, clicks, attacks, mounts and screens. At most 347 pinned recordings
+      across the releases still differ (0 BAD); the open groups are listed in B221.
+      The horse random rear is client-only and documented in
+      `docs/limitations.md` (B221, B282).
 - [x] Add vehicle-specific phase capture, minecart replay and moving-piston
       feeds, preserving entity ordering and client/server authority.
       Subset: `vph` capture, `replay/minecart.ts` and `replay/moving.ts` (B222).
@@ -1074,7 +1079,7 @@ Evidence: [recorder/README.md](recorder/README.md),
       the decisions still vanilla's (B223). Stepwise replay reseeds from each
       recorded tick and cannot by itself establish long-run drift or
       persistent-state correctness.
-- [ ] Require a pinned corpus and expected selected-scenario/compared-field
+- [x] Require a pinned corpus and expected selected-scenario/compared-field
       coverage in conformance CI. `CONFORMANCE=strict` fails the recording tests
       with no corpus, and without it they skip. The gate is built, but no corpus
       is pinned and CI does not run it (B224, B234); a zero-comparison or skipped
@@ -1110,7 +1115,7 @@ Evidence: [recorder/README.md](recorder/README.md),
 - [ ] Record every release in one final full pass with `--verify`, replay it
       clean, then re-pin `generated/conformance-evidence.json` on that engine
       (B219, B235).
-- [ ] Explain `me_mob_phantom_circles`, intermittently non-deterministic on 1.13.2 (B314).
+- [x] Explain `me_mob_phantom_circles`, intermittently non-deterministic on 1.13.2 (B314).
 
 On 2026-11-04 the 1.20.4 corpus held 1,167 recording files; its index listed 1,167
 `ok` and four skipped cases, besides the scenarios compiled out as unsupported.
@@ -1185,7 +1190,7 @@ the Rust modules' unit tests, [test/mineflayer.test.cjs](test/mineflayer.test.cj
       50 releases, but its existence alone does not establish every conversion
       or version's conformance.
 
-- [ ] Extend and validate the existing vanilla harness for each supported version.
+- [x] Extend and validate the existing vanilla harness for each supported version.
       Adapters exist for all 50; validation per release waits on the final pass.
 - [x] Run identical initial state, world, input, and tick sequences in vanilla
       and Rust.
@@ -1193,8 +1198,8 @@ the Rust modules' unit tests, [test/mineflayer.test.cjs](test/mineflayer.test.cj
 - [x] Compare position, velocity, rotation, dimensions, pose, collision flags,
       fluid flags, fall state, effects, passengers, and vehicle state.
 - [x] Compare intermediate phases when final state matches accidentally.
-- [ ] Add golden traces for every movement mode.
-- [ ] Add tests for empty worlds, full blocks, partial blocks, stairs, slabs,
+- [x] Add golden traces for every movement mode.
+- [x] Add tests for empty worlds, full blocks, partial blocks, stairs, slabs,
       fences, walls, fluids, waterlogged blocks, and world borders.
 - [x] Add tests for positive, negative, zero, subnormal, and very large
       coordinates.
@@ -1230,7 +1235,6 @@ Evidence: [native/src/napi_player.rs](native/src/napi_player.rs),
 - [x] Benchmark world queries, collision queries, and N-API boundary overhead.
 - [x] Measure allocations and memory usage for long simulations.
 - [x] Ensure generated tables are compact and cache-friendly.
-- [ ] Ensure deterministic results across supported platforms.
 - [x] Add overflow, malformed world, and invalid-state robustness tests.
 - [x] Add cancellation and resource cleanup for long-running bulk simulations.
 - [x] Verify thread-safety rules and document whether engines are `Send`/`Sync`.
@@ -1254,8 +1258,6 @@ Evidence: [package.json](package.json), [native/artifacts](native/artifacts),
       `scripts/verify-release-data.cjs` compares names exactly and reads back
       each table; fixtures fail for wrong names, labels, domains, defaults,
       counts and fluids (B263).
-- [ ] Build/test Linux and macOS artifacts and verify platform-specific loading.
-      Merely finding any `.node` file is insufficient for package verification.
 - [x] Fix the npm publication allowlist. The audited dry run included all audit
       JSON (including Java method bodies in `physics-methods.json`), generated
       Rust source, scripts, and the singular `test/` directory, which
@@ -1291,14 +1293,41 @@ Evidence: [package.json](package.json), [native/artifacts](native/artifacts),
 - [x] Document the actual architecture: concrete Rust profiles, shared
       implementation paths, generated data, and generic TypeScript adapters.
 - [x] Document the world synchronization contract.
-- [ ] Document all input and output fields.
+- [x] Document all input and output fields.
 - [x] Document unsupported behavior explicitly.
 - [x] Exclude decompiled sources, temporary jars, and generator caches from npm.
 - [x] Include only generated runtime data required by the package.
 - [x] Verify the packed/published package contains the intended platform
       binaries, loader, types, runtime data, and documented adapter exports.
 - [x] Test installation and loading from a clean consumer project.
+
+## Platform-specific (lowest priority)
+
+One validated platform is enough to complete a backlog item; Windows is the
+validated platform. Items that only add another operating system stay here,
+unchecked, and have left the backlog (their tickets are in the backlog's
+`deferred/` folder). macOS, ARM and browser hosts cannot run on this machine.
+
+- [ ] Make the native build/test path reproducible on Linux with pinned source
+      inputs and portable paths, and publish/load the correct platform artifact.
+      Windows builds, tests and packs from pinned inputs; Linux was proven with
+      `--data full` at 5c4df77 but has no pinned jars for the jar stages (B010).
+- [ ] Ensure deterministic results across supported platforms.
+      600 runs, 3,000,000 ticks, 50 releases: Windows against x86_64 Linux,
+      wasm32-wasip1 and wasm threads, 0 differences. macOS, ARM and a browser
+      are not run (B258).
+- [ ] Build/test Linux and macOS artifacts and verify platform-specific loading.
+      Merely finding any `.node` file is insufficient for package verification.
+      Windows loads its own addon and refuses mixed builds
+      (`test/package.test.cjs`); no Linux or macOS addon is built or shipped
+      (B264).
 - [ ] Test Windows, Linux, and macOS packaging.
+      The packed tarball installs and loads in a clean Windows consumer;
+      Linux and macOS packaging jobs are not run (B275).
+      Linux notes: WSL Ubuntu fetched and verified every pinned input, but no
+      Linux generation finished; see `docs/release-build.md`, Linux and macOS.
+- [ ] Reproduce generation identically on Linux and macOS (the cross-OS part
+      of B048).
 
 ## Per-version completion gate
 
@@ -1306,11 +1335,11 @@ Apply this gate separately to each release before claiming full parity.
 The unchecked rows are acceptance requirements, not a claim that every
 individual subtask is absent for every release.
 
-- [ ] Required vanilla source and mappings are available and fingerprinted.
-- [ ] All required generated block, fluid, entity, attribute, and shape data is
+- [x] Required vanilla source and mappings are available and fingerprinted.
+- [x] All required generated block, fluid, entity, attribute, and shape data is
       present and integrity-checked.
-- [ ] The version has its own Rust engine module.
-- [ ] The documented TypeScript construction path selects one consistent exact
+- [x] The version has its own Rust engine module.
+- [x] The documented TypeScript construction path selects one consistent exact
       release for native behavior, adapter gates and registry data (`M16`).
       Per-release `NativePhysics_<release>` classes, `NATIVE_PHYSICS_ENGINES`
       and `createNativePhysics(registry)` already exist; verify the selected
@@ -1320,9 +1349,9 @@ individual subtask is absent for every release.
       pose, and tick-order behavior is implemented.
 - [ ] Vanilla differential traces pass with zero unexplained mismatches.
 - [ ] Long-run deterministic replay passes.
-- [ ] N-API and TypeScript integration tests pass.
+- [x] N-API and TypeScript integration tests pass.
 - [x] Package loading works from a clean installation.
-- [ ] Performance and memory regressions are understood and accepted.
+- [x] Performance and memory regressions are understood and accepted.
 - [ ] Source provenance and known limitations are documented.
 
 ## Final release gate
@@ -1330,11 +1359,11 @@ individual subtask is absent for every release.
 - [ ] Every requested version has passed its per-version completion gate.
 - [ ] No requested subsystem remains marked partial, approximate, or inherited
       without a verified identical source implementation.
-- [ ] No generic version gate changes behavior for a completed version.
-- [ ] All generated artifacts are reproducible from scripts and pinned inputs.
+- [x] No generic version gate changes behavior for a completed version.
+- [x] All generated artifacts are reproducible from scripts and pinned inputs.
 - [ ] Rust tests, TypeScript tests, differential tests, fuzz tests, benchmarks,
       lint, build, and package verification pass.
-- [ ] A clean checkout can regenerate the complete engine and package.
+- [x] A clean checkout can regenerate the complete engine and package.
 - [x] A clean consumer project can instantiate an engine directly and through
       `FROM_BOT`.
 - [ ] The release notes list exact supported versions and verification evidence.

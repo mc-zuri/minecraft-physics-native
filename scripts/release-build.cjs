@@ -84,7 +84,7 @@ function stagePackage(stage, targets) {
   fs.rmSync(stage, { recursive: true, force: true });
   fs.mkdirSync(path.join(stage, "native", "artifacts"), { recursive: true });
   fs.cpSync(path.join(root, "dist"), path.join(stage, "dist"), { recursive: true });
-  for (const name of ["package.json", "README.md"]) fs.copyFileSync(path.join(root, name), path.join(stage, name));
+  for (const name of ["package.json", "README.md", "THIRD_PARTY_NOTICES"]) fs.copyFileSync(path.join(root, name), path.join(stage, name));
   const artifacts = (name) => path.join(root, "native", "artifacts", name);
   const copy = (name) => fs.copyFileSync(artifacts(name), path.join(stage, "native", "artifacts", name));
   for (const name of ["native.js", "native.d.ts"]) copy(name);

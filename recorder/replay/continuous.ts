@@ -118,8 +118,9 @@ export class Prediction {
     }
 
     /** A recorded box at `position`, moved to where the prediction is. */
-    box(box: readonly number[], position: readonly number[]): readonly number[] {
-        if (!this.held) return box;
+    box(box: readonly number[], position: readonly number[], row?: Pick<ExpandedRow, 's2c'>): readonly number[] {
+        // (a packet of the row that moved the player, a teleport, puts the tick where vanilla's start is, as seed() takes it)
+        if (!this.held || row?.s2c.some(packet => packet.after?.pos !== undefined)) return box;
         const [dx, dy, dz] = [this.held.position.x - position[0]!, this.held.position.y - position[1]!, this.held.position.z - position[2]!];
         return [box[0]! + dx, box[1]! + dy, box[2]! + dz, box[3]! + dx, box[4]! + dy, box[5]! + dz];
     }

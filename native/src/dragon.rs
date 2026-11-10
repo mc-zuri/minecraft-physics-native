@@ -7,13 +7,13 @@
 //! The formula broke at these releases (the bytecode of each of the 50 was compared):
 //! - 1.8: its own steering. The turn comes from the speed, and so does the span that a phase takes
 //!   from the distance; the aim is the target after the AI, the rest the target before it.
-//! - 1.9: phases (1.9.4 EnderDragonEntity.java:231-272).
+//! - 1.9: phases (1.9.4 EnderDragon.java:224-263).
 //! - 1.14: a climb of 0.01 in place of 0.1F, none at all straight under the target (it would be
-//!   infinite), and the slide in doubles (1.13.2 :243-284, 1.14 EnderDragonEntity.java:249-286).
+//!   infinite), and the slide in doubles (1.13.2 :227-266, 1.14.4 EnderDragon.java:207-239).
 //! - 1.17: `Math.sqrt`, and no turn straight under the target (1.16.5 :252-289, 1.17 :243-285).
-//! - 1.18.2: the turn in floats (bytecode; 1.19 EnderDragonEntity.java:264-268).
+//! - 1.18.2: the turn in floats (bytecode; 1.19 EnderDragon.java:258-260).
 //! - 1.21.2: `applyEffectsFromBlocks` after the flight, which does nothing: Entity.isAffectedByBlocks
-//!   is false for `noPhysics` (1.21.3 EnderDragonEntity.java, 26.3 Entity.java:1036).
+//!   is false for `noPhysics` (1.21.3 EnderDragon.java, 26.3 Entity.java:1036).
 //!
 //! The parts broke at 1.9 (a neck, and another head), 1.11 (`es[0]`, a yaw, in the head's height until
 //! then), 1.14 (a left wing of height 3 until then), 1.15 (`tickPart`, whose offset is summed first)
@@ -50,7 +50,7 @@ impl DragonFlightHistory {
     }
 
     /// DragonFlightHistory.record, before the tick's flight: its first fills every delay (26.3
-    /// DragonFlightHistory.java:23-33, 1.8.9 EnderDragonEntity.java:130-146).
+    /// DragonFlightHistory.java:23-33, 1.8.8 EnderDragon.java:130-146).
     pub fn record(&mut self, y: f64, yaw: f32) {
         let sample = DragonFlightSample { y, yaw };
         if self.samples.is_empty() {
@@ -61,6 +61,7 @@ impl DragonFlightHistory {
         }
     }
 
+    /// DragonFlightHistory#get, EnderDragon#getLatencyPos before 1.21.2: the sample `delay` ticks old.
     #[must_use]
     pub fn get(&self, delay: usize) -> DragonFlightSample {
         self.samples
@@ -103,7 +104,7 @@ pub struct DragonState {
     pub history: DragonFlightHistory,
 }
 
-/// `Mth.clamp` of a double; a NaN stays one (1.9.4 MathHelper.java, 1.20.4 MathHelper.java).
+/// `Mth.clamp` of a double; a NaN stays one (1.9.4 Mth.java, 1.20.4 Mth.java).
 fn clamp(value: f64, min: f64, max: f64) -> f64 {
     if value < min {
         min
@@ -114,6 +115,7 @@ fn clamp(value: f64, min: f64, max: f64) -> f64 {
     }
 }
 
+/// `Mth#clamp` of a float; a NaN stays one.
 fn clamp_f32(value: f32, min: f32, max: f32) -> f32 {
     if value < min {
         min
@@ -135,8 +137,8 @@ fn heading(velocity_y: f64, yaw: f32, release: MinecraftVersion) -> Vec3 {
     .normalized(release)
 }
 
-/// Entity.move of what has `noPhysics`, which a dragon always has: through everything (1.8.9
-/// Entity.java:575-577, 1.14 :509-511, 1.17 :572-573, 26.3 :766-767).
+/// Entity.move of what has `noPhysics`, which a dragon always has: through everything (1.8.8
+/// Entity.java:574-576, 1.14.4 :431-433, 1.17 :574-575, 26.3 :766-767).
 fn fly(state: &mut DragonState, release: MinecraftVersion) {
     let movement = if state.in_wall {
         state.velocity.scale(f64::from(0.8_f32))
@@ -153,7 +155,7 @@ fn fly(state: &mut DragonState, release: MinecraftVersion) {
     }
 }
 
-/// The steering of 1.8 (1.8.9 EnderDragonEntity.java:186-228).
+/// The steering of 1.8 (1.8.8 EnderDragon.java:186-228).
 fn flight_1_8(state: &mut DragonState, target: Vec3, release: MinecraftVersion) {
     let steering = state.steering_target.unwrap_or(target);
     let (dx, dy, dz) = (
@@ -165,7 +167,7 @@ fn flight_1_8(state: &mut DragonState, target: Vec3, release: MinecraftVersion) 
     let climb = clamp(climb, f64::from(-0.6_f32), f64::from(0.6_f32));
     state.velocity.y += climb * f64::from(0.1_f32);
     state.yaw = wrap_degrees_f32(state.yaw);
-    let wanted = 180.0 - atan2_vanilla(dx, dz) * 180.0 / f64::from(std::f32::consts::PI);
+    let wanted = 180.0 - atan2_vanilla(dx, dz, release) * 180.0 / f64::from(std::f32::consts::PI);
     let turn = clamp(wrap_degrees(wanted - f64::from(state.yaw)), -50.0, 50.0);
     let aim = Vec3::new(
         target.x - state.position.x,
@@ -201,15 +203,19 @@ fn flight_1_8(state: &mut DragonState, target: Vec3, release: MinecraftVersion) 
 }
 
 /// The dragon's flight step, and nothing else of its tick: 26.3 EnderDragon.java:201-236, 1.21.5
-/// EnderDragon.java:199-241 for the rest of the 1.9 line. A dragon with no target stays as it is.
+/// EnderDragon.java:186-225 for the rest of the 1.9 line. A dragon with no target stays as it is.
 pub fn tick_dragon_flight(state: &mut DragonState, release: MinecraftVersion) {
     let Some(target) = state.target else {
         return;
     };
+    // (1.8.8 EnderDragon.java:181-185 steers by its own target with a fixed 0.6; 1.9.4 EnderDragon.java:231-239 by
+    // the phase's target and fly speed)
     if !release.at_least(1, 9, 0) {
         flight_1_8(state, target, release);
         return;
     }
+    // (1.13.2 EnderDragon.java:241-242 divides by any distance and adds 0.1F of it to the speed; 1.14.4
+    // EnderDragon.java:214-219 only by one above 0, and adds 0.01)
     let modern = release.at_least(1, 14, 0);
     let (dx, mut dy, dz) = (
         target.x - state.position.x,
@@ -219,6 +225,7 @@ pub fn tick_dragon_flight(state: &mut DragonState, release: MinecraftVersion) {
     let distance = dx * dx + dy * dy + dz * dz;
     let most = f64::from(state.fly_speed);
     let horizontal = (dx * dx + dz * dz).sqrt();
+    // (1.16.5 EnderDragon.java:258; 1.17 EnderDragon.java:244)
     let horizontal = if release.at_least(1, 17, 0) {
         horizontal
     } else {
@@ -238,17 +245,19 @@ pub fn tick_dragon_flight(state: &mut DragonState, release: MinecraftVersion) {
     let direction = heading(state.velocity.y, state.yaw, release);
     let dot = (direction.dot(aim) as f32 + 0.5) / 1.5;
     let dot = if dot.is_nan() || dot > 0.0 { dot } else { 0.0 };
+    // (1.16.5 EnderDragon.java:272; 1.17 EnderDragon.java:257)
     let turns = !release.at_least(1, 17, 0)
         || dx.abs() > f64::from(1.0e-5_f32)
         || dz.abs() > f64::from(1.0e-5_f32);
     if turns {
         state.yaw_acceleration *= 0.8;
+        // (1.18.1 EnderDragon.java:240; 1.18.2 EnderDragon.java:258)
         if release.at_least(1, 18, 2) {
-            let wanted = 180.0 - atan2_vanilla(dx, dz) as f32 * 57.295776 - state.yaw;
+            let wanted = 180.0 - atan2_vanilla(dx, dz, release) as f32 * 57.295776 - state.yaw;
             let turn = clamp_f32(wrap_degrees_f32(wanted), -50.0, 50.0);
             state.yaw_acceleration += turn * state.turn_speed;
         } else {
-            let wanted = 180.0 - atan2_vanilla(dx, dz) * 57.295_776_367_187_5 - f64::from(state.yaw);
+            let wanted = 180.0 - atan2_vanilla(dx, dz, release) * 57.295_776_367_187_5 - f64::from(state.yaw);
             let turn = clamp(wrap_degrees(wanted), -50.0, 50.0);
             state.yaw_acceleration =
                 (f64::from(state.yaw_acceleration) + turn * f64::from(state.turn_speed)) as f32;
@@ -282,7 +291,7 @@ pub fn tick_dragon_flight(state: &mut DragonState, release: MinecraftVersion) {
 }
 
 /// One of the boxes a dragon is hit in. The dragon itself is not pickable (26.3 EnderDragon.java:744,
-/// 1.8.9 EnderDragonEntity.java), so these are what a projectile strikes.
+/// 1.8.8 EnderDragon.java), so these are what a projectile strikes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DragonPart {
     /// "head", "neck", "body", "tail" or "wing".
@@ -294,9 +303,10 @@ pub struct DragonPart {
     pub bounding_box: Aabb,
 }
 
-/// The sizes the parts take: set every tick before 1.14, and for the left wing wrongly (1.8.9
-/// EnderDragonEntity.java:231-241, 1.13.2 :288-304), by the constructor from 1.14 (1.14 :99-106).
+/// The sizes the parts take: set every tick before 1.14, and for the left wing wrongly (1.8.8
+/// EnderDragon.java:231-241, 1.13.2 :270-286), by the constructor from 1.14 (1.14.4 :61-84).
 fn part_size(index: usize, release: MinecraftVersion) -> (f32, f32) {
+    // (1.8.8 EnderDragon.java:232 has a head of 3 and no neck; 1.9.4 EnderDragon.java:268-269 a head of 1 and a neck)
     let neck = usize::from(release.at_least(1, 9, 0));
     let head = if release.at_least(1, 9, 0) { 1.0 } else { 3.0 };
     match index {
@@ -319,6 +329,8 @@ fn degrees_to_radians(degrees: f32, release: MinecraftVersion) -> f32 {
 pub fn dragon_parts(state: &DragonState, release: MinecraftVersion) -> Vec<DragonPart> {
     let history = &state.history;
     let legacy = !release.at_least(1, 9, 0);
+    // (1.14.4 EnderDragon.java:275 adds the offsets to the dragon's y one by one; 1.15 EnderDragon.java:323-324 sums
+    // them first and adds the sum, :372)
     let summed = release.at_least(1, 15, 0);
     let sin = |angle: f32| mth_sin(f64::from(angle), release) as f32;
     let cos = |angle: f32| mth_cos(f64::from(angle), release) as f32;
@@ -348,7 +360,7 @@ pub fn dragon_parts(state: &DragonState, release: MinecraftVersion) -> Vec<Drago
         ));
     } else {
         // (1.9 and 1.10 take the newest sample's yaw for its height, es[0]: 1.9.4
-        // EnderDragonEntity.java:361, 1.10.2; 1.11.2 es[1])
+        // EnderDragon.java:350, 1.10.2 EnderDragon.java:355; 1.11.2 EnderDragon.java:370 es[1])
         let newest = if release.at_least(1, 11, 0) {
             history.get(0).y
         } else {
@@ -376,6 +388,7 @@ pub fn dragon_parts(state: &DragonState, release: MinecraftVersion) -> Vec<Drago
     let base = history.get(5);
     for index in 0..3 {
         let sample = history.get(12 + index * 2);
+        // (1.21.1 EnderDragon.java:333; 1.21.2 EnderDragon.java:306)
         let wrapped = if release.at_least(1, 21, 2) {
             wrap_degrees(f64::from(sample.yaw - base.yaw))
         } else {
@@ -424,7 +437,7 @@ pub fn dragon_parts(state: &DragonState, release: MinecraftVersion) -> Vec<Drago
         .collect()
 }
 
-/// The history's sample, the flight and where the parts end: `aiStep` of a dragon that is alive and
+/// The history's sample, the flight and where the parts end: `EnderDragon#aiStep` of a dragon that is alive and
 /// has its AI, with what its phase decided in `state`.
 pub fn tick_dragon(state: &mut DragonState, release: MinecraftVersion) -> Vec<DragonPart> {
     state.yaw = wrap_degrees_f32(state.yaw);
@@ -450,8 +463,8 @@ pub struct DragonPush {
 
 /// EnderDragon.knockBack of both wings, which runs where a dragon was not hurt recently (the
 /// caller's to say): the box around a wing, two lower, throws what is in it away from the body. Over
-/// the body's centre the push is unbounded before 1.16.4 (1.8.9 EnderDragonEntity.java:331-341, 1.16.3
-/// by the bytecode, 1.16.5 :425-437, 26.3 EnderDragon.java:366-382).
+/// the body's centre the push is unbounded before 1.16.4 (1.8.8 EnderDragon.java:329-339, 1.16.3
+/// by the bytecode, 1.16.5 :410-422, 26.3 EnderDragon.java:366-382).
 #[must_use]
 pub fn dragon_wing_pushes(
     parts: &[DragonPart],
@@ -473,6 +486,7 @@ pub fn dragon_wing_pushes(
             let x = target.position.x - middle_x;
             let z = target.position.z - middle_z;
             let distance = x * x + z * z;
+            // (1.16.3 EnderDragon.java:418; 1.16.4 EnderDragon.java:418)
             let distance = if release.at_least(1, 16, 4) {
                 distance.max(0.1)
             } else {
@@ -489,7 +503,7 @@ pub fn dragon_wing_pushes(
 
 /// The entity lists a dragon's parts enter (Level.getEntities): after the dragon, and only when the
 /// dragon's own box meets the search, until 1.21.4, then after every other entity of the level
-/// (1.21.3 World.java:708-714, 1.21.4 :713, 26.3 Level.java:551).
+/// (1.21.3 Level.java:578-589, 1.21.4 :583, 26.3 Level.java:551).
 #[must_use]
 pub fn parts_follow_dragon(release: MinecraftVersion) -> bool {
     !release.at_least(1, 21, 4)
@@ -551,7 +565,7 @@ mod tests {
     #[test]
     fn straight_under_the_target_is_no_turn_from_1_17_and_no_nan_from_1_14() {
         let mut state = flying();
-        // (0.0 / 0.0 in the climb before 1.14: 1.13.2 EnderDragonEntity.java:246)
+        // (0.0 / 0.0 in the climb before 1.14: 1.13.2 EnderDragon.java:230)
         state.target = Some(Vec3::new(0.5, 100.0, 0.5));
         assert!(flown(state.clone(), R1_13).velocity.y.is_nan());
         assert!(flown(state.clone(), R1_14).velocity.y.is_finite());

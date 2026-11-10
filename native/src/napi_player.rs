@@ -44,12 +44,15 @@ pub mod input {
     /// The float yaw in degrees that YAW holds in radians: moveFlying turns it into radians
     /// itself before 1.9.
     pub const YAW_DEGREES: usize = 28;
-    pub const LENGTH: usize = 29;
+    /// The look along the yaw the last aiStep left in yHeadRot, with this tick's pitch: what a
+    /// 1.11 rocket that ticks before the player boosts along (D-222). NaN: `LOOK`'s.
+    pub const HEAD_LOOK: usize = 29;
+    pub const LENGTH: usize = 32;
 }
 
 /// What the arrays of this build are: anything that moves an index, or gives a number or a flag
 /// another meaning, takes a new version.
-pub const LAYOUT_VERSION: u32 = 2;
+pub const LAYOUT_VERSION: u32 = 3;
 
 #[napi(object)]
 pub struct NativePlayerLayout {
@@ -176,8 +179,10 @@ const LAST_ENTITY_KIND: u32 = 8;
 pub mod entity_flag {
     /// The team collision rules keep it from pushing the player (EntitySelector.pushableBy).
     pub const NO_TEAM_PUSH: u32 = 1 << 0;
+    /// A spectating player, which the riptide spin's sweep leaves out (NO_SPECTATORS).
+    pub const SPECTATOR: u32 = 1 << 1;
     /// The bits above: a higher one is of a layout this build does not know.
-    pub(super) const KNOWN: u32 = (1 << 1) - 1;
+    pub(super) const KNOWN: u32 = (1 << 2) - 1;
 }
 
 /// A local player whose state the engine keeps between ticks (simulateVersionedTick's tick): the
@@ -343,6 +348,10 @@ impl NativePlayer {
         z: i32,
     ) -> Result<Float64Array> {
         self.check_world("NativePlayer.pushByShulkerBox", world)?;
+        // no shulker box before 1.11 (1.10.2 BlockEntity.java:243-263, 1.11.2 :263)
+        if !self.release.at_least(1, 11, 0) {
+            return Err(Error::from_reason(format!("{:?} has no shulker box", self.release)));
+        }
         let shulker = shulker_box(shulker)?;
         crate::shulker_box::push_entity(&mut self.state, world.snapshot(), shulker, (x, y, z), self.config, self.release);
         Ok(Float64Array::new(self.output()))
@@ -474,12 +483,15 @@ impl NativePlayer {
         }
         state.position = position;
         // Entity.setDeltaMovement: from 1.21.11 a motion that is not finite is refused, and the
-        // player keeps the one its last tick left (1.21.11 Entity.java:3664-3668)
+        // player keeps the one its last tick left (1.21.11 Entity.java:3727-3732)
         state.set_delta_movement(vec3(values, VELOCITY), self.release);
         state.yaw = values[YAW];
         state.yaw_degrees = Some(values[YAW_DEGREES] as f32);
         state.pitch = values[PITCH];
         state.look = vec3(values, LOOK);
+        let head_look = vec3(values, HEAD_LOOK);
+        state.head_look = (head_look.x.is_finite() && head_look.y.is_finite() && head_look.z.is_finite())
+            .then_some(head_look);
         state.input = Vec3::new(values[STRAFE], 0.0, values[FORWARD]);
         state.half_width = values[HALF_WIDTH];
         state.height = values[HEIGHT];
@@ -683,6 +695,7 @@ fn nearby_entity(values: &[f64]) -> NearbyEntity {
         tick_position: vec3(values, 11),
         tick_bounding_box: aabb(14),
         team_pushes: flags & entity_flag::NO_TEAM_PUSH == 0,
+        spectator: flags & entity_flag::SPECTATOR != 0,
     }
 }
 
@@ -757,6 +770,7 @@ mod tests {
             suffocating: None,
             in_wall: None,
             bottom_face_sturdy: None,
+            explosion_resistance: None,
             remove: None,
         }
     }
@@ -1257,7 +1271,7 @@ mod tests {
             (0, 0.5, "kind"),
             (0, f64::NAN, "kind"),
             (20, f64::NAN, "flags"),
-            (20, 2.0, "does not know"),
+            (20, 4.0, "does not know"),
         ] {
             let mut bad = two.clone();
             bad[ENTITY_LENGTH + at] = value;
@@ -1370,8 +1384,8 @@ mod tests {
     #[test]
     fn a_non_finite_motion_input_keeps_the_last_motion_from_1_21_11() {
         // Entity.setDeltaMovement refuses a motion that is not finite from 1.21.11 (1.21.11
-        // Entity.java:3664-3668), and the player keeps the motion its last tick left; 1.21.10
-        // takes it (1.21.10 Entity.java:3640-3642)
+        // Entity.java:3727-3732), and the player keeps the motion its last tick left; 1.21.10
+        // takes it (1.21.10 Entity.java:3709-3711)
         for (version, kept) in [("1.21.11", true), ("1.21.10", false)] {
             let mut world = floor();
             let mut player =
@@ -1401,7 +1415,7 @@ mod tests {
     #[test]
     fn the_landing_tick_reports_its_fall_damage() {
         // LivingEntity.causeFallDamage's amount on the landing tick (1.21.11
-        // LivingEntity.java:1736-1749, 1.16.5 :1611-1624), as simulateVersionedTick computes it;
+        // LivingEntity.java:1703-1715, 1.16.5 :1609-1622), as simulateVersionedTick computes it;
         // the ticks before and after report none
         for (version, expected) in [("1.21.11", 2.0), ("1.16.5", 2.0)] {
             let mut world = floor();
@@ -1586,8 +1600,8 @@ mod tests {
     #[test]
     fn a_tick_makes_the_clients_frost_from_the_attribute_it_keeps() {
         // LivingEntity.aiStep's removePowderSnowSlow and addPowderSnowSlowIfNeeded, on the client
-        // up to 1.21.4 (1.17 LivingEntity.java:2555-2556, 1.21.4 :2812-2813) and not from 1.21.5
-        // (1.21.5 :2775-2783): as simulateVersionedTick does with the same attribute
+        // up to 1.21.4 (1.17 LivingEntity.java:2555-2556, 1.21.4 :2785-2786) and not from 1.21.5
+        // (1.21.5 :2763-2772): as simulateVersionedTick does with the same attribute
         for (version, frost) in [
             ("1.16.5", None),
             ("1.17", Some(f64::from(-0.05_f32 * 0.5_f32))),
@@ -1772,8 +1786,8 @@ mod tests {
 
     #[test]
     fn the_team_rules_the_sleep_and_the_death_keep_a_mob_from_pushing() {
-        // EntitySelector.pushableBy (1.21.11 EntitySelector.java:27-54), LivingEntity.push(Entity)
-        // skipping a sleeper (:2219-2223), LivingEntity.isPushable's isAlive (:3201-3203)
+        // EntitySelector.pushableBy (1.21.11 EntitySelector.java:40-72), LivingEntity.push(Entity)
+        // skipping a sleeper (:2188-2193), LivingEntity.isPushable's isAlive (:3202-3204)
         let mut world = floor();
         let mut cow = vec![0.0; ENTITY_LENGTH];
         cow[0] = 1.0;
@@ -1869,10 +1883,41 @@ mod tests {
         assert_eq!(not_spinning[output::VELOCITY], plain[output::VELOCITY]);
         // an armor stand is a LivingEntity though it neither pushes nor collides: checkAutoSpinAttack
         // tests `instanceof LivingEntity` (1.13.2 LivingEntity.java:2022, 1.16.5 :2580, 1.21.11
-        // :3094; 1.13.2 entity/decoration/ArmorStandEntity.java:40 extends LivingEntity)
+        // :3094; 1.13.2 entity/decoration/ArmorStand.java:40 extends LivingEntity)
         let armor_stand = spin(5.0, true);
         assert!(ended(&armor_stand));
         assert_eq!(armor_stand[output::VELOCITY], plain[output::VELOCITY] * -0.2);
+    }
+
+    #[test]
+    fn a_riptide_spin_bounces_off_a_living_entity_on_each_side_of_its_changes() {
+        // checkAutoSpinAttack scales the velocity by -0.2 component by component in 1.13.2
+        // (LivingEntity.java:2018-2035), by Vec3.scale(-0.2) from 1.14.4, and with a
+        // pattern-matched instanceof from 26.2: the same bounce on each side (B280 reach)
+        let mut world = floor();
+        for version in ["1.13.2", "1.14.4", "26.1.2", "26.2", "26.3"] {
+            let mut spin = |kind: f64| {
+                let mut player =
+                    NativePlayer::new(version.to_string(), walker(), config()).expect("it runs");
+                let mut values = input_of(&walker(), false);
+                values[input::POSITION + 1] = 3.0;
+                values[input::VELOCITY] = 0.5;
+                values[input::FORWARD] = 0.0;
+                values[input::FLAGS] = f64::from(input_flag::AUTO_SPIN_ATTACK);
+                let mut entity = vec![0.0; ENTITY_LENGTH];
+                entity[0] = kind;
+                entity[2..5].copy_from_slice(&[0.0, 3.0, 0.5]);
+                entity[5..11].copy_from_slice(&[-0.3, 3.0, 0.2, 0.3, 4.95, 0.8]);
+                entity[11..14].copy_from_slice(&[20.0, 3.0, 0.5]);
+                entity[14..20].copy_from_slice(&[19.7, 3.0, 0.2, 20.3, 4.95, 0.8]);
+                player.step(&mut world, &values, &entity).expect("the tick runs")
+            };
+            let plain = spin(0.0);
+            let hit = spin(1.0);
+            assert!(hit[output::FLAGS] as u32 & output_flag::AUTO_SPIN_ATTACK_ENDED != 0, "{version}");
+            assert_eq!(hit[output::VELOCITY], plain[output::VELOCITY] * -0.2, "{version}");
+            assert_eq!(hit[output::VELOCITY + 1], plain[output::VELOCITY + 1] * -0.2, "{version}");
+        }
     }
 
     #[test]

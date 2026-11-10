@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import type { NativeAabb, NativeAttributeModifier, NativeNearbyEntity, NativeSimulationState } from '../../native/artifacts/native.js';
 import type { Snapshot } from '../schema/recording.ts';
 import type { PlayerFieldKey } from '../schema/fields.ts';
+import { versionAtLeast } from '../scenarios/dsl/names.ts';
 
 const f32 = Math.fround;
 const require = createRequire(import.meta.url);
@@ -43,10 +44,11 @@ function category(version: string, type: string): string | undefined {
     if (!byName) {
         const data = require('minecraft-data')(version) as { entitiesArray: { name: string; type: string; category?: string }[] };
         // (up to 1.16.5 every type is "mob" and the kind is in the category: a boat, a minecart and a dropped item are too)
-        // (and 1.13 and 1.14 have no category at all: a later release, which types them properly, says)
+        // (and 1.13 and 1.14 have no category at all, and 1.15 to 1.16.5 UNKNOWN for a rocket, a bee or a piglin: a later release,
+        // which types them properly, says)
         const modern = new Map((require('minecraft-data')('1.20.4') as typeof data).entitiesArray.map(e => [e.name, e.type]));
         byName = new Map(data.entitiesArray.map(e => [e.name, e.type === 'mob' && NOT_MOBS.has(e.category ?? '') ? 'other'
-            : e.type === 'mob' && !e.category ? modern.get(e.name) ?? e.type : e.type]));
+            : e.type === 'mob' && (!e.category || e.category === 'UNKNOWN') ? modern.get(e.name) ?? e.type : e.type]));
         categories.set(version, byName);
     }
     // (a recording before 1.11 says an entity by its later name)
@@ -61,6 +63,10 @@ export function entityKind(version: string, entity: RecordedEntity): string {
     if (/(^|_)minecart$/.test(type)) return 'minecart';
     if (type === 'happy_ghast') return entity.baby ? 'living' : entity.staysStill ? 'happy_ghast_stays_still' : 'happy_ghast';
     if (type === 'armor_stand') return 'still_living';
+    // (the recorder names another player by its client class before 1.11, RemotePlayer: from 1.9 players push each other,
+    // the team's collision rule, 1.9.4 EntityOtherPlayerMP.canBePushed; in 1.8 a remote player pushes nothing, 1.8.9
+    // OtherClientPlayerEntity)
+    if (type === 'RemotePlayer') return versionAtLeast(version, '1.9') ? 'living' : 'inert';
     return LIVING_CATEGORIES.has(category(version, type) ?? '') ? 'living' : 'inert';
 }
 

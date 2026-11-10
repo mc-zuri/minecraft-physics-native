@@ -27,7 +27,7 @@ interface RecordedVehicle {
     /** Whether this client moves the vehicle (its rider steers it); else it follows the server. */
     controlledByLocalInstance?: boolean;
     boat?: {
-        status: string | null; oldStatus: string | null; deltaRotation: number; waterLevel: number; landFriction: number; paddlePhases?: number[]; silent?: boolean;
+        status: string | null; oldStatus: string | null; deltaRotation: number; waterLevel: number; landFriction: number; paddlePhases?: number[]; silent?: boolean; lerp?: { steps: number; to: Vec; yRot: number } | null;
         inputLeft: boolean; inputRight: boolean; inputUp: boolean; inputDown: boolean; lastYd: number; speedMultiplier?: number;
         aboveBubbleColumn: boolean; bubbleColumnDirectionIsDown: boolean; bubbleTime: number;
     };
@@ -83,12 +83,14 @@ export function toBoat(v: RecordedVehicle, rider: Snapshot): NativeBoatState {
         bubbleTime: b.bubbleTime, bubbleColumnDirectionIsDown: b.bubbleColumnDirectionIsDown, aboveBubbleColumn: b.aboveBubbleColumn,
         playerPassenger: true,
         collidedHorizontally: v.horizontalCollision, collidedVertically: v.verticalCollision, onGround: v.onGround,
-        landFriction: b.landFriction, lastVerticalVelocity: b.lastYd,
+        landFriction: b.landFriction, lastVerticalVelocity: b.lastYd, fallDistance: v.fallDistance,
         boundingBox: aabb(v.box),
         riderYaw: rider.yRot as number, riderForward: rider.zza as number, riderStrafe: rider.xxa as number,
         stuckSpeedMultiplier: vec(v.stuckSpeedMultiplier),
         noGravity: v.noGravity,
         paddlePhases: b.paddlePhases, silent: b.silent,
+        // (the interpolation a position packet started, recorded on 1.21.2 - 1.21.4, which run it on a controlled boat)
+        ...(b.lerp ? { lerpSteps: b.lerp.steps, lerpPosition: vec(b.lerp.to), lerpYRot: b.lerp.yRot } : {}),
         ...(b.speedMultiplier === undefined ? {} : { speedMultiplier: b.speedMultiplier }),
     });
 }

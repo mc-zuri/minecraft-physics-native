@@ -15,6 +15,90 @@ use crate::versioned;
 use crate::world::{BlockShape, BlockState, FluidState, WorldSnapshot};
 use crate::Aabb;
 
+/// `release knockback strength x z resistance ground vx vy vz = vx vy vz`, the jar's LivingEntity.knockback.
+#[test]
+fn knockback_matches_the_jars_by_bits() {
+    let text = include_str!("../fixtures/java-oracle-knockback.txt");
+    let mut asked = 0;
+    for line in text.lines() {
+        let (head, answer) = line.split_once(" = ").expect("an answer");
+        let words: Vec<&str> = head.split(' ').collect();
+        let release = MinecraftVersion::parse(words[0]).expect("a release");
+        let n: Vec<f64> = words[2..].iter().map(|w| w.parse().expect("a number")).collect();
+        let want: Vec<f64> = answer.split(' ').map(|w| w.parse().expect("a number")).collect();
+        let got = crate::simulation::living_knockback(
+            Vec3::new(n[5], n[6], n[7]), n[4] == 1.0, n[0], n[1], n[2], n[3], 1.0, release,
+        );
+        // (a direction vanilla draws at random is no answer: the probe's Random is not ours)
+        let Some(got) = got else {
+            assert!(release.at_least(1, 21, 0), "{line}");
+            continue;
+        };
+        assert_eq!(
+            [got.x.to_bits(), got.y.to_bits(), got.z.to_bits()],
+            [want[0].to_bits(), want[1].to_bits(), want[2].to_bits()],
+            "{line}: got {got:?}"
+        );
+        asked += 1;
+    }
+    assert!(asked > 4000, "{asked}");
+}
+
+/// `release input x z item sneak using passenger slowly = x z`: Vec2.normalized and scale, and the private
+/// modifyInputSpeedForSquareMovement, of a jar from 1.21.5, in LocalPlayer.modifyInput's order. Analog
+/// magnitudes under and over one, opposite and signed zeros, which no key gives.
+#[test]
+fn analog_input_matches_the_jars_by_bits() {
+    let text = include_str!("../fixtures/java-oracle-input.txt");
+    let mut asked = 0;
+    for line in text.lines() {
+        let (head, answer) = line.split_once(" = ").expect("an answer");
+        let words: Vec<&str> = head.split(' ').collect();
+        let release = MinecraftVersion::parse(words[0]).expect("a release");
+        let n: Vec<f32> = words[2..].iter().map(|w| w.parse().expect("a number")).collect();
+        let want: Vec<f32> = answer.split(' ').map(|w| w.parse().expect("a number")).collect();
+        let mut state = SimulationState::default();
+        state.is_player = true;
+        state.input = Vec3::new(f64::from(n[0]), 0.0, f64::from(n[1]));
+        state.using_item = n[4] == 1.0;
+        state.passenger = n[5] == 1.0;
+        state.moving_slowly = Some(n[6] == 1.0);
+        state.item_use_speed_multiplier = Some(n[2]);
+        state.sneaking_speed = Some(f64::from(n[3]));
+        let got = crate::simulation::modified_input(crate::simulation::input_move_vector(&state, release), &state);
+        assert_eq!([got[0].to_bits(), got[1].to_bits()], [want[0].to_bits(), want[1].to_bits()], "{line}: got {got:?}");
+        asked += 1;
+    }
+    assert!(asked > 500, "{asked}");
+}
+
+/// `release sin|cos|jsin|jcos x-bits = y-bits`: scripts/java-oracle/OracleTrigLarge.java, at very large arguments, the ends of
+/// the casts, signed zero and what is not finite. NaN compares as NaN: the JVM's bits for one are its own.
+#[test]
+fn trig_at_very_large_and_non_finite_arguments_matches_the_jars() {
+    use crate::simulation::{mth_cos, mth_sin};
+    let text = include_str!("../fixtures/java-oracle-trig-large.txt");
+    let mut differ = Vec::new();
+    for line in text.lines() {
+        let (head, answer) = line.split_once(" = ").expect("an answer");
+        let words: Vec<&str> = head.split(' ').collect();
+        let release = MinecraftVersion::parse(words[0]).expect("a release");
+        let x = f64::from_bits(words[2].parse::<i64>().expect("bits") as u64);
+        let want = f64::from_bits(answer.parse::<i64>().expect("bits") as u64);
+        let got = match words[1] {
+            "sin" => mth_sin(x, release),
+            "cos" => mth_cos(x, release),
+            "jsin" => crate::trig::sin(x),
+            _ => crate::trig::cos(x),
+        };
+        if !(got.to_bits() == want.to_bits() || (got.is_nan() && want.is_nan())) {
+            differ.push(format!("{} {} {x:e}: java {want:e}, rust {got:e}", words[0], words[1]));
+        }
+    }
+    assert!(differ.is_empty(), "{}", differ.join("
+"));
+}
+
 const FIXTURES: [(MinecraftVersion, &str); 8] = [
     (
         MinecraftVersion::new(1, 18, 2),

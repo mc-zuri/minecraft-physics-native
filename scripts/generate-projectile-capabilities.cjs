@@ -13,32 +13,32 @@ const path = require("node:path");
 const { registeredReleases } = require("./registered-releases.cjs");
 const { LEGACY_RELEASES } = require("./legacy-release-data.cjs");
 const { methodsNamed } = require("./java-declarations.cjs");
-const { modernTree } = require("./source-roots.cjs");
+const { modernTree, legacyTree } = require("./source-roots.cjs");
 
 const repositoryRoot = path.resolve(__dirname, "..");
 const outputPath = path.join(repositoryRoot, "generated", "projectile-capabilities.json");
-const decompiledRoot = process.env.MC_DECOMPILED_ROOT ?? path.join(repositoryRoot, "..", "..", "pr", "mc-decompiled");
 
-/** native ProjectileKind -> its class, the first of these a tree has, in Mojang's and in Yarn's names. */
+/** native ProjectileKind -> its class, the first of these a tree has (every tree is Mojang-named). */
 const KINDS = {
-  Snowball: { mojang: ["Snowball"], yarn: ["SnowballEntity"] },
-  Egg: { mojang: ["ThrownEgg"], yarn: ["EggEntity"] },
-  EnderPearl: { mojang: ["ThrownEnderpearl"], yarn: ["EnderPearlEntity"] },
-  Potion: { mojang: ["ThrownPotion", "AbstractThrownPotion"], yarn: ["PotionEntity"] },
-  ExperienceBottle: { mojang: ["ThrownExperienceBottle"], yarn: ["ExperienceBottleEntity"] },
-  Firework: { mojang: ["FireworkRocketEntity"], yarn: ["FireworkRocketEntity"] },
-  FishingHook: { mojang: ["FishingHook"], yarn: ["FishingBobberEntity"] },
-  SpectralArrow: { mojang: ["SpectralArrow"], yarn: ["SpectralArrowEntity"] },
-  TippedArrow: { mojang: ["Arrow"], yarn: ["ArrowEntity", "AbstractArrowEntity"] },
-  Arrow: { mojang: ["Arrow"], yarn: ["ArrowEntity", "AbstractArrowEntity"] },
-  Trident: { mojang: ["ThrownTrident"], yarn: ["TridentEntity"] },
-  SmallFireball: { mojang: ["SmallFireball"], yarn: ["SmallFireballEntity"] },
-  Fireball: { mojang: ["LargeFireball"], yarn: ["FireballEntity"] },
-  WitherSkull: { mojang: ["WitherSkull"], yarn: ["WitherSkullEntity"] },
-  DragonFireball: { mojang: ["DragonFireball"], yarn: ["DragonFireballEntity"] },
-  WindCharge: { mojang: ["WindCharge", "AbstractWindCharge"], yarn: ["WindChargeEntity"] },
-  LlamaSpit: { mojang: ["LlamaSpit"], yarn: ["LlamaSpitEntity"] },
-  ShulkerBullet: { mojang: ["ShulkerBullet"], yarn: ["ShulkerBulletEntity"] },
+  Snowball: { mojang: ["Snowball"] },
+  Egg: { mojang: ["ThrownEgg"] },
+  EnderPearl: { mojang: ["ThrownEnderpearl"] },
+  Potion: { mojang: ["ThrownPotion", "AbstractThrownPotion"] },
+  ExperienceBottle: { mojang: ["ThrownExperienceBottle"] },
+  Firework: { mojang: ["FireworkRocketEntity"] },
+  FishingHook: { mojang: ["FishingHook"] },
+  SpectralArrow: { mojang: ["SpectralArrow"] },
+  // (1.8.8 has one arrow class, which the mapping names AbstractArrow)
+  TippedArrow: { mojang: ["Arrow", "AbstractArrow"] },
+  Arrow: { mojang: ["Arrow", "AbstractArrow"] },
+  Trident: { mojang: ["ThrownTrident"] },
+  SmallFireball: { mojang: ["SmallFireball"] },
+  Fireball: { mojang: ["LargeFireball"] },
+  WitherSkull: { mojang: ["WitherSkull"] },
+  DragonFireball: { mojang: ["DragonFireball"] },
+  WindCharge: { mojang: ["WindCharge", "AbstractWindCharge"] },
+  LlamaSpit: { mojang: ["LlamaSpit"] },
+  ShulkerBullet: { mojang: ["ShulkerBullet"] },
 };
 
 /** The methods of a projectile's tick and impact: the Mojang name, and Yarn's where it differs. */
@@ -164,12 +164,11 @@ function kindEntry(names, files) {
 }
 
 function releaseEntry(version, legacySource) {
-  const root = legacySource ? path.join(decompiledRoot, legacySource) : modernTree(version);
+  const root = legacySource ? legacyTree(version) : modernTree(version);
   if (!root || !fs.existsSync(root)) return Object.fromEntries(Object.keys(KINDS).map((kind) => [kind, { status: "unavailable-source" }]));
   const files = new Map();
   for (const entities of ENTITY_ROOTS) javaFiles(path.join(root, entities), files);
-  const mapping = legacySource ? "yarn" : "mojang";
-  return Object.fromEntries(Object.entries(KINDS).map(([kind, names]) => [kind, kindEntry(names[mapping], files)]));
+  return Object.fromEntries(Object.entries(KINDS).map(([kind, names]) => [kind, kindEntry(names.mojang, files)]));
 }
 
 function generate() {

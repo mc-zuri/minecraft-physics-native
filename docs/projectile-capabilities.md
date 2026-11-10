@@ -22,9 +22,10 @@ Every family goes through `simulateVersionedProjectileTicks`, or `simulateVersio
 | Llama spit | `llama_spit` | 1.11 | 0.06 | 0.99F | 0.25 | `pj_llama_spit_*` |
 | Shulker bullet | `shulker_bullet` | 1.9 | 0.04 | none | 0.3125 | `pj_shulker_bullet_*` |
 
-A name the table does not have is `Generic`, the thrown item's tick, on the unchecked entry points; a kind asked of a
-release before its first is refused with its name. Each value above is the family's default: `gravity`, `airDrag`,
-`power` and `accelerationPower` of a state override it.
+A name the table does not have is refused, and a state with no name at all is `Generic`, the thrown item's tick
+(`test/mineflayer.test.cjs`); a kind asked of a release before its first is refused with its name. Each value above is the family's default: `gravity`, `airDrag`,
+`power` and `accelerationPower` of a state override it where the family's tick reads them. A rocket and a hook before 1.11
+read neither `gravity` nor `airDrag`, and a shulker bullet reads no `airDrag`.
 
 ## Boundaries the integration follows
 

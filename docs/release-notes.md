@@ -3,21 +3,36 @@
 ## Unreleased: 1.0.0 candidate
 
 This is not a release. `package.json` says 1.0.0, nothing is tagged, and no release is certified to match vanilla. These notes
-state what the tree at commit `0eaaa0d` holds. They claim no test result for later code.
+state what the tree holds. The final pass result below is generated from the release matrix record (`scripts/release-matrix.cjs`)
+and the per-release evidence rows (`scripts/release-evidence.cjs`), and claims nothing those records do not show.
+
+<!-- release-notes.cjs: begin. Generated from the release records: do not edit. -->
 
 ### Final pass result
 
-**PLACEHOLDER. TO FILL WHEN THE FINAL PASS ENDS. NOTHING BELOW THIS LINE COUNTS ITS RESULT.**
+From `audit/release-matrix/dd6395114b56-2026-11-10.json` and `audit/release-evidence/dd6395114b56-2026-11-10.json`. It counts what those records show, and nothing older.
 
 | Item | Value |
 | --- | --- |
-| Commit and engine digest of the pass | not yet known |
-| Releases recorded clean, of 50 | not yet known |
-| Releases replayed clean, of 50 | not yet known |
-| Unexpected mismatches | not yet known |
-| Repeat-run determinism (`--verify`) | not yet known |
-| Pins re-made on that engine | not yet known |
-| Releases admitted | not yet known |
+| Commit and engine digest of the pass | `dd6395114b5693a616f3729d69053262fbf5f893`, engine `ac180bd41a5e` |
+| Matrix verdict | red (605 reason(s), `docs/release-matrix.md`) |
+| Units passed | 4 of 5 run; 3 job(s) on 3 release(s) asked for |
+| Pinned corpus | 9626 of 9626 recordings |
+| Known failures | 0 |
+| Evidence rows complete | 0 of 50 (`docs/release-evidence.md`) |
+| Published list | 1 disagreement(s) with the rows |
+
+Releases supported by this candidate, each with a complete evidence row: none.
+
+### Package as packed
+
+| Item | Value |
+| --- | --- |
+| Tarball | `minecraft-physics-native-1.0.0.tgz` |
+| Files | 70 |
+| Public paths of package.json | `dist/index.js`, `dist/index.d.ts` |
+
+<!-- release-notes.cjs: end -->
 
 ### Versions
 
@@ -32,9 +47,7 @@ Registered means the release runs. `docs/release-status.md` gives each release's
 | Standing today | Releases |
 | --- | --- |
 | Admitted | 0 |
-| Source exact | 44 |
-| Source a proved alias | 1: 1.8.8 |
-| Source blocked | 5: 1.9.4, 1.10.2, 1.11.2, 1.12.2, 1.13.2 |
+| Source exact | 50 |
 | Pins on the current engine | 0 of 23 on record |
 
 Six legacy releases, 1.8.8 to 1.13.2, come from legacy-record data. The other 44 come from the pinned source manifest.
@@ -63,10 +76,10 @@ Known exclusions are in `docs/limitations.md`.
 | Packed layout | version 2 |
 | Checkpoint schema | 1 |
 
-`npm pack --dry-run` in a Windows working tree with no WebAssembly build lists 59 files: 54 under `dist/`, the addon,
-`native.js`, `native.d.ts`, `package.json` and `README.md`. A tarball from `scripts/release-build.cjs` also holds
-`provenance.<target>.json` and the targets it was built for. Each tarball is one host's distribution, and there is no
-combined one.
+The files `npm pack` lists, and the public paths of `package.json` it holds, are in "Package as packed" above, generated from
+this tree by `scripts/release-notes.cjs`, which `--check` holds to the tarball. A tarball from `scripts/release-build.cjs`
+also holds `provenance.<target>.json` and the targets it was built for. Each tarball is one host's distribution, and there is
+no combined one.
 
 | Target | Standing |
 | --- | --- |
@@ -107,8 +120,7 @@ Each item is what was run, and when. None is a certification of this tree.
 
 ### Blocked or open before a release
 
-- The final pass, and pins on its engine: B219, B224, B235.
+- Pins on the current engine from the pinned corpus: B288. (The corpus itself is recorded and determinism-checked: B219, B224, B235.)
 - Every release through its completion gate: B288.
-- The five blocked sources: B276.
 - Exact registry data for four aliased releases: B302.
 - The full test matrix: B292.

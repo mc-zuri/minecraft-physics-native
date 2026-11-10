@@ -73,11 +73,15 @@ type Vec3Like = Readonly<{ x: number; y: number; z: number }>;
 /** The ridden vehicle's moves inside its tick (Entity.move's head and tail), against the engine's, each by its motion and place:
  * a tick that ends in the same place by another way is told apart. What moved another number of times than vanilla is a problem,
  * not a match. Older recordings have no such phases, and `recorded` says so. */
-export function compareVehicleMove(row: Pick<ExpandedRow, 't' | 'vehiclePhases'>, moves: readonly VehicleMove[], recorded: boolean): { divergences: Divergence[]; problems: string[] } {
+export function compareVehicleMove(row: Pick<ExpandedRow, 't' | 'vehiclePhases'>, moves: readonly VehicleMove[], recorded: boolean, pushedAfter = false): { divergences: Divergence[]; problems: string[] } {
     if (!recorded) return { divergences: [], problems: [] };
-    if (row.vehiclePhases.length !== moves.length) return { divergences: [], problems: [`t=${row.t}: the vehicle's move has ${row.vehiclePhases.length} points in vanilla and ${moves.length} in the engine`] };
+    // (`pushedAfter`: before 1.11 a piston moves what it pushes by its Entity.moveEntity, which has no MoverType to tell it from the
+    // vehicle's own, and the block entities tick after the entities: its moves are vanilla's last points, 1.10.2 TileEntityPiston)
+    const own = pushedAfter && row.vehiclePhases.length > moves.length && (row.vehiclePhases.length - moves.length) % 2 === 0
+        ? row.vehiclePhases.slice(0, moves.length) : row.vehiclePhases;
+    if (own.length !== moves.length) return { divergences: [], problems: [`t=${row.t}: the vehicle's move has ${row.vehiclePhases.length} points in vanilla and ${moves.length} in the engine`] };
     const divergences: Divergence[] = [];
-    row.vehiclePhases.forEach(({ name, state }, index) => {
+    own.forEach(({ name, state }, index) => {
         const move = moves[index]!;
         if (name.split('#')[0] !== move.name) {
             divergences.push({ tick: row.t, at: name, source: 'native', field: 'vehicle.phase', expected: name, actual: move.name });
@@ -105,6 +109,10 @@ export function comparePhases(traced: readonly NativeTickPhase[], row: Pick<Expa
         if (vanilla.length !== native.length || (vanilla.length === 0 && PHASES[name].essential)) {
             // (a tick that ends before it travels has nothing for what it never reached)
             if (context.noTravel) continue;
+            // (before 1.11 a noClip move returns ahead of the hook: 1.9.4 Entity.moveEntity, no MoverType to hook on. The move's
+            // noClip is the tick's own, set at its start for a spectator, 1.9.4 EntityPlayer.onUpdate: the state before the move says it)
+            const noClip = row.phases.find(p => p.name === 'beforeMove')?.state.noPhysics ?? seed.pre.noPhysics;
+            if (name === 'afterMove' && vanilla.length === 0 && noClip === true && inRange(seed.version, '<1.11')) continue;
             const side = vanilla.length === native.length ? `neither side passed ${name}`
                 : vanilla.length === 0 ? `vanilla has no ${name}`
                     : native.length === 0 ? `the engine did not pass ${name}`

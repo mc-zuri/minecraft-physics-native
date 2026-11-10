@@ -408,6 +408,8 @@ public final class PlayerSnap {
         CompatProjectile.extras(o, e);
         CompatMinecart.write(e, o);
         CompatMinecart.writeItem(e, o);
+        CompatMinecart.writeTeam(e, o);
+        CompatMinecart.writeBoarding(e, o);
         return isMoving(e) ? o.obj("moving", moving(e)) : o;
     }
 

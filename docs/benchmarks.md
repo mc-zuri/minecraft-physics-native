@@ -193,6 +193,27 @@ state id, so no tick pays it. Lines shared across releases come to 1.6 MB of the
 at the price of the per-release layout. With the linker already folding, and no measured load or lookup cost to win back, it
 is not worth doing.
 
+## Re-run on the candidate of 2026-11-09 (B286)
+
+Commit `dd35efdb`, engine digest `5a9661a8`, the same machine, other lanes' builds and recordings running. The results are
+`docs/benchmarks/ticks-20261109-win32.json` and `docs/benchmarks/memory-20261109-win32.json`; the files above stay the
+2026-11-06 baseline (commit `242aedb2`), 56 native commits earlier.
+
+- The native heap, exact: `native/tests/allocations.rs` gives the baseline's counts to the digit on every release it runs (3.48
+  allocations and 174 bytes a tick on 1.8.8, 1.12.2 and 1.20.4, 4.48 and 398 on 1.16.5, 24.1 and 2336 on 1.21.11 and 26.3) and
+  0 bytes kept over 5000 ticks. That test had stopped compiling, because `SimulationState` gained a private field its struct
+  update could not name, and `cargo test --lib`, which the gate runs, does not build it. It is mended, and needs a run of its own.
+- Memory: every workload is flat over its rounds (the last half's maximum within 30 kB of the first half's), traversal rises and
+  falls with the GC as before, and no listener is left. The JavaScript heap sits 0.5 to 2.2 MB above the baseline in every
+  workload from the first round on: a constant, not growth.
+- CPU: the median of new over old is 0.64 to 0.72 for every scene and path over the 50 releases, the worst 1.13 (one batch of
+  `empty`). Within this machine's noise that is no regression; it is not shown to be a gain either.
+- Outcomes: the digest of each scene's result is the baseline's in every release but 26.2 and 26.3, whose `empty`, `dense` and
+  `interaction` scenes move differently now. Engine changes since the baseline did that, not a timing; which commit was not
+  worked out. Every 26.2 and 26.3 recording of the corpus replays without a difference on this engine.
+
+Accepted: no regression in an exact count or in memory, and the CPU figures are inside the noise this page describes.
+
 ## Determinism
 
 See `docs/determinism.md`.

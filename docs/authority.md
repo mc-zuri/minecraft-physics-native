@@ -46,6 +46,7 @@ the server's count rises once per 40 ticks.
 
 ## Not covered
 
-- The legacy releases have recordings, but no current replay of them is on record, so their side split rests on unit tests.
+- The legacy releases' side split rests on their unit tests and on the current replays of both sides on them: the server's and
+  the client's moving entities, on every release (`docs/subsystem-matrix.md`).
 - A `ServerPlayer` is modelled as far as damage and draws go. Its move validation (`ServerGamePacketListenerImpl`) is
   not simulated: the recorder's server view of the player is the reference for that.

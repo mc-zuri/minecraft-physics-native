@@ -16,8 +16,8 @@ use crate::version::MinecraftVersion;
 use crate::world::WorldSnapshot;
 
 /// ProjectileUtil.DEFAULT_ENTITY_HIT_RESULT_MARGIN, the 0.3F every arrow query inflated by until
-/// 1.21.5 (1.8.9 EntityArrow.java:210, 1.12.2 AbstractArrowEntity.java:408, 1.21.5
-/// ProjectileUtil.java:99). This is a target margin, not an entity's push size.
+/// 1.21.5 (1.8.8 AbstractArrow.java:205, 1.12.2 AbstractArrow.java:409, 1.21.5
+/// ProjectileUtil.java:107). This is a target margin, not an entity's push size.
 const TARGET_MARGIN: f32 = 0.3;
 
 /// An entity a projectile may hit, in the order Level.getEntities gives it. The order decides ties:
@@ -40,7 +40,7 @@ pub struct ProjectileTarget {
     pub spectator: bool,
     /// The target is a player the owning player may not harm (Player.canHarmPlayer false).
     pub friendly: bool,
-    /// 1.8's PlayerAbilities.invulnerable: the arrow passes through a creative player.
+    /// 1.8's Abilities.invulnerable: the arrow passes through a creative player.
     pub invulnerable_player: bool,
     /// What Entity.hurt answers this hit: armor, invulnerability ticks and Invulnerable are the
     /// target's. False turns an arrow back.
@@ -48,7 +48,7 @@ pub struct ProjectileTarget {
     /// An enderman, which teleports away from a projectile.
     pub enderman: bool,
     /// The type deflects this projectile (a breeze): from 1.20.3 the DEFLECTS_ARROWS or
-    /// DEFLECTS_TRIDENTS tag, from 1.20.5 Entity.getProjectileDeflection (deflection in 26.x).
+    /// DEFLECTS_TRIDENTS tag, from 1.20.5 Entity.deflection (deflection in 26.x).
     pub deflects: bool,
     /// random.nextFloat() of 1.20.3's Projectile.deflect, which turns the motion by it.
     pub deflect_random: f32,
@@ -62,13 +62,13 @@ pub struct ProjectileTarget {
     pub end_crystal: bool,
     /// The box of the ender dragon this part belongs to, before 1.21.4: Level.getEntities finds a
     /// part through its dragon, which the search then has to meet (1.8.9 Chunk, 1.16.5
-    /// WorldChunk.java:522-540, 1.21.3 World.java:708-714, 1.21.4 :713).
+    /// LevelChunk.java:520-538, 1.21.3 Level.java:578-589, 1.21.4 :583).
     pub dragon_box: Option<Aabb>,
 }
 
 /// The damage of a hit: Mth.ceil(speed * damage) until 1.13.2, of Math.max(.., 0.0) in 1.14 - 1.15.2,
-/// of Mth.clamp(.., 0.0, 2.147483647E9) from 1.16 (1.12.2 AbstractArrowEntity.java:302, client1.14.4
-/// AbstractArrow.java:341, 1.16 PersistentProjectileEntity.java:286, 26.3 AbstractArrow.java:412).
+/// of Mth.clamp(.., 0.0, 2.147483647E9) from 1.16 (1.12.2 AbstractArrow.java:302, client1.14.4
+/// AbstractArrow.java:341, 1.16 AbstractArrow.java:285, 26.3 AbstractArrow.java:412).
 pub(crate) fn arrow_damage(speed: f64, base_damage: f64, release: MinecraftVersion) -> i32 {
     let raw = speed * base_damage;
     let bounded = if release.at_least(1, 16, 0) {
@@ -115,7 +115,7 @@ impl ProjectileTarget {
 }
 
 /// EntityDimensions.makeBoundingBox of EntityDimensions.scale: a `width` by `height` box in floats
-/// about `position` (26.3 EntityDimensions.java, 1.8.9 Entity.setBoundingBox's width / 2.0F). The
+/// about `position` (26.3 EntityDimensions.java, 1.8.8 Entity.setBoundingBox's width / 2.0F). The
 /// width and height are those of the entity's pose; the scale is LivingEntity.getScale (age and,
 /// from 1.20.5, the SCALE attribute).
 #[must_use]
@@ -145,6 +145,8 @@ pub struct ProjectileOwner {
     pub spectator: bool,
     /// Entity.isRemoved: a fireball whose owner is removed is gone.
     pub removed: bool,
+    /// ServerPlayer.wonGame: the player is in the end credits, which a pearl waits out from 1.21.9.
+    pub won_game: bool,
 }
 
 /// The LivingEntity a firework rocket is attached to, after its boost: the rocket stands at it,
@@ -221,6 +223,9 @@ pub struct ProjectileHitState {
     pub bullet_delta: Option<Vec3>,
     /// Level.hasChunkAt is false on the server, which a fireball does not survive.
     pub chunk_unloaded: bool,
+    /// Entity.isOutsideWorldBorder, which 1.13's collision query of a fireball's box keeps (1.13.2
+    /// LevelReader.java:172-200).
+    pub outside_border: bool,
     /// The difficulty is peaceful: a shulker bullet is gone.
     pub peaceful: bool,
     /// The game rule enderPearlsVanishOnDeath is off: a dead owner keeps the pearl flying.
@@ -228,6 +233,8 @@ pub struct ProjectileHitState {
 }
 
 impl Default for ProjectileHitState {
+    /// A projectile's state before its first tick: nothing hit or ignored, and an arrow's 2.0 base
+    /// damage (AbstractArrow#baseDamage).
     fn default() -> Self {
         Self {
             tick_count: 0,
@@ -254,6 +261,7 @@ impl Default for ProjectileHitState {
             stop_fishing: false,
             bullet_delta: None,
             chunk_unloaded: false,
+            outside_border: false,
             peaceful: false,
             pearl_outlives_owner: false,
         }
@@ -371,6 +379,7 @@ impl<'a> HitScene<'a> {
 
     /// AbstractArrow.getPierceLevel: there is none before 1.14.
     pub(crate) fn pierce_level(&self, release: MinecraftVersion) -> u8 {
+        // (1.13.2 AbstractArrow.java:225-228; 1.14.4 AbstractArrow.java:226-231, 589-591)
         if release.at_least(1, 14, 0) {
             self.hits.pierce_level
         } else {
@@ -378,8 +387,9 @@ impl<'a> HitScene<'a> {
         }
     }
 
-    /// Projectile.checkLeftOwner (from 1.16; 1.16.5 ProjectileEntity.java:95-115, 26.3
-    /// Projectile.java:136-153): once per tick the projectile is clear of everything the owner
+    /// Projectile.checkLeftOwner (from 1.16; 1.16.5 Projectile.java:95-111, 26.3
+    /// Projectile.java:136-153; 1.16 Projectile.java:77-78, where 1.15.2 AbstractArrow.java:465 spares the owner by
+    /// flightTime alone): once per tick the projectile is clear of everything the owner
     /// rides with, or has no owner, it has left. The owner and what it rides must be among the
     /// targets to hold the projectile back.
     pub(crate) fn check_left_owner(
@@ -407,25 +417,29 @@ impl<'a> HitScene<'a> {
 
     /// Whether the owner's immunity and the rest of Projectile.canHitEntity let this target be hit.
     ///
-    /// 1.8: Entity.collides and the owner's five ticks (1.8.9 EntityArrow.java:205-207). 1.9: not a
-    /// spectator, alive (1.12.2 AbstractArrowEntity.java:38-42). 1.14: not yet pierced (1.15
-    /// ProjectileEntity.java:468-472). 1.16: the owner's vehicle until the arrow has left (1.16.5
-    /// ProjectileEntity.java:161-168). 1.21.2: a player the owner may not harm is no candidate; an
+    /// 1.8: Entity.collides and the owner's five ticks (1.8.8 AbstractArrow.java:204). 1.9: not a
+    /// spectator, alive (1.12.2 AbstractArrow.java:38-42). 1.14: not yet pierced (1.15
+    /// AbstractArrow.java:462-466). 1.16: the owner's vehicle until the arrow has left (1.16.5
+    /// Projectile.java:157-164). 1.21.2: a player the owner may not harm is no candidate; an
     /// earlier arrow picks it and then drops the whole hit (1.21.1
     /// AbstractArrow, 1.21.2 AbstractArrow.java:553).
     fn can_hit(&self, target: &ProjectileTarget, release: MinecraftVersion) -> bool {
         if !target.pickable {
             return false;
         }
-        if release.at_least(1, 9, 0) && (target.spectator || !target.alive) {
+        // the query itself refuses a spectator in every release (1.8.8 Level.java:2173-2175
+        // getEntitiesIn with NO_SPECTATORS, 1.8.8 AbstractArrow.java:199)
+        if target.spectator || (release.at_least(1, 9, 0) && !target.alive) {
             return false;
         }
         if release.at_least(1, 21, 2) && target.friendly {
             return false;
         }
+        // (1.13.2 AbstractArrow.java:41 has no pierce; 1.14.4 AbstractArrow.java:452 piercingIgnoreEntityIds)
         if release.at_least(1, 14, 0) && self.hits.pierced.contains(&target.id) {
             return false;
         }
+        // (1.15.2 AbstractArrow.java:465; 1.16 Projectile.java:141)
         if release.at_least(1, 16, 0) {
             self.owner.map_or(true, |owner| {
                 self.hits.left_owner || owner.root_vehicle != target.root_vehicle
@@ -437,7 +451,7 @@ impl<'a> HitScene<'a> {
     }
 
     /// AbstractArrow.findHitEntity, findHitEntities from 1.21.11. The search box is the arrow's,
-    /// stretched by its motion now and inflated by 1.0 (1.8.9 EntityArrow.java:199, 26.3
+    /// stretched by its motion now and inflated by 1.0 (1.8.8 AbstractArrow.java:199, 26.3
     /// AbstractArrow.java:594). A trident that dealt its damage finds nothing, and takes the
     /// nearest even where an arrow takes all (26.3 ThrownTrident.java:109-116).
     pub(crate) fn find_hits(
@@ -456,10 +470,11 @@ impl<'a> HitScene<'a> {
             target.in_search(search) && self.can_hit(target, release)
         });
         let margin = target_margin(release, self.hits.tick_count);
+        // (1.21.10 AbstractArrow.java:258; 1.21.11 AbstractArrow.java:260-261)
         if release.at_least(1, 21, 11) && !self.trident {
             let mut found = many_hits(candidates, from, to, margin, world, release);
             // a stable sort by the entity's own position, not by the hit (1.21.11
-            // AbstractArrow.java:255-256, 26.3 :260-261)
+            // AbstractArrow.java:260-261, 26.3 :260-261)
             found.sort_by(|a, b| {
                 let distance = |hit: &Found| from.distance_squared(self.targets[hit.0].position);
                 distance(a).total_cmp(&distance(b))
@@ -478,13 +493,14 @@ impl<'a> HitScene<'a> {
         release: MinecraftVersion,
     ) -> bool {
         let target = self.targets[index];
+        // (1.21.1 ProjectileUtil.java:137; 1.21.2 ProjectileUtil.java:139)
         let location = if release.at_least(1, 21, 2) {
             ray_point
         } else {
             target.position
         };
         // Entity.getProjectileDeflection from 1.20.5; from 1.21 one entity deflects it only once
-        // (1.20.5 ProjectileEntity.java:158-170, 1.21 :168-177, 26.3 Projectile.java:246-255)
+        // (1.20.5 Projectile.java:158-170, 1.21 :168-177, 26.3 Projectile.java:246-255)
         if release.at_least(1, 20, 5) && target.deflects {
             if !release.at_least(1, 21, 0) || self.hits.last_deflected_by != Some(target.id) {
                 *velocity = velocity.scale(-0.5);
@@ -502,8 +518,8 @@ impl<'a> HitScene<'a> {
     }
 
     /// AbstractArrow.onHitEntity (26.3 AbstractArrow.java:404-498, 1.16.5
-    /// PersistentProjectileEntity.java:281-386, 1.13.2 AbstractArrowEntity.java:343-403, 1.8.9
-    /// EntityArrow.java:233-289).
+    /// AbstractArrow.java:280-385, 1.13.2 AbstractArrow.java:343-403, 1.8.8
+    /// AbstractArrow.java:229-307).
     fn hit_as_arrow(
         &mut self,
         target: &ProjectileTarget,
@@ -534,6 +550,8 @@ impl<'a> HitScene<'a> {
         } else if target.enderman && release.at_least(26, 3, 0) {
             // Entity.projectileReceivesSideEffectsOnHit (26.3 AbstractArrow.java:484, Enderman.java:362)
             ProjectileReaction::Evaded
+        // (1.20.2 AbstractArrow.java:337-390 has no DEFLECTS_ARROWS; 1.20.3 AbstractArrow.java:345, 396 and 1.20.4 the
+        // same; 1.20.5 AbstractArrow.java:401 deflects through ProjectileDeflection instead)
         } else if target.deflects && release.at_least(1, 20, 3) && !release.at_least(1, 20, 5) {
             *velocity = turned_by_random(*velocity, target.deflect_random, release);
             ProjectileReaction::Deflected
@@ -546,8 +564,8 @@ impl<'a> HitScene<'a> {
 
     /// An arrow turns back at a refusal, -0.1 of its motion: as floats until 1.13.2, and -0.5 by
     /// 0.2 from 1.20.5, -power * 0.5 from 26.3 (`border_bounce`). A slow one is gone, from 1.9
-    /// (1.13.2 AbstractArrowEntity.java:391-402, 1.16.5 PersistentProjectileEntity.java:371-383,
-    /// 1.20.5 :225-233, 26.3 AbstractArrow.java:484-497); 1.8.9 keeps it (EntityArrow.java:280-285).
+    /// (1.13.2 AbstractArrow.java:391-402, 1.16.5 AbstractArrow.java:370-382,
+    /// 1.20.5 :228-235, 26.3 AbstractArrow.java:484-497); 1.8.8 keeps it (AbstractArrow.java:276-283).
     /// Until 1.15 the shooter's five ticks start again.
     fn refused(&mut self, velocity: &mut Vec3, release: MinecraftVersion) {
         if !release.at_least(1, 14, 0) {
@@ -557,23 +575,26 @@ impl<'a> HitScene<'a> {
         } else {
             *velocity = border_bounce(*velocity, release);
         }
+        // (1.15.2 AbstractArrow.java:432 flightTime = 0; 1.16 AbstractArrow.java:373-376 not)
         if !release.at_least(1, 16, 0) {
             self.hits.flying_ticks = 0;
         }
+        // (1.13.2 AbstractArrow.java:397; 1.14.4 AbstractArrow.java:427)
         let too_slow = if release.at_least(1, 14, 0) {
             1.0e-7
         } else {
             f64::from(0.001_f32)
         };
+        // (1.8.8 AbstractArrow.java:277-282 keeps it; 1.9.4 AbstractArrow.java:349 removes it)
         if release.at_least(1, 9, 0) && velocity.length_squared() < too_slow {
             self.removed = true;
         }
     }
 
-    /// ThrownTrident.onHitEntity (1.13.2 TridentEntity.java:113-162, 1.20.4 :109-132, 1.21.2
+    /// ThrownTrident.onHitEntity (1.13.2 ThrownTrident.java:113-162, 1.20.4 :115-138, 1.21.2
     /// ThrownTrident.java:144, 26.3 :123-156): dealtDamage whatever the target says; the motion
     /// turns back at 0.01, 0.1, 0.01 of itself, in floats in 1.13.2. An enderman that took it from
-    /// 1.15 keeps the motion (1.14.4 has no such test; 1.15 TridentEntity.java:130), and from 26.3
+    /// 1.15 keeps the motion (1.14.4 has no such test; 1.15 ThrownTrident.java:130), and from 26.3
     /// an enderman that refused it does.
     fn hit_as_trident(
         &mut self,
@@ -588,13 +609,16 @@ impl<'a> HitScene<'a> {
         } else {
             ProjectileReaction::Refused
         };
+        // (26.2 ThrownTrident.java:136-138; 26.3 ThrownTrident.java:150-153)
         let side_effects = if release.at_least(26, 3, 0) {
             target.hurt || !target.enderman
         } else {
+            // (1.14.4 ThrownTrident.java:119; 1.15 ThrownTrident.java:130)
             !(target.hurt && target.enderman && release.at_least(1, 15, 0))
         };
         if !side_effects {
             reaction = ProjectileReaction::Evaded;
+        // (1.20.2 ThrownTrident.java:126-140 has no DEFLECTS_TRIDENTS; 1.20.3 ThrownTrident.java:133-134)
         } else if !target.hurt
             && target.deflects
             && release.at_least(1, 20, 3)
@@ -608,8 +632,10 @@ impl<'a> HitScene<'a> {
                 velocity.y * (-0.2 * 0.5),
                 velocity.z * (-0.02 * 0.5),
             );
+        // (1.21.1 ThrownTrident.java:137; 1.21.2 ThrownTrident.java:144)
         } else if release.at_least(1, 21, 2) {
             *velocity = velocity.scale(-0.5).multiply(Vec3::new(0.02, 0.2, 0.02));
+        // (1.13.2 ThrownTrident.java:134-136; 1.14.4 ThrownTrident.java:129)
         } else if release.at_least(1, 14, 0) {
             *velocity = velocity.multiply(Vec3::new(-0.01, -0.1, -0.01));
         } else {
@@ -622,7 +648,8 @@ impl<'a> HitScene<'a> {
         self.record(target.id, location, reaction, None);
     }
 
-    /// The search box of a query: the projectile's box stretched by its motion, inflated by 1.0.
+    /// The search box of a query: the projectile's box stretched by its motion, inflated by 1.0
+    /// (ProjectileUtil#getHitResult, AbstractArrow#findHitEntity).
     fn search_box(&self, from: Vec3, velocity: Vec3) -> Aabb {
         self.kind
             .bounding_box(from)
@@ -631,26 +658,30 @@ impl<'a> HitScene<'a> {
     }
 
     /// Whether a family other than the arrow may take this target. Until 1.15 each family had its
-    /// own test; Projectile.canHitEntity holds from 1.16 (1.16.5 ProjectileEntity.java:161-168, 26.3
+    /// own test; Projectile.canHitEntity holds from 1.16 (1.16.5 Projectile.java:157-164, 26.3
     /// Projectile.java:331-338), with the family's overrides.
     ///
-    /// Thrown items: Entity.collides and the owner's five ticks (1.8.9 ThrowableEntity.java:166);
-    /// `thrown_hit_1_9` from 1.9; not a spectator, not ignored in 1.14 and 1.15 (1.15 ThrownEntity:
+    /// Thrown items: Entity.collides and the owner's five ticks (1.8.8 ThrowableProjectile.java:165);
+    /// `thrown_hit_1_9` from 1.9; not ignored in 1.14 and 1.15 (1.15 ThrownEntity:
     /// `!isSpectator() && collides()`). A hurting projectile: the owner from its 25th tick, from 1.9
-    /// not a noPhysics target, from 1.14 not a spectator (1.8.9 ExplosiveProjectileEntity.java:125,
+    /// not a noPhysics target (1.8.8 AbstractHurtingProjectile.java:125,
     /// 1.12.2 ProjectileUtil.java:43, 1.15 ProjectileUtil.java:68); not noPhysics from 1.16 either
     /// (26.3 AbstractHurtingProjectile.java:119). A shulker bullet never takes its owner until 1.16
     /// (1.13.2 ShulkerBulletEntity tick). A firework takes the living from 1.14 (1.14
     /// FireworkEntity: `!isSpectator() && isAlive() && collides()`). Llama spit took anything but
-    /// its owner, collidable or not, until 1.15 (1.11.2 LlamaSpitEntity.java:141, 1.14 :
+    /// its owner, collidable or not, until 1.15 (1.11.2 LlamaSpit.java:141, 1.14 :
     /// `!isSpectator() && != owner`). A fishing hook also takes an item (1.11.2
-    /// FishingBobberEntity.java:288, 401; 1.14 FishHookEntity; 26.3 FishingHook.java:263).
+    /// FishingHook.java:288, 401; 1.14 FishHookEntity; 26.3 FishingHook.java:263).
     fn family_can_hit(&self, target: &ProjectileTarget, release: MinecraftVersion) -> bool {
         let kind = self.kind;
         let is_owner = self.owner.map(|owner| owner.id) == Some(target.id);
-        if release.at_least(1, 14, 0) && target.spectator {
+        // no release lets a spectator be a candidate: before 1.14 the query is getEntities(this, box)
+        // with NO_SPECTATORS (1.8.8 Level.java:2173-2175, 1.12.2 :2163-2165, 1.13.2
+        // EntityGetter.java:18-20), from 1.14 each test says !isSpectator()
+        if target.spectator {
             return false;
         }
+        // (1.15.2 ThrowableProjectile.java:109, 123 each family's own; 1.16 Projectile.java:138-145)
         if release.at_least(1, 16, 0) {
             let base = target.pickable
                 && target.alive
@@ -663,6 +694,7 @@ impl<'a> HitScene<'a> {
                 ProjectileKind::WindCharge => {
                     base && !target.no_physics
                         && !target.wind_charge
+                        // (1.20.4 WindCharge.java:61-63; 1.20.5 AbstractWindCharge.java:52-58)
                         && !(target.end_crystal && release.at_least(1, 20, 5))
                 }
                 _ if kind.is_hurting() => base && !target.no_physics,
@@ -674,7 +706,7 @@ impl<'a> HitScene<'a> {
             ProjectileKind::Firework => target.alive && target.pickable,
             ProjectileKind::ShulkerBullet => !is_owner && target.pickable && !target.no_physics,
             ProjectileKind::FishingHook => {
-                // (no items until 1.9.4's tick: 1.10.2 FishingBobberEntity.java:248, 419)
+                // (no items until 1.9.4's tick: 1.10.2 FishingHook.java:245, 414)
                 let takes_items = target.item && release.at_least(1, 10, 0);
                 (target.pickable || takes_items) && (!is_owner || self.hits.flying_ticks >= 5)
             }
@@ -690,7 +722,7 @@ impl<'a> HitScene<'a> {
         }
     }
 
-    /// ThrowableEntity.tick of 1.9 to 1.13 (1.9.4 ThrowableEntity, 1.13.2 :143-170): what the box
+    /// ThrowableProjectile.tick of 1.9 to 1.13 (1.9.4 ThrowableProjectile, 1.13.2 ThrowableProjectile.java:141-168): what the box
     /// meets on the item's first tick is ignored, with a thrower from 1.11, and stays so until the
     /// item has been clear of it for two more ticks. The last candidate of the list says whether it
     /// is still near, which is how the source reads.
@@ -706,13 +738,15 @@ impl<'a> HitScene<'a> {
         let mut found = None;
         let mut near = false;
         for (index, target) in self.targets.iter().enumerate() {
-            if !target.bounding_box.intersects(search) || !target.pickable {
+            // getEntitiesIn lists no spectator (1.12.2 Level.java:2163-2165, ThrowableProjectile.java:156)
+            if !target.bounding_box.intersects(search) || target.spectator || !target.pickable {
                 continue;
             }
             if self.hits.ignored == Some(target.id) {
                 near = true;
             } else if self.hits.tick_count < 2
                 && self.hits.ignored.is_none()
+                // (1.10.2 ThrowableProjectile.java:165; 1.11.2 ThrowableProjectile.java:165)
                 && (!release.at_least(1, 11, 0) || self.owner.is_some())
             {
                 self.hits.ignored = Some(target.id);
@@ -739,7 +773,8 @@ impl<'a> HitScene<'a> {
         found
     }
 
-    /// `ignoreTime-- <= 0` ends the ignoring.
+    /// `ignoreTime-- <= 0` ends the ignoring (ThrowableProjectile#tick, its timeToIgnore before 1.14:
+    /// ThrowableProjectile#timeToIgnore).
     fn run_down_ignored(&mut self) {
         let left = self.hits.ignore_time;
         self.hits.ignore_time = self.hits.ignore_time.wrapping_sub(1);
@@ -748,7 +783,7 @@ impl<'a> HitScene<'a> {
         }
     }
 
-    /// The first half of ThrownEntity.tick in 1.14 and 1.15 (1.15 ThrownEntity): the first candidate
+    /// The first half of ThrowableProjectile.tick in 1.14 and 1.15 (1.15 ThrowableProjectile): the first candidate
     /// in the box either holds its ignoring open or, thrown by someone on the first tick, starts it.
     fn thrown_ignore_1_14(&mut self, search: Aabb) {
         for target in self.targets {
@@ -785,9 +820,14 @@ impl<'a> HitScene<'a> {
         let to = block.map_or(from + velocity, |hit| hit.location);
         let search = self.search_box(from, velocity);
         let thrown = self.kind.is_thrown();
+        // (1.13.2 ThrowableProjectile.java:141-170; 1.14.4 ThrowableProjectile.java:108-132; 1.8.8
+        // ThrowableProjectile.java:165 spares the thrower for five ticks, 1.9.4 ThrowableProjectile.java:157-162 ignores
+        // what it meets first)
         let found = if thrown && release.at_least(1, 9, 0) && !release.at_least(1, 14, 0) {
             self.thrown_hit_1_9(from, to, search, release)
         } else {
+            // (1.13.2 ThrowableProjectile.java:141-170; 1.14.4 ThrowableProjectile.java:108-132; 1.15.2
+            // ThrowableProjectile.java:109-123 still ignores; 1.16 Projectile.java:138-145 does not)
             let ignores = thrown && release.at_least(1, 14, 0) && !release.at_least(1, 16, 0);
             if ignores {
                 self.thrown_ignore_1_14(search);
@@ -808,8 +848,8 @@ impl<'a> HitScene<'a> {
     /// Projectile.hitTargetOrDeflectSelf (hitOrDeflect from 1.20.5) of a family other than the arrow.
     /// A deflection turns the motion and halves the acceleration of a hurting projectile: from 1.21
     /// accelerationPower, in 1.20.5 and 1.20.6 the power from the turned motion (1.20.5
-    /// ExplosiveProjectileEntity.java:204-214, 1.21 :190-197). A breeze lets wind charges through
-    /// (1.20.5 BreezeEntity.java:186-190, 26.3 Breeze.java:178-182).
+    /// AbstractHurtingProjectile.java:181-191, 1.21 :169-176). A breeze lets wind charges through
+    /// (1.20.5 Breeze.java:174-176, 26.3 Breeze.java:178-182).
     pub(crate) fn hit_flight(
         &mut self,
         hit: FlightHit,
@@ -823,6 +863,7 @@ impl<'a> HitScene<'a> {
             FlightHit::Block(block) => self.hit_block(block, release),
             FlightHit::Entity((index, ray_point)) => {
                 let target = self.targets[index];
+                // (1.21.1 ProjectileUtil.java:137; 1.21.2 ProjectileUtil.java:139)
                 let location = if release.at_least(1, 21, 2) {
                     ray_point
                 } else {
@@ -832,10 +873,12 @@ impl<'a> HitScene<'a> {
                     && self.kind != ProjectileKind::WindCharge
                     && release.at_least(1, 20, 5);
                 if deflects {
+                    // (1.20.6 Projectile.java:163; 1.21 Projectile.java:171)
                     if !release.at_least(1, 21, 0) || self.hits.last_deflected_by != Some(target.id) {
                         state.velocity = state.velocity.scale(-0.5);
                         self.hits.last_deflected_by = Some(target.id);
                         if state.kind.is_hurting() {
+                            // (1.20.6 AbstractHurtingProjectile.java:188; 1.21 AbstractHurtingProjectile.java:174)
                             if release.at_least(1, 21, 0) {
                                 state.acceleration_power *= 0.5;
                             } else {
@@ -854,11 +897,11 @@ impl<'a> HitScene<'a> {
 
     /// What the family does to itself and the target when it hits: it is gone, but for these.
     ///
-    /// An ender pearl hits its thrower and flies on until 1.15 (1.8.9 EnderPearlEntity.java:32, 1.14
-    /// ThrownEnderpearlEntity.java:50; no such test in 1.16). A dragon fireball does not burst on its
+    /// An ender pearl hits its thrower and flies on until 1.15 (1.8.8 ThrownEnderpearl.java:32, 1.14.4
+    /// ThrownEnderpearl.java:49; no such test in 1.16). A dragon fireball does not burst on its
     /// owner (1.12.2 DragonFireballEntity, 26.3 DragonFireball.java:32). Llama spit was gone at any
     /// hit until 1.13 and flies on through entities from 1.14, hurting them only with a living
-    /// owner (1.11.2 LlamaSpitEntity.java:179-187, 1.14 :134-141, 26.3 LlamaSpit.java:65-82). A
+    /// owner (1.11.2 LlamaSpit.java:179-187, 1.14.4 :124-131, 26.3 LlamaSpit.java:65-82). A
     /// fishing hook takes what it hit (26.3 FishingHook.java:267-273).
     fn family_reaction(
         &mut self,
@@ -872,11 +915,13 @@ impl<'a> HitScene<'a> {
             ProjectileReaction::Refused
         };
         match self.kind {
+            // (1.15.2 ThrownEnderpearl.java:51; 1.16 ThrownEnderpearl.java:41)
             ProjectileKind::EnderPearl if is_owner && !release.at_least(1, 16, 0) => {
                 ProjectileReaction::Passed
             }
             ProjectileKind::DragonFireball if is_owner => ProjectileReaction::Passed,
             ProjectileKind::LlamaSpit => {
+                // (1.13.2 LlamaSpit.java:180-188; 1.14.4 LlamaSpit.java:124-132)
                 self.removed = !release.at_least(1, 14, 0);
                 if self.owner.is_some() {
                     hurt
@@ -888,7 +933,7 @@ impl<'a> HitScene<'a> {
             ProjectileKind::FishingHook if !target.hurt && !release.at_least(1, 9, 0) => hurt,
             // setting the tracked id calls onTrackedDataSet on the server too, which drops the
             // catch of 1.9 and 1.10: only a second hit on the same id, which sets nothing, holds
-            // (1.9.4 FishingBobberEntity.java:134-143, 1.10.2 :135-144; 1.11.2 :129-136 keeps it)
+            // (1.9.4 FishingHook.java:134-143, 1.10.2 :135-144; 1.11.2 :129-136 keeps it)
             ProjectileKind::FishingHook
                 if release.at_least(1, 9, 0)
                     && !release.at_least(1, 11, 0)
@@ -936,8 +981,8 @@ impl<'a> HitScene<'a> {
 }
 
 /// The margin a target's box grows by: 0.3F until 1.21.5, from 1.21.6 ProjectileUtil.computeMargin,
-/// which opens from nothing over the projectile's first ticks (1.21.5 ProjectileUtil.java:99, 1.21.6
-/// :103, 26.3 :139-141).
+/// which opens from nothing over the projectile's first ticks (1.21.5 ProjectileUtil.java:107, 1.21.6
+/// :111, 26.3 :139-141).
 pub(crate) fn target_margin(release: MinecraftVersion, tick_count: i32) -> f32 {
     if release.at_least(1, 21, 6) {
         (tick_count.wrapping_sub(2) as f32 / 20.0).min(TARGET_MARGIN).max(0.0)
@@ -946,7 +991,8 @@ pub(crate) fn target_margin(release: MinecraftVersion, tick_count: i32) -> f32 {
     }
 }
 
-/// AABB.clip, the six-face Box raycast before 1.13 (which also hits from inside).
+/// AABB.clip, the six-face Box raycast before 1.13 (which also hits from inside): 1.12.2 AABB.java:290-323,
+/// 1.13.2 AABB.java:242-255.
 fn clip_box(bounds: Aabb, from: Vec3, to: Vec3, release: MinecraftVersion) -> Option<Vec3> {
     if release.at_least(1, 13, 0) {
         bounds.clip_segment(from, to)
@@ -956,9 +1002,9 @@ fn clip_box(bounds: Aabb, from: Vec3, to: Vec3, release: MinecraftVersion) -> Op
 }
 
 /// The nearest of the candidates' inflated boxes along the ray. From 1.14 ProjectileUtil's strict
-/// nearest (1.15 ProjectileUtil.java:125-137, 26.3 :143-160); before, nearest starts at 0 and any
-/// hit replaces a nearest of 0, so a hit at the very start gives way to the next candidate (1.8.9
-/// EntityArrow.java:209-219, 1.13.2 AbstractArrowEntity.java:425-437).
+/// nearest (1.15 ProjectileUtil.java:117-129, 26.3 :143-160); before, nearest starts at 0 and any
+/// hit replaces a nearest of 0, so a hit at the very start gives way to the next candidate (1.8.8
+/// AbstractArrow.java:202-216, 1.13.2 AbstractArrow.java:425-437).
 fn nearest_hit<'t>(
     candidates: impl Iterator<Item = (usize, &'t ProjectileTarget)>,
     from: Vec3,
@@ -983,7 +1029,7 @@ fn nearest_hit<'t>(
     found
 }
 
-/// ProjectileUtil.getManyEntityHitResult (1.21.11 ProjectileUtil.java:166-198, 26.3 :172-204):
+/// ProjectileUtil.getManyEntityHitResult (1.21.11 ProjectileUtil.java:170-201, 26.3 :172-204):
 /// every candidate the ray itself meets, and those only its inflated box meets when nothing blocks
 /// the way from there to the box's centre. An arrow does not take a start inside a target. From
 /// 26.3 an inflated hit stays on the inflated box (26.3 ProjectileUtil.java:195, AbstractArrow.java:586).
@@ -1010,6 +1056,7 @@ fn many_hits<'t>(
             let towards = clip_blocks(world, outside, center - outside, release, ClipShape::Collider)
                 .map_or(center, |hit| hit.location);
             if let Some(surface) = bounds.clip_segment(outside, towards) {
+                // (26.2 ProjectileUtil.java:195; 26.3 ProjectileUtil.java:195)
                 found.push((index, if release.at_least(26, 3, 0) { outside } else { surface }));
             }
         }
@@ -1031,7 +1078,7 @@ fn turned_by_random(velocity: Vec3, random: f32, release: MinecraftVersion) -> V
     .scale(0.5)
 }
 
-/// ThrownTrident.tick's return to the owner (1.13.2 TridentEntity.java:57-92, 1.16.5 :64-99, 1.21.2
+/// ThrownTrident.tick's return to the owner (1.13.2 ThrownTrident.java:57-92, 1.16.5 :64-99, 1.21.2
 /// ThrownTrident.java:68-89, 26.3 :62-99). Returns whether the trident is gone: its owner is dead or
 /// spectating, or from 1.21.2 a mob owner has it back. No owner, no return.
 pub(crate) fn return_to_owner(
@@ -1053,6 +1100,7 @@ pub(crate) fn return_to_owner(
         return true;
     }
     let to_eye = owner.eye_position - *position;
+    // (1.21.1 ThrownTrident.java:63-70; 1.21.2 ThrownTrident.java:74)
     if release.at_least(1, 21, 2) && !owner.player && to_eye.length() < owner.width + 1.0 {
         return true;
     }
@@ -1060,10 +1108,11 @@ pub(crate) fn return_to_owner(
     position.y += to_eye.y * 0.015 * loyalty;
     let pull = to_eye.normalized(release);
     let accel = 0.05 * loyalty;
+    // (1.13.2 ThrownTrident.java:79-83; 1.14.4 ThrownTrident.java:76-77)
     *velocity = if release.at_least(1, 14, 0) {
         velocity.scale(0.95) + pull.scale(accel)
     } else {
-        // the motion takes the pull and loses 0.05 axis by axis (1.13.2 TridentEntity.java:81-84)
+        // the motion takes the pull and loses 0.05 axis by axis (1.13.2 ThrownTrident.java:81-84)
         Vec3::new(
             velocity.x + (pull.x * accel - velocity.x * 0.05),
             velocity.y + (pull.y * accel - velocity.y * 0.05),

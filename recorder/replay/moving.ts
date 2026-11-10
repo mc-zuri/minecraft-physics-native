@@ -36,7 +36,9 @@ function shown(version: string, piston: RecordedPiston, moved: string): string {
     if (!piston.source || !versionAtLeast(version, '1.11')) return moved;
     const facing = DIRECTIONS.indexOf(piston.facing);
     if (LEGACY.test(moved)) return `#${PISTON_HEAD_ID}:${facing}`;
-    const short = piston.extending !== (Math.fround(1 - piston.progress) < 0.25);
+    // (1.13 to 1.15 compare with 4.0F: 1.15.2 PistonMovingBlockEntity.java:351)
+    const limit = versionAtLeast(version, '1.13') && !versionAtLeast(version, '1.16') ? 4 : 0.25;
+    const short = piston.extending !== (Math.fround(1 - piston.progress) < limit);
     return `piston_head[facing=${piston.facing},short=${short}]`;
 }
 

@@ -356,6 +356,31 @@ it('the adapter sizes a pose as the jar does, by the bits', () => {
     assert.ok(seen >= 24, `${seen} poses`);
 });
 
+it('the field maps say what a real tick hands back, both ways, as docs/field-maps.md renders it', () => {
+    const { TICKS, measureKept } = require('../scripts/field-kept.cjs');
+    const source = readFileSync(join(__dirname, '../src/native.ts'), 'utf8');
+    const members = {};
+    for (const name of Object.keys(TICKS)) {
+        const body = source.slice(source.indexOf(`export interface ${name} `));
+        members[name] = body.slice(0, body.indexOf('\n}')).match(/^ {4}[a-zA-Z]+(?=\??:)/gm).map(field => field.trim());
+    }
+    const notKept = measureKept(native, members);
+    const doc = readFileSync(join(__dirname, '../docs/field-maps.md'), 'utf8').replace(/\r\n/g, '\n');
+    for (const [name, { seed, tick }] of Object.entries(TICKS)) {
+        const output = tick(native, seed);
+        const section = doc.slice(doc.indexOf(`## ${name}\n`));
+        for (const field of members[name]) {
+            const back = output[field] !== undefined && output[field] !== null;
+            assert.equal(notKept[name].includes(field), !back, `${name}.${field}`);
+            const row = section.split('\n').find(line => line.startsWith(`| \`${field}\` |`));
+            assert.ok(row?.includes(back ? '| yes |' : '| no |'), `${name}.${field} says ${back ? 'yes' : 'no'}: ${row}`);
+        }
+        // a state's place and motion always come back
+        assert.ok(!notKept[name].includes('position') && !notKept[name].includes('velocity'), name);
+    }
+    assert.ok(notKept.NativeBoatState.includes('nearbyEntities'));
+});
+
 it('the field maps name every field of every public state', () => {
     const source = readFileSync(join(__dirname, '../src/native.ts'), 'utf8');
     const doc = readFileSync(join(__dirname, '../docs/field-maps.md'), 'utf8').replace(/\r\n/g, '\n');

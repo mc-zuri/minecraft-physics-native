@@ -150,6 +150,7 @@ export type ServerAction =
     | { readonly op: 'command'; readonly command: string }
     | { readonly op: 'tabList'; readonly header: string; readonly footer: string }
     | { readonly op: 'blockDamage'; readonly pos: Vec3; readonly stage: number }
+    | { readonly op: 'forgetChunk'; readonly pos: Vec3 }
     | { readonly op: 'kick'; readonly reason: string }
     | { readonly op: 'resourcePack'; readonly url: string; readonly packHash: string; readonly required: boolean; readonly prompt?: string; readonly pop: boolean }
     | { readonly op: 'respawnPoint'; readonly pos: Vec3 }

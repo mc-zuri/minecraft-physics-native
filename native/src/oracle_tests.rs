@@ -17,7 +17,7 @@
 //! | negative coordinates and 3.0E7             | Entity.move, union moves     | Move, Geometry  |
 //! | one, duplicate, overlapping, reordered     | Shapes.or, optimize          | Geometry        |
 //! | faces, edges, corners, inside, parallel    | AABB.clip, VoxelShape.clip   | Geometry        |
-//! | the same before 1.13                       | Box.method_585               | LegacyClip      |
+//! | the same before 1.13                       | AABB.method_585              | LegacyClip      |
 //! | cancellation, mixed magnitudes, -0.0       | vassoc, vcancel, vproject2   | Geometry        |
 //! | every block state of the release           | boxes, order, grid lines     | States          |
 //!
@@ -29,7 +29,7 @@ use crate::block_traversal::{
 };
 use crate::collision::{vanilla_equal, collide_over_grid, grid_lines, reaches_into, Axis, BlockVoxelShape, GridTest};
 use crate::math::{
-    equal_f32, equal_f64, abs_max, atan2_vanilla, ceil_f32_for, ceil_i32_for, clamp_f32_for, clamp_f64_for,
+    equal_f32, equal_f64, abs_max, atan2_vanilla_on, ceil_f32_for, ceil_i32_for, clamp_f32_for, clamp_f64_for,
     floor_f32_for, floor_i32_for, floor_i64_for, frac_f64_for, java_round, lerp, round_i32,
     wrap_degrees, wrap_degrees_f32, Aabb, Vec3,
 };
@@ -37,6 +37,9 @@ use crate::projectile::{clip_block, ClipShape};
 use crate::math::friction_influenced_speed;
 use crate::simulation::{mth_cos, mth_sin, relative_movement, yaw_radians};
 use crate::version::MinecraftVersion;
+
+/// The JDK the fixtures ran every release's jar on (HotSpot 25.0.3, docs/numeric-contract.md), so its Math.
+const ORACLE_JAVA: u8 = 25;
 use crate::voxel_shape::VoxelShape;
 use crate::world::{shape_meets_query, BlockShape, BlockState, WorldSnapshot};
 
@@ -228,7 +231,7 @@ fn run(op: &str, a: &[f64], release: MinecraftVersion) -> Option<Vec<f64>> {
         "lerp" => vec![lerp(a[2], a[0], a[1])],
         "sin" => vec![mth_sin(a[0], release)],
         "cos" => vec![mth_cos(a[0], release)],
-        "atan2" => vec![atan2_vanilla(a[0], a[1])],
+        "atan2" => vec![atan2_vanilla_on(a[0], a[1], ORACLE_JAVA)],
         "sintable" => {
             let mut sum = 0_i64;
             for index in 0..65536 {
@@ -377,7 +380,7 @@ fn a_reassociated_sum_is_not_the_jars() {
     assert!(told_apart > 20, "only {told_apart} lines tell the orders apart");
 }
 
-/// Box.method_585, the six-face clip before 1.13, from the jars of 1.8.9, 1.9.4 and 1.12.2
+/// AABB.method_585, the six-face clip before 1.13, from the jars of 1.8.9, 1.9.4 and 1.12.2
 /// (scripts/java-oracle/OracleLegacyClip.java): the hit and the face, exits from inside among them.
 #[test]
 fn the_legacy_clip_is_the_jars() {
@@ -552,7 +555,7 @@ fn the_engine_answers_the_methods_of_the_typed_form_as_the_jar() {
                 assert_eq!(moved.x.to_bits(), out[0].to_bits(), "x of {line}");
                 assert_eq!(moved.y.to_bits(), out[1].to_bits(), "y of {line}");
                 assert_eq!(moved.z.to_bits(), out[2].to_bits(), "z of {line}");
-                let y_rot = (atan2_vanilla(moved.x, moved.z) * 57.2957763671875) as f32;
+                let y_rot = (atan2_vanilla_on(moved.x, moved.z, ORACLE_JAVA) * 57.2957763671875) as f32;
                 assert_eq!(y_rot, out[3] as f32, "yaw of {line}");
                 shots += 1;
             }

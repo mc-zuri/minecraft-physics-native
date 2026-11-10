@@ -101,10 +101,11 @@ describe('the families stay apart', () => {
         assert.ok(latest.FishingHook.fields.FishingHook.includes('life') || latest.FishingHook.fields.FishingHook.includes('hookedIn'));
     });
 
-    it('legacy trees read under their own names', () => {
-        const arrow = releases['1.12.2'].Arrow;
-        assert.equal(arrow.class, 'ArrowEntity');
-        assert.equal(arrow.methods.shoot.as, 'setVelocity');
+    it('reads the legacy releases under the Mojang names their decompile has', () => {
+        assert.equal(releases['1.12.2'].Arrow.class, 'Arrow');
+        assert.equal(releases['1.12.2'].Arrow.methods.shoot.owner, 'AbstractArrow');
+        // (1.8.8's one arrow class, which the mapping names AbstractArrow)
+        assert.equal(releases['1.8.8'].Arrow.class, 'AbstractArrow');
     });
 });
 

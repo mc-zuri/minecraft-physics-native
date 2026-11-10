@@ -76,16 +76,16 @@ fn floor(fluid: bool) -> WorldSnapshot {
 }
 
 fn walker(fluid: bool) -> SimulationState {
-    SimulationState {
-        position: Vec3::new(0.5, 1.0, 0.5),
-        half_width: 0.3,
-        height: 1.8,
-        input: Vec3::new(0.0, 0.0, 1.0),
-        on_ground: !fluid,
-        in_water: fluid,
-        is_player: true,
-        ..SimulationState::default()
-    }
+    // (field by field: the state has private fields, which a struct update from outside the crate cannot name)
+    let mut state = SimulationState::default();
+    state.position = Vec3::new(0.5, 1.0, 0.5);
+    state.half_width = 0.3;
+    state.height = 1.8;
+    state.input = Vec3::new(0.0, 0.0, 1.0);
+    state.on_ground = !fluid;
+    state.in_water = fluid;
+    state.is_player = true;
+    state
 }
 
 struct Counts {

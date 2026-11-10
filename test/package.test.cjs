@@ -47,11 +47,11 @@ describe('the published package', () => {
 
     it('ships the adapter and the native builds only', () => {
         const files = packed.files.map(file => file.path.replaceAll('\\', '/'));
-        for (const file of ['package.json', 'dist/index.js', 'dist/index.d.ts', 'dist/native.js', 'dist/versions.js', 'native/artifacts/native.js', 'native/artifacts/native.d.ts']) {
+        for (const file of ['package.json', 'THIRD_PARTY_NOTICES', 'dist/index.js', 'dist/index.d.ts', 'dist/whole-numbers.js', 'dist/whole-fields.js', 'dist/native.js', 'dist/versions.js', 'native/artifacts/native.js', 'native/artifacts/native.d.ts']) {
             assert.ok(files.includes(file), file);
         }
         assert.ok(files.some(file => /^native\/artifacts\/index\.[\w-]+\.node$/.test(file)));
-        const allowed = file => /^(?:package\.json|README\.md|dist\/.+)$/.test(file)
+        const allowed = file => /^(?:package\.json|README\.md|THIRD_PARTY_NOTICES|dist\/.+)$/.test(file)
             || (file.startsWith('native/artifacts/') && isNapiOutput(file.slice('native/artifacts/'.length)));
         for (const file of files) assert.ok(allowed(file), file);
         // no decompiled source, source audit or engine source

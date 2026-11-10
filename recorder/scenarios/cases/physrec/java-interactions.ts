@@ -213,6 +213,10 @@ const behind = (p: string): Pos => [-2, 1, lane(p)]
 const under = (p: string, x: number): Pos => [x, -1, lane(p)]
 const cycle = (at: Pos, up: number, after: number): PhysrecSteps[] => [server(power(at)), ticks(up), server(cut(at)), ticks(after)]
 out.push(
+  // a fence pushed from under a player on its post: until the push ends the moving fence in the cell west of the player's, on
+  // the edge of the walk on two axes, still holds it up (1.14.4 Shapes.java:239, 1.17.1 :268), then it drops on the head (B290)
+  kase('pm_fence_pushed_from_under', { area: 'pistonFence', at: [1.35, 1.5, 0.5], yaw: 270, tier: 3, tags: ['piston', 'fence'], serverMoves: true },
+    ticks(10), server(power([3, 1, 0])), ticks(25)),
   // retraction: from a head that went out, with the player beside it, following it and walking into it
   kase('pm_retract_standing', pistons('plain', 0.5), cycle(behind('plain'), 10, 25)),
   kase('pm_retract_follow', pistons('plain', 0.5), server(power(behind('plain'))), ticks(10), server(cut(behind('plain'))), press(B, 25), ticks(15)),

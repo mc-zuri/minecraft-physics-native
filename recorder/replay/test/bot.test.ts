@@ -116,3 +116,29 @@ test('a riding jump\'s power is held to the charge on the tick of its release', 
     const result = await replayBot(rows(recording, row => (row.t === released.t ? { ...row, pre: { ...row.pre, jumpRidingScale: 0.05 } } : row)), { keepLastSentOnTeleport: true });
     assert.deepEqual([result.first?.t, result.first?.at, result.first?.field], [released.t, 'state', 'jumpRidingScale']);
 });
+
+test('the hotbar, drop and swap-hands keys are pressed through the fork, and what they send plays to the byte', async () => {
+    const recording = fixture('m_hotbar');
+    const result = await replayBot(recording);
+    assert.deepEqual([result.divergences, result.afterHands], [[], []]);
+    assert.ok((result.packets.held_item_slot ?? 0) >= 3 && (result.packets.block_dig ?? 0) >= 3, JSON.stringify(result.packets));
+    // (the drop key let go of in the row: its drop is missing where the client sent it)
+    const dropped = recording.rows.find(row => row.input.keys.includes('drop'))!;
+    const unpressed = await replayBot(rows(recording, row => (row.t === dropped.t ? { ...row, input: { ...row.input, keys: [] } } : row)));
+    assert.deepEqual([unpressed.first?.t, unpressed.first?.difference?.kind], [dropped.t, 'missing']);
+});
+
+test('a hotbar key in the middle of a dig aborts it and starts again with the new tool, in the client\'s order', async () => {
+    assert.deepEqual((await replayBot(fixture('m_c_dig_switch_tool_mid_dig'))).divergences, []);
+});
+
+test('the leave-bed button is pressed in the row the client sent its stop sleeping', async () => {
+    const result = await replayBot(fixture('m_bed'));
+    assert.deepEqual([result.divergences, result.afterHands], [[], []]);
+});
+
+test('a rider\'s inventory key and the clicks on its mount\'s screen are driven, and compared with the client\'s', async () => {
+    const result = await replayBot(fixture('m_c_open_horse_riding'));
+    assert.deepEqual([result.divergences, result.afterHands, result.handsAt], [[], [], undefined]);
+    assert.ok((result.packets.window_click ?? 0) > 0 && result.notCompared.window_click === undefined, JSON.stringify(result.notCompared));
+});

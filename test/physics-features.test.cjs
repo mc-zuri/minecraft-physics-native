@@ -238,15 +238,14 @@ describe('the native engine\'s own liquid gravity', () => {
 
 describe('the sources of the breakpoints', () => {
     const CACHE = 'E:/mc-physics-demo-wt/source-cache';
-    const DECOMPILED = 'E:/pr/mc-decompiled';
+    const LEGACY = require('../scripts/source-roots.cjs').legacySourcesRoot();
     const SOURCE = 'E:/pr/mc-source';
-    /** The tree of a release; 1.8.8's is 1.8.9, the 1.8 tree the machine has. */
+    /** The tree of a release, Mojang-named: a legacy release's is its own jar decompiled (scripts/materialize-sources.cjs). */
     const treeOf = release => {
-        for (const root of [join(SOURCE, release, 'client'), join(CACHE, release, 'client')]) {
+        for (const root of [join(SOURCE, release, 'client'), join(CACHE, release, 'client'), join(LEGACY, release)]) {
             if (existsSync(join(root, 'net/minecraft/world/entity/Entity.java'))) return { root, modern: true };
         }
-        const root = join(DECOMPILED, release === '1.8.8' ? '1.8.9' : release);
-        return existsSync(join(root, 'net/minecraft/entity/Entity.java')) ? { root, modern: false } : undefined;
+        return undefined;
     };
     const skip = !treeOf('26.3');
     const read = (tree, path) => readFileSync(join(tree.root, path), 'utf8');
@@ -273,11 +272,12 @@ describe('the sources of the breakpoints', () => {
     });
 
     it('has 1.8 track no living flags, and soul sand stop slowing in its own collision at 1.15', { skip }, () => {
-        assert.doesNotMatch(read(treeOf('1.8.8'), 'net/minecraft/entity/LivingEntity.java'), /track\(5,/);
+        assert.doesNotMatch(read(treeOf('1.8.8'), 'net/minecraft/world/entity/LivingEntity.java'), /track\(5,/);
         const inside = release => /entityInside/.test(read(treeOf(release), 'net/minecraft/world/level/block/SoulsandBlock.java'));
         assert.equal(inside('1.14.4'), true);
         assert.equal(inside('1.15'), false);
-        assert.match(read(treeOf('1.12.2'), 'net/minecraft/block/SoulSandBlock.java'), /entity\.velocityX \*= 0\.4/);
+        // (the recorder's mapping keeps Yarn's velocityX where 1.14.4 has no such field)
+        assert.match(read(treeOf('1.12.2'), 'net/minecraft/world/level/block/SoulsandBlock.java'), /\.velocityX \*= 0\.4/);
     });
 
     it('has the attribute key change form at 1.16 and at 1.20.5', { skip }, () => {
@@ -286,6 +286,6 @@ describe('the sources of the breakpoints', () => {
         assert.match(read(treeOf('1.16'), packet), /writeResourceLocation\(Registry\.ATTRIBUTE\.getKey/);
         assert.match(read(treeOf('1.20.4'), packet), /writeResourceLocation\(BuiltInRegistries\.ATTRIBUTE\.getKey/);
         assert.match(read(treeOf('1.20.5'), packet), /Holder<Attribute>/);
-        assert.match(read(treeOf('1.13.2'), 'net/minecraft/network/packet/s2c/play/EntityAttributesS2CPacket.java'), /buf\.writeString\(/);
+        assert.match(read(treeOf('1.13.2'), packet), /\.writeUtf\(/);
     });
 });

@@ -1,12 +1,12 @@
 // Entity.isInRain from what a mineflayer bot knows: the rain level of its packets, the blocks and sky light of its chunks and
 // the biome of a block. Vanilla's Level.isRainingAt per release:
 //
-//   1.8 - 1.12  no snow biome, not cold (temperature above 0.15), a biome with rain (1.8.9 World.java:2546-2561, :1999-2003)
-//   1.13 - 1.15 a biome whose precipitation is rain, whatever the height (1.13.2 World.java, 1.15 World.java hasRain)
-//   1.16 on     that, and 0.15 warm where the height has cooled it (1.16 World.java hasRain, 26.3 Biome.java:83-99, :152-154)
+//   1.8 - 1.12  no snow biome, not cold (temperature above 0.15), a biome with rain (1.8.8 Level.java:2534-2549, :1987-1991)
+//   1.13 - 1.15 a biome whose precipitation is rain, whatever the height (1.13.2 Level.java, 1.15 Level.java hasRain)
+//   1.16 on     that, and 0.15 warm where the height has cooled it (1.16 Level.java hasRain, 26.3 Biome.java:83-99, :152-154)
 //
 // The temperature falls with the height above y 64, by /30 and noise * 4, until 1.18: then above the sea level + 17, by /40
-// and noise * 8 (1.17 Biome.java:133-141, 1.18 :113-121, 26.3 :91-99). The noise is seeded by constants, not by the world.
+// and noise * 8 (1.17 Biome.java:133-141, 1.18 :107-115, 26.3 :91-99). The noise is seeded by constants, not by the world.
 import type { VersionCheck } from './blocks';
 
 const fround = Math.fround;
@@ -54,7 +54,7 @@ const SQRT_3 = Math.sqrt(3);
 const F2 = 0.5 * (SQRT_3 - 1);
 const G2 = (3 - SQRT_3) / 6;
 
-/** SimplexNoise's 2D value (1.8.9 NoiseSampler.java:48, 1.16.5 SimplexNoiseSampler.java:72, 26.3 SimplexNoise.java:39). */
+/** SimplexNoise's 2D value (1.8.8 SimplexNoise.java:48-105, 1.16.5 SimplexNoise.java:72, 26.3 SimplexNoise.java:39). */
 class Simplex {
     private readonly permutation = new Int32Array(512);
 
@@ -74,6 +74,7 @@ class Simplex {
         }
     }
 
+    /** SimplexNoise.getValue (1.8.8 SimplexNoise.java:48-105). */
     sample(xin: number, yin: number): number {
         const table = this.permutation;
         const s = (xin + yin) * F2;
@@ -129,7 +130,7 @@ function frozenSamplers(): { large: Simplex[]; info: Simplex } {
     return frozen;
 }
 
-/** FROZEN_TEMPERATURE_NOISE: the octaves -2, -1, 0, frequency 1, 1/2, 1/4 at amplitude 1/7, 2/7, 4/7 (OctaveSimplexNoiseSampler.sample). */
+/** FROZEN_TEMPERATURE_NOISE: the octaves -2, -1, 0, frequency 1, 1/2, 1/4 at amplitude 1/7, 2/7, 4/7 (PerlinSimplexNoise.getValue). */
 export function frozenNoiseAt(x: number, z: number): number {
     const [a, b, c] = frozenSamplers().large;
     return a!.sample(x, z) / 7 + b!.sample(x * 0.5, z * 0.5) * 2 / 7 + c!.sample(x * 0.25, z * 0.25) * 4 / 7;
@@ -138,7 +139,7 @@ export function frozenNoiseAt(x: number, z: number): number {
 /** BIOME_INFO_NOISE, FOLIAGE_NOISE before. */
 export const biomeInfoNoiseAt = (x: number, z: number): number => frozenSamplers().info.sample(x, z);
 
-/** TemperatureModifier.FROZEN, of the frozen oceans from 1.16 (1.16.5 Biome.java:612-625, 26.3 :271-283). */
+/** TemperatureModifier.FROZEN, of the frozen oceans from 1.16 (1.16.5 Biome.java:629-642, 26.3 :271-283). */
 function frozenTemperature(x: number, z: number, temperature: number): number {
     if (frozenNoiseAt(x * 0.05, z * 0.05) * 7 + biomeInfoNoiseAt(x * 0.2, z * 0.2) < 0.3 && biomeInfoNoiseAt(x * 0.09, z * 0.09) < 0.8) return fround(0.2);
     return temperature;

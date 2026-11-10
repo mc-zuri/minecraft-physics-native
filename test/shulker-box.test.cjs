@@ -54,6 +54,13 @@ it('the lid lifts a player standing on it, on both paths, and walls it in the op
     const player = new native.NativePlayer('26.3', start, {});
     const out = player.pushByShulkerBox(world, open.state, 0, 63, 0);
     assert.equal(out[1], object.position.y, 'the same on the packed path');
+    // no shulker box before 1.11 (1.10.2 BlockEntity.java:243-263), on both paths
+    assert.throws(() => native.simulateVersionedShulkerBoxPush('1.10.2', world, start, open.state, 0, 63, 0), /no shulker box/);
+    assert.throws(() => new native.NativePlayer('1.10.2', start, {}).pushByShulkerBox(world, open.state, 0, 63, 0), /no shulker box/);
+    // and 1.11.2 has it (BlockEntity.java:263, ShulkerBoxBlockEntity.java:58-63): its lid lifts the player on both paths
+    const first = native.simulateVersionedShulkerBoxPush('1.11.2', world, start, open.state, 0, 63, 0);
+    assert.ok(first.position.y > 64, 'lifted on 1.11.2');
+    assert.equal(new native.NativePlayer('1.11.2', start, {}).pushByShulkerBox(world, open.state, 0, 63, 0)[1], first.position.y);
     const elsewhere = native.simulateVersionedShulkerBoxPush('26.3', world, { ...start, position: { x: 5.5, y: 64, z: 0.5 } }, open.state, 0, 63, 0);
     assert.equal(elsewhere.position.y, 64, 'a player out of its reach stays');
 });
@@ -85,4 +92,28 @@ it('a lid goes through a checkpoint, and bad states are refused', () => {
     assert.throws(() => native.simulateVersionedShulkerBoxTick('26.3', { ...open.state, facing: 9 }), /facing/);
     assert.throws(() => native.simulateVersionedShulkerBoxTick('26.3', { ...open.state, status: 9 }), /status/);
     assert.throws(() => native.simulateVersionedShulkerBoxTick('1.10.2', open.state), /no shulker box/);
+    assert.ok(native.simulateVersionedShulkerBoxTick('1.11.2', open.state).state.progress > open.state.progress, 'it ticks on 1.11.2');
+    // the block event too: 1.10.2 registers no shulker box (BlockEntity.java:243-263), 1.11.2 does (:263)
+    assert.throws(() => native.shulkerBoxBlockEvent('1.10.2', open.state, 1), /no shulker box/);
+    assert.deepEqual(native.shulkerBoxBlockEvent('1.11.2', open.state, 1), native.shulkerBoxBlockEvent('26.3', open.state, 1));
+});
+
+it('an open lid is its cell\'s box on the JS side too, which the pose fit reads', () => {
+    const { NativeWorldSync } = require('..');
+    const registry = require('prismarine-registry')('26.3');
+    const Block = require('prismarine-block')(registry);
+    const box = registry.blocksByName.shulker_box.minStateId;
+    const air = registry.blocksByName.air.defaultState;
+    const stateAt = (x, y, z) => (x === 0 && y === 66 && z === 0 ? box : air);
+    const source = { getBlock: pos => Block.fromStateId(stateAt(pos.x, pos.y, pos.z), 0), getBlockStateId: pos => stateAt(pos.x, pos.y, pos.z) };
+    const sync = new NativeWorldSync(native, registry, '26.3');
+    sync.sync(source, { minX: -2, minY: 63, minZ: -2, maxX: 2, maxY: 68, maxZ: 2 }, 1);
+    assert.deepEqual(sync.boxesAt(0, 66, 0), [[0, 0, 0, 1, 1, 1]], 'shut, a cube');
+    assert.equal(sync.shulkerLidAt(0, 66, 0), undefined);
+    const bounds = { min: { x: 0, y: -0.25, z: 0 }, max: { x: 1, y: 1, z: 1 } };
+    sync.setShulkerBoxes([{ x: 0, y: 66, z: 0, bounds }]);
+    assert.deepEqual(sync.boxesAt(0, 66, 0), [[0, -0.25, 0, 1, 1, 1]], 'open downwards, out of its cell');
+    assert.deepEqual(sync.shulkerLidAt(0, 66, 0), [0, -0.25, 0, 1, 1, 1]);
+    sync.setShulkerBoxes([]);
+    assert.equal(sync.shulkerLidAt(0, 66, 0), undefined, 'shut again');
 });

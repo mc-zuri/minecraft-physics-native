@@ -4072,10 +4072,7 @@
       ]
      }
     }
-   },
-   "librariesMissing": [
-    "org.ow2.asm:asm:9.3"
-   ]
+   }
   },
   "1.21.3": {
    "status": "exact",
@@ -4217,10 +4214,7 @@
       ]
      }
     }
-   },
-   "librariesMissing": [
-    "org.ow2.asm:asm:9.3"
-   ]
+   }
   },
   "1.21.4": {
    "status": "exact",
@@ -4364,10 +4358,7 @@
       ]
      }
     }
-   },
-   "librariesMissing": [
-    "org.ow2.asm:asm:9.6"
-   ]
+   }
   },
   "1.21.5": {
    "status": "exact",
@@ -4511,10 +4502,7 @@
       ]
      }
     }
-   },
-   "librariesMissing": [
-    "org.ow2.asm:asm:9.6"
-   ]
+   }
   },
   "1.21.6": {
    "status": "exact",
@@ -4658,10 +4646,7 @@
       ]
      }
     }
-   },
-   "librariesMissing": [
-    "org.ow2.asm:asm:9.6"
-   ]
+   }
   },
   "1.21.7": {
    "status": "exact",
@@ -4805,10 +4790,7 @@
       ]
      }
     }
-   },
-   "librariesMissing": [
-    "org.ow2.asm:asm:9.6"
-   ]
+   }
   },
   "1.21.8": {
    "status": "exact",
@@ -4952,10 +4934,7 @@
       ]
      }
     }
-   },
-   "librariesMissing": [
-    "org.ow2.asm:asm:9.6"
-   ]
+   }
   },
   "1.21.9": {
    "status": "exact",
@@ -5099,10 +5078,7 @@
       ]
      }
     }
-   },
-   "librariesMissing": [
-    "org.ow2.asm:asm:9.6"
-   ]
+   }
   },
   "1.21.10": {
    "status": "exact",
@@ -5246,10 +5222,7 @@
       ]
      }
     }
-   },
-   "librariesMissing": [
-    "org.ow2.asm:asm:9.6"
-   ]
+   }
   },
   "1.21.11": {
    "status": "exact",

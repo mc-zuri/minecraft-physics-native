@@ -15,7 +15,7 @@ use crate::napi_api::{
     native_ridden_mob_state, native_trident_tick_result, projectile_state, ridden_mob_state,
     state_with_scene, trident_state, validate_arrow_flight, validate_projectile_flight,
     validate_tick_state, validate_trident_flight, validated_simulation_config, vehicle_colliders,
-    vehicle_release, LocalPlayerScene, NativeArrowState, NativeArrowTickResult, NativeBoatState,
+    vehicle_release, FieldCheck, FieldRule, LocalPlayerScene, NativeArrowState, NativeArrowTickResult, NativeBoatState,
     NativeHorseState, NativeNearbyEntity, NativeProjectileState, NativeProjectileTickResult,
     NativeSimulationConfig, NativeSimulationState, NativeTridentState, NativeTridentTickResult,
     NativeVersionedEntityState, NativeWorld,
@@ -157,12 +157,10 @@ impl EntityBatch {
                 "unsupported decompiled Minecraft version: {version}"
             )));
         }
-        if states.iter().any(|state| {
-            !state.pushthrough.is_finite() || !(0.0..=1.0).contains(&state.pushthrough)
-        }) {
-            return Err(Error::from_reason(
-                "entity push state contains invalid values",
-            ));
+        for (index, state) in states.iter().enumerate() {
+            FieldCheck::new("entity push state")
+                .number(&format!("states[{index}].pushthrough"), state.pushthrough, FieldRule::Within(0.0, 1.0))
+                .done()?;
         }
         let release = supported_release(&version)?;
         let config = validated_simulation_config(config)?;
@@ -208,8 +206,8 @@ impl EntityBatch {
     }
 
     /// Entity.push(Entity) skips: from 1.9 entities of the same root vehicle
-    /// (isPassengerOfSameVehicle, 1.9.4 Entity.java:2235, 1.21.4 :3205); in 1.8 the entity and its
-    /// rider or vehicle (1.8.9 Entity.java:1030)
+    /// (isPassengerOfSameVehicle, 1.9.4 Entity.java:2225, 1.21.4 :3209); in 1.8 the entity and its
+    /// rider or vehicle (1.8.8 Entity.java:1025)
     fn connected(&self, left: usize, right: usize) -> bool {
         if self.release.at_least(1, 9, 0) {
             self.roots[left].is_some() && self.roots[left] == self.roots[right]
@@ -222,8 +220,8 @@ impl EntityBatch {
 
     /// Each entity runs its whole tick in turn: its move (travel), then LivingEntity.pushEntities
     /// from where the move left it: every other pushable entity whose box meets its own (1.8 grown
-    /// by 0.2F, 0, 0.2F) runs Entity.push(the ticking entity), which pushes both (1.8.9
-    /// LivingEntity.java:1469-1499, 1.9.4 :1737-1777, 1.16.5 :2514-2598). The others are taken in
+    /// by 0.2F, 0, 0.2F) runs Entity.push(the ticking entity), which pushes both (1.8.8
+    /// LivingEntity.java:1458-1488, 1.9.4 :1734-1774, 1.16.5 :2512-2596). The others are taken in
     /// the order given (the level's entity sections in vanilla).
     pub(crate) fn advance(&mut self, world: &WorldSnapshot, ticks: u32) -> Result<()> {
         let minecraft_version = self.release;
@@ -244,7 +242,7 @@ impl EntityBatch {
                     }
                     // a sleeper's own Entity.push(ticker) does nothing, to either side: Player's
                     // override from 1.9, LivingEntity's from 1.14 (1.8.9 has neither, 1.9.4
-                    // PlayerEntity.java:1884-1888, 1.13.2 :2017-2021, 1.14 LivingEntity.java:1697-1701,
+                    // Player.java:1867-1871, 1.13.2 :2001-2005, 1.14.4 LivingEntity.java:1635-1640,
                     // 26.3 :2258-2262)
                     let sleeper = self.simulations[other].sleeping
                         && (minecraft_version.at_least(1, 14, 0)
@@ -397,9 +395,11 @@ impl ProjectileBatch {
             .collect::<Result<Vec<_>>>()?;
         for state in &states {
             check_projectile_family(state, release, version)?;
-            // The client's hook before 1.11 is not this call's: its tick follows the server's interpolation (1.8.9
-            // FishingBobberEntity.java tick) and comes out of a block by the client's own random, and this state has
-            // neither. The server's tick has them: simulateVersionedProjectileHitTick.
+            // The client's hook before 1.11 is not this call's: its tick follows the server's interpolation (1.8.8
+            // FishingHook.java tick) and comes out of a block by the client's own random, and this state has
+            // neither. The server's tick has them: simulateVersionedProjectileHitTick. (1.10.2
+            // FishingHook.java:196-198 interpolates toward the server's position; 1.11.2
+            // FishingHook.java:139-143 runs one tick on both sides)
             if state.kind == ProjectileKind::FishingHook && !release.at_least(1, 11, 0) {
                 return Err(Error::from_reason(format!(
                     "fishing hook simulation is not supported before 1.11: {version}: only the server's tick is, by simulateVersionedProjectileHitTick"
@@ -469,6 +469,7 @@ impl TridentBatch {
     pub(crate) fn new(version: &str, states: Vec<NativeTridentState>) -> Result<Self> {
         let release = vehicle_release(version, "trident")?;
         // the trident is 1.13's (EntityType "trident", 1.13.2 TridentEntity)
+        // (1.12.2 EntityType.java:211-293 (no trident); 1.13.2 EntityType.java:246, ThrownTrident.java:57)
         if !release.at_least(1, 13, 0) {
             return Err(Error::from_reason(format!(
                 "trident simulation is not supported before 1.13: {version}"
@@ -720,3 +721,6 @@ impl NativeBulkRun {
         }
     }
 }
+#[cfg(test)]
+#[path = "napi_bulk_gate_tests.rs"]
+mod gate_fixtures;

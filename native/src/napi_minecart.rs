@@ -7,14 +7,15 @@ use napi_derive::napi;
 use crate::math::{Aabb, Vec3};
 use crate::minecart::{
     client_lerp_steps, hurt_minecart, push_minecart, tick_client_effects, tick_client_linear,
-    tick_client_weighted, tick_minecarts_among, MinecartClientEffects, MinecartClientLerp,
-    MinecartClientSteps, MinecartContainer, MinecartDamage, MinecartExplosion, MinecartHurt,
-    MinecartItem, MinecartOther, MinecartPortal, MinecartRemoval, MinecartRider, MinecartRules,
-    MinecartStack, MinecartState, MinecartStep, MinecartTick, MinecartVariant,
+    tick_client_weighted, tick_minecarts_among, tick_minecarts_with, MinecartClientEffects,
+    MinecartClientLerp, MinecartClientSteps, MinecartContainer, MinecartDamage, MinecartExplosion,
+    MinecartGateway, MinecartHurt, MinecartItem, MinecartOther, MinecartPortal, MinecartRemoval,
+    MinecartRider, MinecartRules, MinecartSpawn, MinecartStack, MinecartState, MinecartStep,
+    MinecartTick, MinecartVariant, CollisionRule, MinecartTeam,
 };
 use crate::napi_api::{
-    check_move, validate_kept_box, validate_position, vehicle_release, NativeAabb, NativeVec3,
-    NativeWorld,
+    check_move, validate_kept_box, validate_position, vehicle_release, NativeAabb,
+    NativeBlockPosition, NativeVec3, NativeWorld,
 };
 
 /// What the level's enabled features select. `improvements` is required: a release alone does not
@@ -30,6 +31,24 @@ pub struct NativeMinecartRules {
     pub tnt_explodes: Option<bool>,
     /// Whether a nether portal has a portal of the level's beyond it: only a player's makes one.
     pub nether_exit: Option<bool>,
+    /// The spawnerBlocksEnabled game rule of 1.21.9+, which a spawner cart's spawner runs under.
+    pub spawner_blocks_enabled: Option<bool>,
+    /// Level.random's raw 48 bits, where the caller knows them: a TNT cart's blast then gives the
+    /// exact blocks its rays break (`blown`), drawing from it in the tick's order.
+    pub level_random: Option<f64>,
+}
+
+/// An end gateway's block entity: its block, the block it sends to (the exit portal under
+/// ExactTeleport, else findExitPosition's; none where it has none), its teleportCooldown and age.
+/// `undecided` comes back set where the level's random picked among entities on different carts.
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeMinecartGateway {
+    pub position: NativeBlockPosition,
+    pub exit: Option<NativeBlockPosition>,
+    pub cooldown: Option<i32>,
+    pub age: Option<f64>,
+    pub undecided: Option<bool>,
 }
 
 /// A stack in a hopper cart, an item entity or a container: its `item` is any name that is the
@@ -42,12 +61,21 @@ pub struct NativeMinecartStack {
     pub max_stack: i32,
 }
 
-/// An item entity a hopper cart can take.
+/// An item entity about the carts: what a hopper cart can take, and what a TNT cart's blast hurts
+/// and pushes. `position` is Entity.position (its box's bottom centre without it), `health`
+/// ItemEntity.health (5), `blastProof` whether a blast's hurt is kept off it (an invulnerable item,
+/// a nether star, a stack resistant to explosions). `removed` comes back set where the hurt took
+/// its health.
 #[napi(object)]
 #[derive(Clone)]
 pub struct NativeMinecartItem {
     pub bounding_box: NativeAabb,
     pub stack: NativeMinecartStack,
+    pub position: Option<NativeVec3>,
+    pub velocity: Option<NativeVec3>,
+    pub health: Option<i32>,
+    pub blast_proof: Option<bool>,
+    pub removed: Option<bool>,
 }
 
 /// A block's container a hopper cart can take from: the slots open to it, in order.
@@ -71,11 +99,19 @@ pub struct NativeMinecartHurt {
     pub burning_arrow: Option<f64>,
 }
 
+/// A TNT cart's Level.explode and the blocks its rays reach, air included, as the explosion's
+/// toBlow has them: `certain` breaks under any of the level's draws, `possible` under some, and
+/// `blown` is the exact list where the rules gave `levelRandom`, with `levelRandom` after it.
+/// Breaking them is the server's, after the entities.
 #[napi(object)]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct NativeMinecartExplosion {
     pub position: NativeVec3,
     pub power: f64,
+    pub certain: Vec<NativeBlockPosition>,
+    pub possible: Vec<NativeBlockPosition>,
+    pub blown: Option<Vec<NativeBlockPosition>>,
+    pub level_random: Option<f64>,
 }
 
 /// A cart's first passenger: which field counts depends on the release.
@@ -120,6 +156,8 @@ pub struct NativeMinecartState {
     pub push: Option<NativeVec3>,
     pub comparator_signal: Option<i32>,
     pub has_loot_table: Option<bool>,
+    /// Entity.hasCustomName, which before 1.20.3 keeps a creative hit from discarding the cart.
+    pub custom_name: Option<bool>,
     pub tick_count: Option<i32>,
     pub hurt_time: Option<i32>,
     pub hurt_dir: Option<i32>,
@@ -127,22 +165,45 @@ pub struct NativeMinecartState {
     pub invulnerable: Option<bool>,
     /// MinecartTNT.fuse, -1 until it is primed.
     pub fuse: Option<i32>,
+    /// From 1.21.5, MinecartTNT.ignitionSource has a creative player for its attacker: its blast is that player's.
+    pub creative_ignition: Option<bool>,
     pub explosion_power_base: Option<f64>,
     pub explosion_speed_factor: Option<f64>,
     /// The raw 48 bits of Entity.random, which a TNT cart draws from: no client knows it, so it
     /// is given, and comes back as the tick left it.
     pub random_seed: Option<f64>,
     pub enabled: Option<bool>,
-    /// A hopper cart's five slots, the empty ones as null.
+    /// A hopper cart's five slots, the empty ones as null: required of one, refused of any other.
     pub inventory: Option<Vec<Option<NativeMinecartStack>>>,
     pub last_activated: Option<i32>,
-    /// `nether` or `end`, the portal it is in.
+    /// A spawner cart's BaseSpawner: Delay (20 without it), MinSpawnDelay (200), MaxSpawnDelay (800)
+    /// and RequiredPlayerRange (16).
+    pub spawn_delay: Option<i32>,
+    pub min_spawn_delay: Option<i32>,
+    pub max_spawn_delay: Option<i32>,
+    pub required_player_range: Option<i32>,
+    /// `nether`, `end` or `gateway`, the portal it is in (Entity.portalProcess from 1.21).
     pub portal: Option<String>,
+    /// The block of the gateway it went into, required of a `gateway` portal.
+    pub portal_entry: Option<NativeBlockPosition>,
     pub inside_portal: Option<bool>,
     pub portal_time: Option<i32>,
     pub portal_cooldown: Option<i32>,
     /// Set by the tick: `destroyed`, `discarded`, `exploded`, `below_world`, `nether` or `end`.
     pub removed: Option<String>,
+    /// The scoreboard team it is on, whose collision rule the pushes ask from 1.9.
+    pub team: Option<NativeMinecartTeam>,
+}
+
+/// A scoreboard team: its name (the same name is the same team) and Team.CollisionRule, `always`,
+/// `never`, `pushOtherTeams` or `pushOwnTeam`.
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeMinecartTeam {
+    pub name: String,
+    pub collision_rule: String,
+    /// PlayerTeam.allowFriendlyFire, true without it: from 26.3 a TNT cart's blast hurts its allies only with it.
+    pub allow_friendly_fire: Option<bool>,
 }
 
 /// An entity near the carts that is not one of them.
@@ -161,6 +222,9 @@ pub struct NativeMinecartOther {
     pub has_passengers: Option<bool>,
     /// Set by the tick: the index of the cart that picked it up.
     pub rides: Option<u32>,
+    /// The index among the scene's others of the entity it rides, which rides a cart (a jockey):
+    /// from 1.9 nothing of that cart's pushes or collides with it (isPassengerOfSameVehicle).
+    pub rides_other: Option<u32>,
     /// AbstractBoat: its tick from 1.9 pushes the carts it reaches.
     pub boat: Option<bool>,
     /// Where its own tick leaves it, from where it pushes: with `tickBoundingBox`, for what a cart ticking ahead of it finds elsewhere.
@@ -170,6 +234,18 @@ pub struct NativeMinecartOther {
     pub ticks_after: Option<u32>,
     /// A player that leaves the cart it `rides` this tick: after that cart's tick, and before its own push from where it landed.
     pub gets_off: Option<bool>,
+    /// Its eye height, from which a TNT cart's blast pushes it: without it 0.85 of its box's height.
+    pub eye_height: Option<f64>,
+    /// An armor stand: it pushes only the rideable carts at its own place, by its own way.
+    pub armor_stand: Option<bool>,
+    /// A bat, which pushes nothing.
+    pub bat: Option<bool>,
+    /// The scoreboard team it is on.
+    pub team: Option<NativeMinecartTeam>,
+    /// Entity.boardingCooldown, from 1.9: while above 0 no cart picks it up. Getting off a cart sets 60.
+    pub boarding_cooldown: Option<i32>,
+    /// Set by the tick: it left the level with the cart it rides, through a nether or end portal (from 1.21).
+    pub removed: Option<bool>,
 }
 
 #[napi(object)]
@@ -195,6 +271,11 @@ pub struct NativeMinecartTick {
     pub primed: bool,
     pub explosions: Vec<NativeMinecartExplosion>,
     pub command_ran: bool,
+    /// A spawner cart's turn that the level's random decides: `attempt`, with `spawnAt` its block
+    /// (whether anything came, and the delay after, are the server's), or `delay`, a delay of -1
+    /// drawn between its min and max.
+    pub spawner: Option<String>,
+    pub spawn_at: Option<NativeBlockPosition>,
 }
 
 #[napi(object)]
@@ -203,6 +284,7 @@ pub struct NativeMinecartScene {
     pub others: Vec<NativeMinecartOther>,
     pub items: Vec<NativeMinecartItem>,
     pub containers: Vec<NativeMinecartContainer>,
+    pub gateways: Vec<NativeMinecartGateway>,
 }
 
 /// What a client's tick counts down of a cart.
@@ -268,18 +350,46 @@ fn rules_of(version: &str, rules: NativeMinecartRules, carts: &[MinecartState]) 
     let release = vehicle_release(version, "minecart")?;
     let selected = MinecartRules::new(release, rules.improvements, rules.max_minecart_speed).map_err(Error::from_reason)?;
     let low = carts.iter().any(|cart| cart.position.y < -64.0);
+    // (1.17.1 DimensionType.java:90; 1.18 DimensionType.java:89)
     if rules.min_y.is_none() && low && release.at_least(1, 18, 0) {
         return Err(Error::from_reason("minecart: a cart this low needs the level's minY"));
     }
     let selected = selected.in_level(rules.min_y.unwrap_or(0), rules.tnt_explodes.unwrap_or(true));
-    Ok(MinecartRules { nether_exit: rules.nether_exit.unwrap_or(true), ..selected })
+    Ok(MinecartRules {
+        nether_exit: rules.nether_exit.unwrap_or(true),
+        spawner_blocks: rules.spawner_blocks_enabled.unwrap_or(true),
+        level_random: rules.level_random
+            .map(|seed| whole_seed(seed).map_err(|_| Error::from_reason(format!("levelRandom is {seed}: it must be a whole number from 0 to 2^53 - 1"))))
+            .transpose()?,
+        ..selected
+    })
 }
 
 /// The items of a call, as the numbers the engine compares.
 #[derive(Default)]
-struct ItemNames(Vec<String>);
+struct ItemNames(Vec<String>, Vec<NativeMinecartTeam>);
 
 impl ItemNames {
+    /// A team as a number the engine compares, the same for the same name, and its rule.
+    fn team(&mut self, value: &NativeMinecartTeam) -> Result<MinecartTeam> {
+        let rule = match value.collision_rule.as_str() {
+            "always" => CollisionRule::Always,
+            "never" => CollisionRule::Never,
+            "pushOtherTeams" => CollisionRule::PushOtherTeams,
+            "pushOwnTeam" => CollisionRule::PushOwnTeam,
+            other => return Err(Error::from_reason(format!("minecart: collision rule {other} is none of always, never, pushOtherTeams, pushOwnTeam"))),
+        };
+        let index = self.1.iter().position(|known| known.name == value.name).unwrap_or_else(|| {
+            self.1.push(value.clone());
+            self.1.len() - 1
+        });
+        Ok(MinecartTeam { id: index as u32 + 1, rule, allow_friendly_fire: value.allow_friendly_fire.unwrap_or(true) })
+    }
+
+    fn native_team(&self, team: Option<MinecartTeam>) -> Option<NativeMinecartTeam> {
+        team.and_then(|team| self.1.get(team.id as usize - 1).cloned())
+    }
+
     fn id(&mut self, name: &str) -> u32 {
         let index = self.0.iter().position(|known| known == name).unwrap_or_else(|| {
             self.0.push(name.to_owned());
@@ -304,10 +414,13 @@ impl ItemNames {
     }
 }
 
-fn portal_of(name: &str) -> Result<MinecartPortal> {
-    match name {
-        "nether" => Ok(MinecartPortal::Nether),
-        "end" => Ok(MinecartPortal::End),
+fn portal_of(name: &str, entry: Option<&NativeBlockPosition>) -> Result<MinecartPortal> {
+    match (name, entry) {
+        ("nether", None) => Ok(MinecartPortal::Nether),
+        ("end", None) => Ok(MinecartPortal::End),
+        ("gateway", Some(at)) => Ok(MinecartPortal::Gateway((at.x, at.y, at.z))),
+        ("gateway", None) => Err(Error::from_reason("minecart: a gateway portal needs its portalEntry")),
+        ("nether" | "end", Some(_)) => Err(Error::from_reason(format!("minecart: a {name} portal has no portalEntry"))),
         _ => Err(Error::from_reason(format!("minecart: {name} is no portal"))),
     }
 }
@@ -316,7 +429,12 @@ fn portal_name(portal: MinecartPortal) -> &'static str {
     match portal {
         MinecartPortal::Nether => "nether",
         MinecartPortal::End => "end",
+        MinecartPortal::Gateway(_) => "gateway",
     }
+}
+
+fn block_position((x, y, z): (i32, i32, i32)) -> NativeBlockPosition {
+    NativeBlockPosition { x, y, z }
 }
 
 fn removal_name(removal: MinecartRemoval) -> &'static str {
@@ -335,7 +453,7 @@ fn removal_of(name: &str) -> Result<MinecartRemoval> {
         "discarded" => Ok(MinecartRemoval::Discarded),
         "exploded" => Ok(MinecartRemoval::Exploded),
         "below_world" => Ok(MinecartRemoval::BelowWorld),
-        portal => portal_of(portal).map(MinecartRemoval::Portal),
+        portal => portal_of(portal, None).map(MinecartRemoval::Portal),
     }
 }
 
@@ -352,6 +470,17 @@ fn rider_of(value: NativeMinecartRider) -> Result<MinecartRider> {
         velocity: vector_or_zero(value.velocity, "rider.velocity")?,
         move_intent: vector_or_zero(value.move_intent, "rider.moveIntent")?,
     })
+}
+
+/// Entity.random's seed, which a double carries exactly: a cast would make a fraction or a negative into another seed.
+fn whole_seed(seed: f64) -> Result<u64> {
+    const MAX: f64 = 9_007_199_254_740_991.0;
+    if seed.fract() != 0.0 || !(0.0..=MAX).contains(&seed) {
+        return Err(Error::from_reason(format!(
+            "randomSeed is {seed}: it must be a whole number from 0 to {MAX}"
+        )));
+    }
+    Ok(seed as u64)
 }
 
 fn state_of(value: NativeMinecartState, names: &mut ItemNames) -> Result<MinecartState> {
@@ -372,6 +501,11 @@ fn state_of(value: NativeMinecartState, names: &mut ItemNames) -> Result<Minecar
     }
     if variant == MinecartVariant::Hopper && value.inventory.is_none() {
         return Err(Error::from_reason("minecart: hopper_minecart needs its inventory"));
+    }
+    // (a tick reads a hopper cart's alone, and the result would drop any other's without a word:
+    // a chest cart's slots reach it as its comparatorSignal)
+    if variant != MinecartVariant::Hopper && value.inventory.is_some() {
+        return Err(Error::from_reason(format!("minecart: {} has no inventory here, only a hopper_minecart", value.variant)));
     }
     let mut inventory = [MinecartStack::default(); 5];
     let slots = value.inventory.unwrap_or_default();
@@ -407,6 +541,7 @@ fn state_of(value: NativeMinecartState, names: &mut ItemNames) -> Result<Minecar
         push: vector_or_zero(value.push, "push")?,
         comparator_signal: value.comparator_signal.unwrap_or(0),
         has_loot_table: value.has_loot_table.unwrap_or(false),
+        custom_name: value.custom_name.unwrap_or(false),
         move_out_of_range: false,
         tick_count: value.tick_count.unwrap_or(defaults.tick_count),
         hurt_time: value.hurt_time.unwrap_or(defaults.hurt_time),
@@ -414,19 +549,27 @@ fn state_of(value: NativeMinecartState, names: &mut ItemNames) -> Result<Minecar
         damage: value.damage.map_or(defaults.damage, |damage| damage as f32),
         invulnerable: value.invulnerable.unwrap_or(false),
         fuse: value.fuse.unwrap_or(defaults.fuse),
+        creative_ignition: value.creative_ignition.unwrap_or(false),
         explosion_power_base: value.explosion_power_base.map_or(defaults.explosion_power_base, |power| power as f32),
         explosion_speed_factor: value.explosion_speed_factor.map_or(defaults.explosion_speed_factor, |factor| factor as f32),
-        random_seed: value.random_seed.map_or(0, |seed| seed as u64),
+        random_seed: value.random_seed.map_or(Ok(0), whole_seed)?,
         enabled: value.enabled.unwrap_or(defaults.enabled),
         inventory,
         last_activated: value.last_activated.unwrap_or(defaults.last_activated),
-        portal: value.portal.as_deref().map(portal_of).transpose()?,
+        spawn_delay: value.spawn_delay.unwrap_or(defaults.spawn_delay),
+        min_spawn_delay: value.min_spawn_delay.unwrap_or(defaults.min_spawn_delay),
+        max_spawn_delay: value.max_spawn_delay.unwrap_or(defaults.max_spawn_delay),
+        required_player_range: value.required_player_range.unwrap_or(defaults.required_player_range),
+        portal: value.portal.as_deref().map(|portal| portal_of(portal, value.portal_entry.as_ref())).transpose()?,
         inside_portal: value.inside_portal.unwrap_or(false),
         portal_time: value.portal_time.unwrap_or(0),
         portal_cooldown: value.portal_cooldown.unwrap_or(0),
         removed: value.removed.as_deref().map(removal_of).transpose()?,
+        team: value.team.as_ref().map(|team| names.team(team)).transpose()?,
     })
 }
+
+
 
 fn native_rider(value: MinecartRider) -> NativeMinecartRider {
     NativeMinecartRider {
@@ -444,6 +587,7 @@ fn native_state(value: MinecartState, names: &ItemNames) -> NativeMinecartState 
     let holds_items = matches!(value.variant, MinecartVariant::Chest | MinecartVariant::Hopper);
     let hopper = value.variant == MinecartVariant::Hopper;
     let tnt = value.variant == MinecartVariant::Tnt;
+    let spawner = value.variant == MinecartVariant::Spawner;
     NativeMinecartState {
         variant: variant_name(value.variant).to_owned(),
         position: value.position.into(),
@@ -467,12 +611,14 @@ fn native_state(value: MinecartState, names: &ItemNames) -> NativeMinecartState 
         push: furnace.then(|| value.push.into()),
         comparator_signal: holds_items.then_some(value.comparator_signal),
         has_loot_table: Some(value.has_loot_table),
+        custom_name: Some(value.custom_name),
         tick_count: Some(value.tick_count),
         hurt_time: Some(value.hurt_time),
         hurt_dir: Some(value.hurt_dir),
         damage: Some(f64::from(value.damage)),
         invulnerable: Some(value.invulnerable),
         fuse: tnt.then_some(value.fuse),
+        creative_ignition: tnt.then_some(value.creative_ignition),
         explosion_power_base: tnt.then_some(f64::from(value.explosion_power_base)),
         explosion_speed_factor: tnt.then_some(f64::from(value.explosion_speed_factor)),
         random_seed: tnt.then_some(value.random_seed as f64),
@@ -483,15 +629,24 @@ fn native_state(value: MinecartState, names: &ItemNames) -> NativeMinecartState 
                 .collect()
         }),
         last_activated: Some(value.last_activated),
+        spawn_delay: spawner.then_some(value.spawn_delay),
+        min_spawn_delay: spawner.then_some(value.min_spawn_delay),
+        max_spawn_delay: spawner.then_some(value.max_spawn_delay),
+        required_player_range: spawner.then_some(value.required_player_range),
         portal: value.portal.map(|portal| portal_name(portal).to_owned()),
+        portal_entry: match value.portal {
+            Some(MinecartPortal::Gateway(entry)) => Some(block_position(entry)),
+            _ => None,
+        },
         inside_portal: Some(value.inside_portal),
         portal_time: Some(value.portal_time),
         portal_cooldown: Some(value.portal_cooldown),
         removed: value.removed.map(|removal| removal_name(removal).to_owned()),
+        team: names.native_team(value.team),
     }
 }
 
-fn other_of(value: NativeMinecartOther) -> Result<MinecartOther> {
+fn other_of(value: NativeMinecartOther, names: &mut ItemNames) -> Result<MinecartOther> {
     let tick_place = match (value.tick_position, value.tick_bounding_box) {
         (Some(position), Some(bounds)) => Some((finite("other.tickPosition", position.into())?, bounds.into())),
         (None, None) => None,
@@ -509,14 +664,21 @@ fn other_of(value: NativeMinecartOther) -> Result<MinecartOther> {
         passenger: value.passenger.unwrap_or(false),
         has_passengers: value.has_passengers.unwrap_or(false),
         rides: value.rides.map(|cart| cart as usize),
+        rides_other: value.rides_other.map(|other| other as usize),
         boat: value.boat.unwrap_or(false),
         tick_place,
         ticks_after: value.ticks_after.map(|carts| carts as usize),
         gets_off: value.gets_off.unwrap_or(false),
+        eye_height: value.eye_height.map(|eye| eye as f32),
+        armor_stand: value.armor_stand.unwrap_or(false),
+        bat: value.bat.unwrap_or(false),
+        team: value.team.as_ref().map(|team| names.team(team)).transpose()?,
+        boarding_cooldown: value.boarding_cooldown.unwrap_or(0),
+        removed: value.removed.unwrap_or(false),
     })
 }
 
-fn native_other(value: MinecartOther) -> NativeMinecartOther {
+fn native_other(value: MinecartOther, names: &ItemNames) -> NativeMinecartOther {
     NativeMinecartOther {
         position: value.position.into(),
         bounding_box: value.bounds.into(),
@@ -529,11 +691,18 @@ fn native_other(value: MinecartOther) -> NativeMinecartOther {
         passenger: Some(value.passenger),
         has_passengers: Some(value.has_passengers),
         rides: value.rides.map(|cart| cart as u32),
+        rides_other: value.rides_other.map(|other| other as u32),
         boat: Some(value.boat),
         tick_position: value.tick_place.map(|(position, _)| position.into()),
         tick_bounding_box: value.tick_place.map(|(_, bounds)| bounds.into()),
         ticks_after: value.ticks_after.map(|carts| carts as u32),
         gets_off: Some(value.gets_off),
+        eye_height: value.eye_height.map(f64::from),
+        armor_stand: Some(value.armor_stand),
+        bat: Some(value.bat),
+        team: names.native_team(value.team),
+        boarding_cooldown: Some(value.boarding_cooldown),
+        removed: Some(value.removed),
     }
 }
 
@@ -558,7 +727,43 @@ fn step_of(value: NativeMinecartStep) -> MinecartStep {
 }
 
 fn native_explosion(value: MinecartExplosion) -> NativeMinecartExplosion {
-    NativeMinecartExplosion { position: value.position.into(), power: f64::from(value.power) }
+    let blocks = |list: Vec<(i32, i32, i32)>| list.into_iter().map(block_position).collect::<Vec<_>>();
+    NativeMinecartExplosion {
+        position: value.position.into(),
+        power: f64::from(value.power),
+        certain: blocks(value.certain),
+        possible: blocks(value.possible),
+        blown: value.blown.map(blocks),
+        level_random: value.level_random.map(|random| random as f64),
+    }
+}
+
+fn item_of(item: &NativeMinecartItem, names: &mut ItemNames) -> Result<MinecartItem> {
+    let mut out = MinecartItem::new(item.bounding_box.clone().into(), names.stack(&item.stack)?);
+    if let Some(position) = item.position {
+        out.position = position.into();
+        validate_position("minecart item position", out.position)?;
+    }
+    if let Some(velocity) = item.velocity {
+        out.velocity = velocity.into();
+        validate_position("minecart item velocity", out.velocity)?;
+    }
+    out.health = item.health.unwrap_or(5);
+    out.blast_proof = item.blast_proof.unwrap_or(false);
+    out.removed = item.removed.unwrap_or(false);
+    Ok(out)
+}
+
+fn native_item(item: MinecartItem, names: &ItemNames) -> NativeMinecartItem {
+    NativeMinecartItem {
+        bounding_box: item.bounds.into(),
+        stack: names.native(item.stack),
+        position: Some(item.position.into()),
+        velocity: Some(item.velocity.into()),
+        health: Some(item.health),
+        blast_proof: Some(item.blast_proof),
+        removed: Some(item.removed),
+    }
 }
 
 fn native_tick(state: MinecartState, tick: MinecartTick, names: &ItemNames) -> NativeMinecartTick {
@@ -569,6 +774,14 @@ fn native_tick(state: MinecartState, tick: MinecartTick, names: &ItemNames) -> N
         primed: tick.primed,
         explosions: tick.explosions.into_iter().map(native_explosion).collect(),
         command_ran: tick.command_ran,
+        spawner: tick.spawner.map(|turn| match turn {
+            MinecartSpawn::Attempt(_) => "attempt".to_owned(),
+            MinecartSpawn::DrewDelay => "delay".to_owned(),
+        }),
+        spawn_at: match tick.spawner {
+            Some(MinecartSpawn::Attempt(at)) => Some(block_position(at)),
+            _ => None,
+        },
     }
 }
 
@@ -598,13 +811,14 @@ pub fn simulate_versioned_minecart_scene(
     rules: NativeMinecartRules,
     items: Option<Vec<NativeMinecartItem>>,
     containers: Option<Vec<NativeMinecartContainer>>,
+    gateways: Option<Vec<NativeMinecartGateway>>,
 ) -> Result<NativeMinecartScene> {
     let mut names = ItemNames::default();
     let mut carts = carts.into_iter().map(|cart| state_of(cart, &mut names)).collect::<Result<Vec<_>>>()?;
     let rules = rules_of(&version, rules, &carts)?;
-    let mut others = others.into_iter().map(other_of).collect::<Result<Vec<_>>>()?;
+    let mut others = others.into_iter().map(|other| other_of(other, &mut names)).collect::<Result<Vec<_>>>()?;
     let mut items = items.unwrap_or_default().iter()
-        .map(|item| Ok(MinecartItem { bounds: item.bounding_box.clone().into(), stack: names.stack(&item.stack)? }))
+        .map(|item| item_of(item, &mut names))
         .collect::<Result<Vec<_>>>()?;
     let mut containers = containers.unwrap_or_default().iter()
         .map(|container| {
@@ -612,13 +826,28 @@ pub fn simulate_versioned_minecart_scene(
             Ok(MinecartContainer { position: (container.x, container.y, container.z), slots })
         })
         .collect::<Result<Vec<_>>>()?;
-    let ticks = tick_minecarts_among(&mut carts, &mut others, &mut items, &mut containers, world.snapshot(), rules);
+    let mut gateways = gateways.unwrap_or_default().iter()
+        .map(|gateway| {
+            let age = gateway.age.unwrap_or(0.0);
+            if age.fract() != 0.0 || !(0.0..=9_007_199_254_740_991.0).contains(&age) {
+                return Err(Error::from_reason(format!("minecart: a gateway's age is {age}: a whole number from 0")));
+            }
+            Ok(MinecartGateway {
+                position: (gateway.position.x, gateway.position.y, gateway.position.z),
+                exit: gateway.exit.as_ref().map(|at| (at.x, at.y, at.z)),
+                cooldown: gateway.cooldown.unwrap_or(0),
+                age: age as i64,
+                undecided: gateway.undecided.unwrap_or(false),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let ticks = tick_minecarts_with(&mut carts, &mut others, &mut items, &mut containers, &mut gateways, world.snapshot(), rules);
     check_move("simulateVersionedMinecartScene", carts.iter().any(|cart| cart.move_out_of_range))?;
     Ok(NativeMinecartScene {
         carts: carts.into_iter().zip(ticks).map(|(cart, tick)| native_tick(cart, tick, &names)).collect(),
-        others: others.into_iter().map(native_other).collect(),
+        others: others.into_iter().map(|other| native_other(other, &names)).collect(),
         items: items.into_iter()
-            .map(|item| NativeMinecartItem { bounding_box: item.bounds.into(), stack: names.native(item.stack) })
+            .map(|item| native_item(item, &names))
             .collect(),
         containers: containers.into_iter()
             .map(|container| NativeMinecartContainer {
@@ -626,6 +855,15 @@ pub fn simulate_versioned_minecart_scene(
                 y: container.position.1,
                 z: container.position.2,
                 slots: container.slots.into_iter().map(|stack| names.native(stack)).collect(),
+            })
+            .collect(),
+        gateways: gateways.into_iter()
+            .map(|gateway| NativeMinecartGateway {
+                position: block_position(gateway.position),
+                exit: gateway.exit.map(block_position),
+                cooldown: Some(gateway.cooldown),
+                age: Some(gateway.age as f64),
+                undecided: Some(gateway.undecided),
             })
             .collect(),
     })
@@ -677,13 +915,14 @@ pub fn simulate_versioned_minecart_push(
     let release = vehicle_release(&version, "minecart")?;
     let mut names = ItemNames::default();
     let mut cart = state_of(cart, &mut names)?;
-    let mut other = other_of(other)?;
+    let mut other = other_of(other, &mut names)?;
     push_minecart(&mut cart, &mut other, release);
     Ok(NativeMinecartScene {
         carts: vec![native_tick(cart, MinecartTick::default(), &names)],
-        others: vec![native_other(other)],
+        others: vec![native_other(other, &names)],
         items: Vec::new(),
         containers: Vec::new(),
+        gateways: Vec::new(),
     })
 }
 
@@ -745,3 +984,7 @@ pub fn simulate_minecart_client_steps(state: NativeMinecartClientSteps) -> Resul
         old: native_step(cart.old),
     })
 }
+
+#[cfg(test)]
+#[path = "napi_minecart_gate_tests.rs"]
+mod gate_fixtures;

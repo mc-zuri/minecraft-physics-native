@@ -96,7 +96,7 @@ every release.
 | Family | Status | Why |
 | --- | --- | --- |
 | player | incomplete | Recorded on all 50 in the 2026-11-06 pass, which predates later changes. No current pin. |
-| living | incomplete | `physrec/me_mob*` recorded; no current pin. A kind with no override is `unknown` in `entityTravelSupport` and travels as `living` (`docs/mob-travel.md`). |
+| living | incomplete | `physrec/me_mob*` recorded; no current pin. A `mob` kind with no override travels as `living`; `unknown` is only a name outside the game, and the dragon and the shulker are refused (`docs/mob-travel.md`). |
 | boat | incomplete | Recorded; no current pin. |
 | mount | incomplete | As boat. |
 | minecart | incomplete | Recorded; the experiment is separate work (B027). |

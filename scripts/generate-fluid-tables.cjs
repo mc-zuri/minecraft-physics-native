@@ -16,10 +16,10 @@ const { sha256 } = require("./block-friction.cjs");
 const repositoryRoot = path.resolve(__dirname, "..");
 const outputPath = path.join(repositoryRoot, "generated", "fluid-tables.json");
 
-// (STAND_INS of the friction table: exact 1.8.8 is unavailable, and these tables do not take 1.8.9's for it)
-const NO_EXACT_SOURCE = new Set(["1.8.8"]);
-// The one decompile whose fluid block and block classes are unnamed: its fluids and tags are read, the rest is not.
-const FLUIDS_AND_TAGS_ONLY = { "1.13.2": "its decompile has no named fluid block, and Block.java registers the blocks through locals" };
+// (a release with no exact source; since 1.8.8 is decompiled from its own jar, none)
+const NO_EXACT_SOURCE = new Set();
+// The one release whose block registrations cannot be followed: its fluids and tags are read, the rest is not.
+const FLUIDS_AND_TAGS_ONLY = { "1.13.2": "its Block.java registers the blocks through locals, which the holders cannot follow" };
 const FAMILIES = [path.join("net", "minecraft", "world", "level", "block"), path.join("net", "minecraft", "block")];
 const MATERIALS = [path.join("net", "minecraft", "world", "level", "material"), path.join("net", "minecraft", "fluid")];
 const TAG_ROOTS = ["tags", path.join("registry", "tag"), "tag"].map((part) => path.join("net", "minecraft", part));
@@ -204,12 +204,12 @@ function waterHolders(tree, family, release) {
 const LEGACY_LIQUIDS = /\bregister\w*\(\s*\d+\s*,\s*"((?:flowing_)?(?:water|lava))"/g;
 
 /** A release before fluids were a registry: the four liquid blocks of its Block.java, whose level is the metadata. */
-function legacyTable(tree, source, release) {
+function legacyTable(tree, file, source, release) {
   const ids = [...source.matchAll(LEGACY_LIQUIDS)].map((match) => match[1]);
   if (ids.length !== 4 || new Set(ids).size !== 4) throw new Error(`${release}: expected the four liquid blocks, found ${ids.join(", ")}`);
   return {
     source: tree.identity,
-    files: [path.join(FAMILIES[1], "Block.java").replaceAll("\\", "/")],
+    files: [file.replaceAll("\\", "/")],
     sha256: sha256(source.replaceAll("\r\n", "\n")),
     legacy: true,
     liquidBlocks: ids.sort(),
@@ -218,8 +218,11 @@ function legacyTable(tree, source, release) {
 }
 
 function tableOf(tree, release) {
-  const legacySource = tree.read(path.join(FAMILIES[1], "Block.java"));
-  if (legacySource != null && new RegExp(LEGACY_LIQUIDS.source).test(legacySource)) return legacyTable(tree, legacySource, release);
+  for (const family of FAMILIES) {
+    const file = path.join(family, "Block.java");
+    const legacySource = tree.read(file);
+    if (legacySource != null && new RegExp(LEGACY_LIQUIDS.source).test(legacySource)) return legacyTable(tree, file, legacySource, release);
+  }
   const family = FAMILIES.find((candidate) => tree.read(path.join(candidate, "Blocks.java")) != null);
   if (!family) throw new Error(`${release}: ${tree.label} has no Blocks.java`);
   const [fluidsFile, fluidsSource] = required(tree, MATERIALS.map((root) => path.join(root, "Fluids.java")), release, "Fluids.java");

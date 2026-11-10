@@ -2,7 +2,7 @@
 // and RiddenMobPhysics tick them: the native engine's versioned boat tick (Boat.tick; 1.8's EntityBoat.onUpdate) and
 // ridden mob tick (LivingEntity.travelRidden of the mob named by its type). The engine's own fields that the states have
 // no place for are carried from one tick to the next while the vehicle stays where the engine left it.
-import type { NativeAabb, NativeBoatState, NativeHorseState, NativeMinecartClientEffects, NativeMinecartClientSteps, NativeMinecartContainer, NativeMinecartHurt, NativeMinecartItem, NativeMinecartLerp, NativeMinecartOther, NativeMinecartRules, NativeMinecartScene, NativeMinecartState, NativeMinecartTick, NativeNearbyEntity, NativePistonPushedEntity, NativePistonPushedResult, NativeVec3, NativeWorld } from '../native';
+import type { NativeAabb, NativeBoatState, NativeHorseState, NativeMinecartClientEffects, NativeMinecartClientSteps, NativeMinecartContainer, NativeMinecartGateway, NativeMinecartHurt, NativeMinecartItem, NativeMinecartLerp, NativeMinecartOther, NativeMinecartRules, NativeMinecartScene, NativeMinecartState, NativeMinecartTick, NativeNearbyEntity, NativePistonPushedEntity, NativePistonPushedResult, NativeVec3, NativeWorld } from '../native';
 import { NativeEngine } from './base';
 import { nativeMovingPiston, type MovingPiston } from './player';
 import type { Attributes, Box, Controls, KeptBoundingBox, MoveRefusable, PhysicsCtx, Vec3 } from './types';
@@ -33,6 +33,8 @@ export interface BoatState {
     yawDegrees: number;
     box?: Box;
     lastVerticalVelocity: number;
+    /** Entity.fallDistance of the boat, which powder snow's collision reads (absent: 0, then the engine's). */
+    fallDistance?: number;
     controllingPlayer: boolean;
     speedMultiplier: number;
     worldReady: boolean;
@@ -110,6 +112,8 @@ export interface RiddenMobState {
     keptBoundingBox: KeptBoundingBox | null;
     /** The last tick's motion was too large to walk, and the tick dropped it and did nothing else (docs/numeric-contract.md). */
     moveRefused?: boolean;
+    /** A strider's MOVEMENT_SPEED with its suffocating modifier among its others; less 34% of movementSpeed when not given. */
+    suffocatingSpeed?: number;
     /** The mob's measured size in its pose (its SCALE and age); its type's when not given. */
     dimensions?: { width: number; height: number };
     /** Entity.stuckSpeedMultiplier, which a cobweb, berry bush or powder snow leaves for the next move. */
@@ -167,9 +171,9 @@ function wrapDegreesD(degrees: number): number {
 /**
  * Camel.canJump, without which LocalPlayer.jumpableVehicle is null and the rider's jump never reaches the camel: saddled,
  * and not refusing to move (sitting, or within the 40 ticks of sitting down or the 52 of standing up) (1.19.3
- * CamelEntity.java:251-253, 1.20 :269-271, 592-595; 1.21.11 Camel.java:251-253, 272-274, LocalPlayer.java:563-564).
- * The rider's aiStep reads it after the camel's tick, on the game time that tick read (Minecraft.java:1805, 1830;
- * ClientLevel.java:323-324): the pose time before the tick's step.
+ * Camel.java:254-256, 1.20 :272-274, 598-601; 1.21.11 Camel.java:236-238, 253-255, LocalPlayer.java:539-543).
+ * The rider's aiStep reads it after the camel's tick, on the game time that tick read (Minecraft.java:1798, 1823;
+ * ClientLevel.java:298-299): the pose time before the tick's step.
  */
 function canCamelJump(mob: Pick<RiddenMobState, 'saddled' | 'camelSitting' | 'poseTime'>): boolean {
     const inPoseTransition = mob.poseTime - 1 < (mob.camelSitting ? 40 : 52);
@@ -218,6 +222,9 @@ function syncAround(engine: NativeEngine, world: PrismarineWorld, pos: Vec3, vel
     const sync = engine.syncOf(world);
     const { box, margin } = bodyReach(pos, vel, halfWidth, height);
     sync.sync(world, box, margin);
+    // (the blocks pistons move, which its bot's engine tracks: NativeEngine.movingBlocksFrom)
+    const tracker = engine.movingBlockTrackerOf(world);
+    if (tracker) sync.setMovingBlocks(tracker.blocks());
     return sync;
 }
 
@@ -235,6 +242,19 @@ function refusesMove(state: { pos: Vec3; vel: Vec3; moveRefused?: boolean }, hal
 }
 
 const cartReads = (cart: NativeMinecartState) => motionReads(cart.position, cart.velocity, 0.5, 0.7);
+
+/**
+ * How far from `from` the rays of the scene's TNT carts can reach: a blast's radius by 1.3 over steps of 0.3 that each
+ * take 0.225 of it (ServerExplosion.calculateExplodedPositions), at the most power a cart's speed of 5 gives
+ * (MinecartTNT.explode); 0 with none.
+ */
+function blastReach(carts: readonly NativeMinecartState[], from: { x: number; y: number; z: number }): number {
+    return Math.max(0, ...carts.filter(cart => cart.variant === 'tnt_minecart').map(cart => {
+        const power = (cart.explosionPowerBase ?? 4) + (cart.explosionSpeedFactor ?? 1) * 1.5 * 5;
+        const away = Math.max(Math.abs(cart.position.x - from.x), Math.abs(cart.position.y - from.y), Math.abs(cart.position.z - from.z));
+        return Math.ceil(power * 1.3 / 0.225 * 0.3) + 1 + Math.ceil(away);
+    }));
+}
 /** A cart whose motion dropped: nothing of its tick ran. */
 const cartRefused = (cart: NativeMinecartState): MoveRefusable<NativeMinecartTick> => ({
     state: { ...cart, velocity: { x: 0, y: 0, z: 0 } }, steps: [], primed: false, explosions: [], commandRan: false, moveRefused: true,
@@ -258,15 +278,28 @@ export class NativeMinecartPhysics extends NativeEngine {
     /**
      * One server tick of a level's carts in its tick order, among what they meet and what a hopper cart can take. The
      * world is read around the first cart, so a caller with carts far apart runs a scene for each group. What no client
-     * can see (a TNT cart's randomSeed, a hopper cart's inventory, a container's slots) is given. A cart whose motion is
-     * past what a sync reads takes no part in the tick, and keeps its place in the result.
+     * can see (a TNT cart's randomSeed, a hopper cart's inventory, a container's slots, an end gateway's exit) is given. A
+     * cart whose motion is past what a sync reads takes no part in the tick, and keeps its place in the result.
      */
-    simulateScene(carts: NativeMinecartState[], others: NativeMinecartOther[], world: PrismarineWorld, rules: NativeMinecartRules, items: NativeMinecartItem[] = [], containers: NativeMinecartContainer[] = []): NativeMinecartScene {
+    simulateScene(carts: NativeMinecartState[], others: NativeMinecartOther[], world: PrismarineWorld, rules: NativeMinecartRules, items: NativeMinecartItem[] = [], containers: NativeMinecartContainer[] = [], gateways: NativeMinecartGateway[] = []): NativeMinecartScene {
         const ticking = carts.filter(cartReads);
-        if (ticking.length === 0) return { carts: carts.map(cartRefused), others, items, containers };
+        if (ticking.length === 0) return { carts: carts.map(cartRefused), others, items, containers, gateways };
         const { position, velocity } = ticking[0]!;
-        const sync = syncAround(this, world, position as unknown as Vec3, velocity as unknown as Vec3, 0.5, 0.7);
-        const scene = this.binding.simulateVersionedMinecartScene(this.version, sync.world, ticking, others, rules, items, containers);
+        const sync = this.syncOf(world);
+        const reach = bodyReach(position, velocity, 0.5, 0.7);
+        const { margin } = reach;
+        // (a cart an end gateway sends on moves from its exit in the same tick, Entity.handlePortal ahead of the move: the
+        // box takes in the exits, where a sync can read that far)
+        const exits = gateways.flatMap(gateway => (gateway.exit ? [gateway.exit] : []));
+        const withExits = {
+            minX: Math.min(reach.box.minX, ...exits.map(at => at.x)), minY: Math.min(reach.box.minY, ...exits.map(at => at.y)), minZ: Math.min(reach.box.minZ, ...exits.map(at => at.z)),
+            maxX: Math.max(reach.box.maxX, ...exits.map(at => at.x + 1)), maxY: Math.max(reach.box.maxY, ...exits.map(at => at.y + 1)), maxZ: Math.max(reach.box.maxZ, ...exits.map(at => at.z + 1)),
+        };
+        const box = syncReads(withExits, margin) ? withExits : reach.box;
+        // (a TNT cart's rays read the blocks as far as its blast reaches, where a sync can read that far)
+        const wide = Math.max(margin, blastReach(ticking, position));
+        sync.sync(world, box, syncReads(box, wide) ? wide : margin);
+        const scene = this.binding.simulateVersionedMinecartScene(this.version, sync.world, ticking, others, rules, items, containers, gateways);
         let next = 0;
         return { ...scene, carts: carts.map(cart => (cartReads(cart) ? scene.carts[next++]! : cartRefused(cart))) };
     }
@@ -373,7 +406,7 @@ export class NativeBoatPhysics extends NativeEngine {
         const carry = this.carries.get(state);
         if (carry) {
             carry.position = output.position;
-            // (1.21.4 alone skips the check for what a player controls: 1.21.4 Entity.java:697)
+            // (1.21.4 alone skips the check for what a player controls: 1.21.4 Entity.java:721)
             if (!samePosition({ x, y, z }, output.position) && this.version !== '1.21.4' && !this.lt('1.9')) state.lastVerticalVelocity = output.velocity.y;
         }
         state.box = output.boundingBox && this.lt('1.17') ? stateBox(state, output.boundingBox) : undefined;
@@ -412,6 +445,7 @@ export class NativeBoatPhysics extends NativeEngine {
             deltaRotation: state.yawVelocity,
             landFriction: state.landFriction,
             lastVerticalVelocity: state.lastVerticalVelocity,
+            ...(state.fallDistance === undefined ? {} : { fallDistance: state.fallDistance }),
             speedMultiplier: state.speedMultiplier,
             playerPassenger: state.controllingPlayer,
             ultraWarm: !!state.ultraWarm,
@@ -438,6 +472,7 @@ export class NativeBoatPhysics extends NativeEngine {
         if (output.deltaRotation !== undefined) state.yawVelocity = output.deltaRotation;
         if (output.landFriction !== undefined) state.landFriction = output.landFriction;
         if (output.lastVerticalVelocity !== undefined) state.lastVerticalVelocity = output.lastVerticalVelocity;
+        if (output.fallDistance !== undefined) state.fallDistance = output.fallDistance;
         if (output.waterLevel !== undefined) state.waterLevel = output.waterLevel;
         if (output.speedMultiplier !== undefined) state.speedMultiplier = output.speedMultiplier;
         if (output.status) state.status = BOAT_STATUSES.indexOf(output.status as BoatStatusName);
@@ -462,8 +497,11 @@ export class NativeRiddenMobPhysics extends NativeEngine {
     /** All the moving blocks of a tick, in the order they tick (NativePhysics.pushByMovingPistons). */
     pushByMovingPistons(ctx: PhysicsCtx, world: PrismarineWorld, pistons: readonly MovingPiston[]): void {
         const mob = ctx.state as RiddenMobState;
-        const halfWidth = (mob.dimensions?.width ?? 0.9) / 2;
-        const height = mob.dimensions?.height ?? 1.8;
+        // the size the mob last ticked with stands in for a state with none; a push is no place for a guess at a size
+        const last = this.carries.get(mob);
+        const halfWidth = mob.dimensions ? mob.dimensions.width / 2 : last?.halfWidth;
+        const height = mob.dimensions?.height ?? last?.height;
+        if (halfWidth === undefined || height === undefined) throw new Error(`a piston's push of a ${mob.type} needs its dimensions: the state has none, and it has not ticked`);
         if (refusesMove(mob, halfWidth, height)) return;
         const sync = syncAround(this, world, mob.pos, mob.vel, halfWidth, height);
         const kept = mob.keptBoundingBox && this.lt('1.17') ? mob.keptBoundingBox.bb : null;
@@ -535,6 +573,7 @@ export class NativeRiddenMobPhysics extends NativeEngine {
             boostTime: mob.boostTime,
             boostTimeTotal: mob.boostTimeTotal,
             suffocating: mob.suffocating,
+            suffocatingSpeed: mob.suffocatingSpeed,
             jumpPendingScale: mob.jumpPendingScale,
             horseJumping: mob.horseJumping,
             standing: mob.standing,
@@ -557,13 +596,13 @@ export class NativeRiddenMobPhysics extends NativeEngine {
             dolphinsGrace: this.effectAmplifierByName('DolphinsGrace', mob.effects ?? {}) !== undefined,
             weaving: this.effectAmplifierByName('Weaving', mob.effects ?? {}) !== undefined,
             ...this.travelAttributes(mob),
-            // the mob's Jump Boost, which its riding jump adds 0.1F a level to (1.21.11 AbstractHorse.java:767-768,
-            // LivingEntity.java:2258-2264; 1.9.4 HorseBaseEntity.java:1050-1053)
+            // the mob's Jump Boost, which its riding jump adds 0.1F a level to (1.21.11 AbstractHorse.java:751-752,
+            // LivingEntity.java:2258-2264; 1.9.4 AbstractHorse.java:1047-1050)
             jumpBoostAmplifier: this.effectAmplifierByName('JumpBoost', mob.effects ?? {}),
         };
         const output = this.binding.simulateVersionedHorseTick(this.version, sync.world, input);
         this.carries.set(mob, output);
-        // Camel.standUp's setPose refreshes the dimensions in the tick (1.21.11 Camel.java:244-249, 579-584, Entity.java:
+        // Camel.standUp's setPose refreshes the dimensions in the tick (1.21.11 Camel.java:228-234, 529-534, Entity.java:
         // 3230-3233), and the next tick measures the size it is given in the pose it then has
         if (mob.dimensions && output.sitting !== undefined && output.sitting !== mob.camelSitting
             && output.halfWidth !== undefined && output.height !== undefined) {
@@ -768,7 +807,10 @@ export class NativeRiddenMobPhysics extends NativeEngine {
                 mob.allowStandSliding = true;
                 // AbstractHorse.standIfPossible where the client runs the horse's rearing (not a llama's)
                 const standsLocally = this.lt('1.19.4') || !this.lt('1.21.5');
-                if (standsLocally && mob.type !== 'llama' && mob.type !== 'trader_llama') {
+                // (not one without AI from 1.21.5: standIfPossible asks isEffectiveAi, 1.21.5 Entity.java:3242-3244,
+                // AbstractHorse.java:674-680; 26.3 :680-684)
+                const effectiveAi = !(mob.noAi && !this.lt('1.21.5'));
+                if (standsLocally && effectiveAi && mob.type !== 'llama' && mob.type !== 'trader_llama') {
                     mob.standing = true;
                     mob.standCounter = this.lt('1.21.6') ? 1 : 20;
                 }
@@ -785,7 +827,7 @@ export class NativeRiddenMobPhysics extends NativeEngine {
 
     /**
      * The DASH flag the server synced: a nautilus or camel whose cooldown had run out starts it again, 40 ticks or 55
-     * (onSyncedDataUpdated: 1.19.3 CamelEntity.java:601-604, 1.21.11 Camel.java:625-628, 26.3 Camel.java:580-583,
+     * (onSyncedDataUpdated: 1.19.3 Camel.java:608-611, 1.21.11 Camel.java:573-576, 26.3 Camel.java:580-583,
      * AbstractNautilus.java:333-336).
      */
     syncDash(mob: RiddenMobState, dashing: boolean): void {

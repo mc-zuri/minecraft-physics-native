@@ -161,10 +161,21 @@ function indexClasses(root) {
       const parts = name.split(".");
       const simple = parts.at(-1);
       let candidates = byName.get(simple) ?? [];
+      // a fully qualified name (net.minecraft.block.SnowLayerBlock): the file at that path
+      if (parts.length > 2 && /^[a-z]/.test(parts[0])) {
+        const file = `${path.sep}${parts.join(path.sep)}.java`;
+        const qualified = candidates.filter((candidate) => candidate.outer === null && candidate.file.endsWith(file));
+        if (qualified.length === 1) return qualified[0];
+      }
       if (parts.length > 1) {
         const outer = parts.at(-2);
         const nested = candidates.filter((candidate) => candidate.outer === outer);
         if (nested.length > 0) candidates = nested;
+        // Outer.Inner where another class nests an Outer of its own (a datafixer's Direction.Axis): the top-level Outer's
+        if (candidates.length > 1 && parts.length === 2) {
+          const topLevel = candidates.filter((candidate) => (byName.get(outer) ?? []).some((other) => other.file === candidate.file && other.outer === null));
+          if (topLevel.length === 1) candidates = topLevel;
+        }
       }
       if (candidates.length > 1 && context) {
         const local = candidates.filter((candidate) => candidate.file === context.file);

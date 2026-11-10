@@ -10,7 +10,7 @@ const { spawnSync } = require("node:child_process");
 const { engineDigest } = require("./parity-contract.cjs");
 
 const root = path.resolve(__dirname, "..");
-const OVERRIDES = ["CARGO_TARGET_DIR", "NODE_PATH", "REPLAY_RECORDINGS", "NAPI_RS_NATIVE_LIBRARY_PATH", "MC_SOURCE_ROOT", "MC_DECOMPILED_ROOT"];
+const OVERRIDES = ["CARGO_TARGET_DIR", "NODE_PATH", "REPLAY_RECORDINGS", "NAPI_RS_NATIVE_LIBRARY_PATH", "MC_SOURCE_ROOT"];
 const sha256 = (data) => crypto.createHash("sha256").update(data).digest("hex");
 const run = (command, ...args) => spawnSync(command, args, { cwd: root, encoding: "utf8", shell: process.platform === "win32" }).stdout?.trim() ?? "";
 

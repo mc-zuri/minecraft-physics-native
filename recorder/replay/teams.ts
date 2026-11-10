@@ -27,6 +27,7 @@ export class TeamTracker {
     private readonly version: string;
     private readonly playerName: string;
     private readonly rules = new Map<string, string>();
+    private readonly held = new Map<string, { collisionRule: string }>();
     /** The members of each team: PLAYER, and entity types. */
     private readonly members = new Map<string, Set<string>>();
 
@@ -72,6 +73,17 @@ export class TeamTracker {
             }
         }
     }
+
+    /** A team as bot.teamMap holds one, or none: one object for each team, so that allies compare equal. */
+    private team(name: string | undefined): { collisionRule: string } | undefined {
+        if (name === undefined) return undefined;
+        let team = this.held.get(name);
+        if (!team) this.held.set(name, team = { collisionRule: 'always' });
+        team.collisionRule = this.rules.get(name) ?? 'always';
+        return team;
+    }
+    teamOfPlayer(): { collisionRule: string } | undefined { return this.team(this.teamOf(PLAYER)); }
+    teamOfType(type: string): { collisionRule: string } | undefined { return this.team(this.teamOf(type.toLowerCase().replace(/^minecraft:/, ''))); }
 
     /** Each team as a bot's scoreboard holds it: its rule, and its members, the player's name for itself. */
     teams(): { readonly team: string; readonly rule: string; readonly members: readonly string[] }[] {

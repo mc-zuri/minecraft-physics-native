@@ -1,15 +1,13 @@
 {
   "schema": 1,
   "generatedBy": "scripts/generate-block-friction.cjs",
-  "standIns": {
-    "1.8.8": "1.8.9"
-  },
+  "standIns": {},
   "unverified": [],
   "releases": {
     "1.8.8": {
-      "source": "mc-decompiled 1.8.9",
-      "file": "net/minecraft/block/Block.java",
-      "sha256": "7898cf8cc7ce66f6b54e71447c643828bf85459b419e6291faf6d3fa34861516",
+      "source": "legacy 6b04ba67f26b024eca38da0b725c74707bbbfd452a19a9ff9f388cd9a9f95126",
+      "file": "net/minecraft/world/level/block/Block.java",
+      "sha256": "35ad6b7c1c3dbc1625ab86802a026804bfe6fbfd8458bd71c7cc1dc0a1b19f81",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -36,9 +34,9 @@
       }
     },
     "1.9.4": {
-      "source": "mc-decompiled 1.9.4",
-      "file": "net/minecraft/block/Block.java",
-      "sha256": "e73391436829ced40353f53e059d41612aad2eed34c3472f0d78dcff6c5f72e1",
+      "source": "legacy b51df795602cf7db13963b4c47a2aac468c733b13653f67764acb5d7feb0ce75",
+      "file": "net/minecraft/world/level/block/Block.java",
+      "sha256": "95e6be8af52c73b4daae7f2458779aa263be065775706455846b3e21672eac97",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -71,9 +69,9 @@
       }
     },
     "1.10.2": {
-      "source": "mc-decompiled 1.10.2",
-      "file": "net/minecraft/block/Block.java",
-      "sha256": "04a9f489ace759f0a9d6a5bed4ac3dae6d4f27ea5754ffcf72525c2517c94b77",
+      "source": "legacy e675cda5ba5f17b95195ed6e9cab04ab6ec9c1bd9b7d23526d54a69297a7a1ca",
+      "file": "net/minecraft/world/level/block/Block.java",
+      "sha256": "4914f717c5122e4577e457657ffe0d89554772fca58e4fe59eedae7a0a9093b5",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -106,9 +104,9 @@
       }
     },
     "1.11.2": {
-      "source": "mc-decompiled 1.11.2",
-      "file": "net/minecraft/block/Block.java",
-      "sha256": "7cb2ffdf8ba4284926f7d69ab92061b5adf7c259611d1c67e05c6c63e3547f37",
+      "source": "legacy 57b0457a003b7bba8142897d0ae1cba5406519396bec31d5484a0161eb4b0672",
+      "file": "net/minecraft/world/level/block/Block.java",
+      "sha256": "27886915257c847887ded5e52be3b26292fa5b867aa089217150552677804d18",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -141,9 +139,9 @@
       }
     },
     "1.12.2": {
-      "source": "mc-decompiled 1.12.2",
-      "file": "net/minecraft/block/Block.java",
-      "sha256": "6bc8ca9f5eb6dcc8e9f975c639ace7d547ad3c47ec8cb07eb9750e480094b43b",
+      "source": "legacy 4b13a30b9cec4e1f6ab3ef0fe6cb6eed1a6447f8bbafee2d99261f1174d1a6e2",
+      "file": "net/minecraft/world/level/block/Block.java",
+      "sha256": "09bec9cfd76ad41b68197c733b9ddfea8d08c99ee5d1dce404894065a6b66f3c",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -176,9 +174,9 @@
       }
     },
     "1.13.2": {
-      "source": "mc-decompiled 1.13.2",
-      "file": "net/minecraft/block/Block.java",
-      "sha256": "b0afa04f9affcacf08fbc51178c5c8b109466b29b66e2892a76ed443a40c8ab7",
+      "source": "legacy 634828d65d2212fe3b6e7e2e4a1befa5343b57ec7cdfbc36abf3ca7bf139236c",
+      "file": "net/minecraft/world/level/block/Block.java",
+      "sha256": "9316ffcec936be291ce36a9c051719c6c1b002abacdc4b0bc13bf5a19f9fa94a",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -752,9 +750,9 @@
       }
     },
     "1.19": {
-      "source": "mc-decompiled 1.19",
-      "file": "net/minecraft/block/Blocks.java",
-      "sha256": "017c884c1e009d0b8c6c4c38c1f57a4d4e5ac3af34c2c31dff5ccdff6df8a066",
+      "source": "origin/client1.19 2bcb10e888eeee163636b9292d8e906b9ee98d4e",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "3e478ec83c202fc89ee20245321bb6dfcf94c243cc88b02017b518c3e94f0191",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -860,9 +858,9 @@
       }
     },
     "1.19.3": {
-      "source": "mc-decompiled 1.19.3",
-      "file": "net/minecraft/block/Blocks.java",
-      "sha256": "16ca5e7e4985c5cdb07a45a5cc2ab50b805d0c017a1e79e2b0dcdb92480c2717",
+      "source": "origin/client1.19.3 4b469221a8a4559e634823d931dcae26d59f548e",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "3c4530e455fd7602140f4336ff012d2db2614ea013cc71f211b3a12af82322c1",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -896,9 +894,9 @@
       }
     },
     "1.19.4": {
-      "source": "mc-decompiled 1.19.4",
-      "file": "net/minecraft/block/Blocks.java",
-      "sha256": "71c87df30bed53d6072c6d3756f8d029c2ea3f126ccae8ffcf8cbb58fed20637",
+      "source": "origin/client1.19.4 20e005fafc4928179f144d3ff68413f0ca70808b",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "7bb578a67477456cdbb85f8956db9faab75a5756b90ac8d2d6567eccab7d8074",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -932,9 +930,9 @@
       }
     },
     "1.20": {
-      "source": "mc-decompiled 1.20",
-      "file": "net/minecraft/block/Blocks.java",
-      "sha256": "30afca7678b96f631a47607b2a510e13c64040d636dab0d693a1e1939756f912",
+      "source": "origin/client1.20 aaa632b95f0d0f45b75af0e820807771fdfe3711",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "e6c007ef8099bc0d0806ec6d18db23cf2e379ecc16bdff91534352694af1244f",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -1004,9 +1002,9 @@
       }
     },
     "1.20.2": {
-      "source": "mc-decompiled 1.20.2",
-      "file": "net/minecraft/block/Blocks.java",
-      "sha256": "19f2cb2274ff8ef4654355ed444e9fa1e9952345d8f71a857d415cc0ed2f4657",
+      "source": "origin/client1.20.2 31536fd92d1808232f8c92ed4e2cc8efe648afa9",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "6dd16c60eed1e439d316934fd6d76ad13261073091e912912e739ef6d1670b31",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -1076,9 +1074,9 @@
       }
     },
     "1.20.4": {
-      "source": "mc-decompiled 1.20.4",
-      "file": "net/minecraft/block/Blocks.java",
-      "sha256": "2354115275ad1f4ae44014a95ec8a05464931603ccfbcc4f487c322a82eef67f",
+      "source": "origin/client1.20.4 6cc5ed552c39085fc7243a2ae0dcd96344f87620",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "561ee21490a3eac52cbf2693da82be02bb60a554da06e7f7a67c5c6980b5645d",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -1112,9 +1110,9 @@
       }
     },
     "1.20.5": {
-      "source": "mc-decompiled 1.20.5",
-      "file": "net/minecraft/block/Blocks.java",
-      "sha256": "4efd3dd4ec9d4de37fd99ee312e56cf981b3b9ce8984fa5206ee26ca048d0480",
+      "source": "origin/client1.20.5 b5eb2183e5c7cfd016c59a61ac97dd31c76f89e6",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "61bc4415f8a722db5039b43b9e0310bc9523b30d2e37d21ae3a5b686a94170c7",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -1184,9 +1182,9 @@
       }
     },
     "1.21": {
-      "source": "mc-decompiled 1.21",
-      "file": "net/minecraft/block/Blocks.java",
-      "sha256": "51f754f4f5aeb9446a4e4784001090c465edbdc14a06889aa8184c639081b69a",
+      "source": "origin/client1.21 c7b74b7fff4b617bc2d579fb2a8e7b2912061c25",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "ac7d8900eb142434c2099bff55a0b8fa0925c7c13cc765cf6e9c89261a15d176",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -1292,9 +1290,9 @@
       }
     },
     "1.21.3": {
-      "source": "mc-decompiled 1.21.3",
-      "file": "net/minecraft/block/Blocks.java",
-      "sha256": "43e1bac9aa80ba01c1d19f4af3ba723ca11276a7f767fa2741dd353590c17f06",
+      "source": "origin/client1.21.3 c3b80bfb89ae12572a77595271672bcbdb3c390b",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "d9f975c975cf79e847cb6df061789c605bf486f9647e088a9361b608af2b77c6",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -1328,9 +1326,9 @@
       }
     },
     "1.21.4": {
-      "source": "mc-decompiled 1.21.4",
-      "file": "net/minecraft/block/Blocks.java",
-      "sha256": "77c30de03d39e923df7e5ccfd4370e27b1bf273b97de659a705750594698ae10",
+      "source": "origin/client1.21.4 43a29ca80bb329f75b92695317a522492e25c2e7",
+      "file": "net/minecraft/world/level/block/Blocks.java",
+      "sha256": "dd25701497ad16b77cb7810bf4da576e3a75128e94a987dae36f73dac935583c",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -1364,9 +1362,9 @@
       }
     },
     "1.21.5": {
-      "source": "mc-decompiled 1.21.5",
+      "source": "origin/client1.21.5 860a1f0798a1e66f0d3bf4d898940437635f1ef8",
       "file": "net/minecraft/world/level/block/Blocks.java",
-      "sha256": "8686173427fb4277cc6868e7fd8dc3931ccdd77913aaf06c1ed98461e069c757",
+      "sha256": "8879139e3435b5d72098de90f0efca78454ab41271d7b9bb500d3dd02eb8ccf4",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -1400,9 +1398,9 @@
       }
     },
     "1.21.6": {
-      "source": "mc-decompiled 1.21.6",
+      "source": "origin/client1.21.6 72f4898ae9886323e7b78e639b8ceaceb4e20df7",
       "file": "net/minecraft/world/level/block/Blocks.java",
-      "sha256": "b874436a05128caeaca2debeef3e0deb84c5213e4eff92b00192de5857c2f21d",
+      "sha256": "9b821037ebd1e96c98e7058d6cb4fe3e20a2ebc8a1d1472d7f808b8c92436b7b",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -1436,9 +1434,9 @@
       }
     },
     "1.21.7": {
-      "source": "mc-decompiled 1.21.7",
+      "source": "origin/client1.21.7 e86fb0504027e61e66ff8ff9bbe9b0b178f0a85f",
       "file": "net/minecraft/world/level/block/Blocks.java",
-      "sha256": "b874436a05128caeaca2debeef3e0deb84c5213e4eff92b00192de5857c2f21d",
+      "sha256": "9b821037ebd1e96c98e7058d6cb4fe3e20a2ebc8a1d1472d7f808b8c92436b7b",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -1472,9 +1470,9 @@
       }
     },
     "1.21.8": {
-      "source": "mc-decompiled 1.21.8",
+      "source": "origin/client1.21.8 fa8d87bf19ddbf9f1f266dd4d47954a9743739fb",
       "file": "net/minecraft/world/level/block/Blocks.java",
-      "sha256": "b874436a05128caeaca2debeef3e0deb84c5213e4eff92b00192de5857c2f21d",
+      "sha256": "9b821037ebd1e96c98e7058d6cb4fe3e20a2ebc8a1d1472d7f808b8c92436b7b",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -1508,9 +1506,9 @@
       }
     },
     "1.21.9": {
-      "source": "mc-decompiled 1.21.9",
+      "source": "origin/client1.21.9 d994b26189ca5fcb3b614a935714cffb1dc0863e",
       "file": "net/minecraft/world/level/block/Blocks.java",
-      "sha256": "803be9cd499ef2e7e3864b348f4eb831b8ac6f244018e528c38c2f5708c03a42",
+      "sha256": "c39ea81002259b25c2ac807b5fbf0caa4599c5e79b577c43201b0d2806da91bc",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -1544,9 +1542,9 @@
       }
     },
     "1.21.10": {
-      "source": "mc-decompiled 1.21.10",
+      "source": "origin/client1.21.10 bd23da1145bce3e596ff2592d8b07e248255ce7e",
       "file": "net/minecraft/world/level/block/Blocks.java",
-      "sha256": "803be9cd499ef2e7e3864b348f4eb831b8ac6f244018e528c38c2f5708c03a42",
+      "sha256": "c39ea81002259b25c2ac807b5fbf0caa4599c5e79b577c43201b0d2806da91bc",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579
@@ -1580,9 +1578,9 @@
       }
     },
     "1.21.11": {
-      "source": "mc-decompiled 1.21.11",
+      "source": "origin/client1.21.11 09859053de9898f726a798244c1d219ec1d42dee",
       "file": "net/minecraft/world/level/block/Blocks.java",
-      "sha256": "f491a17785c58b15b1a363e65a1c53441262876055133969f8a6bc6548ecebd3",
+      "sha256": "7c83e35235dd945d0805cac1a6b607fc0dd23ecae779a2c0ba263c0b7627dce2",
       "default": {
         "expression": "0.6F",
         "value": 0.6000000238418579

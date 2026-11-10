@@ -101,6 +101,7 @@ fn owner(id: i32) -> ProjectileOwner {
         player: true,
         spectator: false,
         removed: false,
+        won_game: false,
     }
 }
 
@@ -813,6 +814,7 @@ fn player_owner(id: i32) -> ProjectileOwner {
         player: true,
         spectator: false,
         removed: false,
+        won_game: false,
     }
 }
 
@@ -936,6 +938,31 @@ fn a_pearl_goes_with_its_dead_player() {
 }
 
 #[test]
+fn a_pearl_stays_only_by_a_rule_of_its_release() {
+    // 1.20.1 ThrownEnderpearl.java:90-92 discards with no rule; 1.20.2 :90 has the rule
+    let dead = Some(ProjectileOwner { alive: false, ..player_owner(5) });
+    let lost = |release| {
+        let mut rule = ProjectileHitState { pearl_outlives_owner: true, ..aged() };
+        tick_family(ProjectileKind::EnderPearl, &mut rule, &[], dead, release).1.discarded
+    };
+    assert!(lost(v(1, 20, 1)));
+    assert!(!lost(R1_20_2));
+}
+
+#[test]
+fn a_pearl_waits_out_the_credits_from_1_21_9() {
+    // showEndCredits removes the player and sets wonGame (26.3 ServerPlayer.java:1135-1143), which
+    // ThrownEnderpearl.tick reads from 1.21.9 (26.3 ThrownEnderpearl.java:177; 1.21.8 has none)
+    let credits = Some(ProjectileOwner { alive: false, won_game: true, ..player_owner(5) });
+    let lost = |release| tick_family(ProjectileKind::EnderPearl, &mut aged(), &[], credits, release).1.discarded;
+    assert!(lost(R1_21_8));
+    assert!(!lost(R1_21_9));
+    assert!(!lost(R26_3));
+    let alive = Some(ProjectileOwner { won_game: true, ..player_owner(5) });
+    assert!(!tick_family(ProjectileKind::EnderPearl, &mut aged(), &[], alive, R1_21_8).1.discarded);
+}
+
+#[test]
 fn a_dragon_fireball_does_not_burst_on_its_owner() {
     let me = target(5, 1.0);
     let late = || ProjectileHitState { flying_ticks: 30, left_owner: true, ..aged() };
@@ -962,6 +989,27 @@ fn fireballs_and_bullets_pass_no_physics_targets_from_1_9() {
     }
     assert!(tick_family(ProjectileKind::Fireball, &mut aged(), &[ghost], None, R1_8).1.discarded);
     assert!(tick_family(ProjectileKind::Snowball, &mut aged(), &[ghost], None, R26_3).1.discarded);
+}
+
+#[test]
+fn no_family_takes_a_spectator_in_any_release() {
+    // getEntities(this, box) is NO_SPECTATORS before 1.14 (1.8.8 Level.java:2173-2175, 1.13.2
+    // EntityGetter.java:18-20); each canHitEntity says !isSpectator() from 1.14
+    let spectator = ProjectileTarget { spectator: true, ..target(1, 2.0) };
+    for kind in [ProjectileKind::Snowball, ProjectileKind::Fireball, ProjectileKind::LlamaSpit, ProjectileKind::ShulkerBullet] {
+        for release in [R1_8, R1_12, R1_13, R1_14, R26_3] {
+            if kind == ProjectileKind::LlamaSpit && release == R1_8 {
+                continue;
+            }
+            let (_, result, report) = tick_family(kind, &mut aged(), &[spectator], None, release);
+            assert!(!result.discarded && report.entity_hits.is_empty(), "{kind:?} {release}");
+        }
+        // the same target, no spectator, is taken
+        let seen = ProjectileTarget { spectator: false, ..spectator };
+        assert!(!tick_family(kind, &mut aged(), &[seen], None, R1_13).2.entity_hits.is_empty(), "{kind:?}");
+    }
+    let world = WorldSnapshot::new();
+    assert!(shot(&[spectator], &world, R1_8).2.entity_hits.is_empty());
 }
 
 #[test]
@@ -1136,6 +1184,64 @@ fn a_hook_hooks_stops_then_rides_its_target() {
     assert_eq!(result.position, Vec3::new(villager.position.x, 2.0 * 0.8, 0.0));
     tick_projectile_with_targets(&mut state, &mut hits, &[], owner, &world, R26_3);
     assert_eq!((hits.hooked, hits.hook_settled), (None, false));
+}
+
+#[test]
+fn a_riding_hooks_box_goes_with_it_from_1_11_until_the_box_is_no_kept_one() {
+    // setPos remakes the box: 1.11.2 FishingHook.java:199, 1.13.2 :207 (Entity.java:419-426), 1.14.4 :176,
+    // 1.15 :193, 1.16.5 :197; from 1.17 no move reads a kept box
+    let box_after_a_ride = |release| {
+        let owner = Some(player_owner(9));
+        let world = WorldSnapshot::new();
+        let villager = target(1, 2.0);
+        let mut hits = aged();
+        let mut state = flying(ProjectileKind::FishingHook);
+        let kept = Aabb::new(Vec3::new(-0.125, 1.0, -0.125), Vec3::new(0.125, 1.25, 0.125));
+        state.bounding_box = Some(kept);
+        hits.hooked = Some(1);
+        hits.hook_settled = true;
+        let (result, _) = tick_projectile_with_targets(&mut state, &mut hits, &[villager], owner, &world, release);
+        assert_eq!(result.position, Vec3::new(villager.position.x, 2.0 * 0.8, 0.0), "{release:?}");
+        (state.bounding_box, kept, ProjectileKind::FishingHook.bounding_box(state.position))
+    };
+    for release in [v(1, 11, 2), R1_13, R1_14, R1_15, R1_16] {
+        let (kept, _, remade) = box_after_a_ride(release);
+        assert_eq!(kept, Some(remade), "{release:?}");
+    }
+    let (kept, before, _) = box_after_a_ride(R26_3);
+    assert_eq!(kept, Some(before), "from 1.17 no move reads it");
+}
+
+#[test]
+fn a_flying_hooks_box_is_made_again_from_its_position_at_the_end_of_its_tick_until_1_17() {
+    // 1.8.8 FishingHook.java:415, 1.13.2 :239, 1.16.5 :244: the moved box's middle rounds, the remade box is the position's;
+    // pj_fishing_hook_on_ground on 1.8.8 and pj_fishing_hook_hits_target on 1.16 parted by an ulp without it
+    let owner = Some(player_owner(9));
+    let world = WorldSnapshot::new();
+    for release in [R1_8, R1_13, R1_16] {
+        let mut hits = aged();
+        let mut state = flying(ProjectileKind::FishingHook);
+        state.position = Vec3::new(1.6949767493346908, 100.90692534674463, 0.5783538038365146);
+        state.velocity = Vec3::new(0.8271410417893843, -0.19687604196014166, -0.008240769786223184);
+        state.bounding_box = Some(ProjectileKind::FishingHook.bounding_box(state.position));
+        tick_projectile_with_targets(&mut state, &mut hits, &[], owner, &world, release);
+        assert_eq!(state.bounding_box, Some(ProjectileKind::FishingHook.bounding_box(state.position)), "{release:?}");
+    }
+}
+
+#[test]
+fn a_hook_before_1_11_leaves_its_box_where_it_was_as_it_rides() {
+    // 1.8.8 FishingHook.java:199-202, 1.10.2 :187-190: x, y and z, no setPosition
+    let owner = Some(player_owner(9));
+    let villager = target(1, 2.0);
+    let world = WorldSnapshot::new();
+    let mut hits = ProjectileHitState { hooked: Some(1), ..aged() };
+    let mut state = flying(ProjectileKind::FishingHook);
+    let kept = Aabb::new(Vec3::new(-0.125, 1.0, -0.125), Vec3::new(0.125, 1.25, 0.125));
+    state.bounding_box = Some(kept);
+    tick_projectile_with_targets(&mut state, &mut hits, &[villager], owner, &world, R1_8);
+    assert_eq!(state.position.y, 2.0 * 0.8);
+    assert_eq!(state.bounding_box, Some(kept));
 }
 
 #[test]
@@ -1400,4 +1506,262 @@ fn a_hook_of_1_9_and_1_10_loses_its_first_catch_to_its_own_tracker() {
     let mut hits = aged();
     tick_family(ProjectileKind::FishingHook, &mut hits, &[villager], owner, R1_11);
     assert_eq!(hits.hooked, Some(1));
+}
+
+#[test]
+fn a_fireball_meets_the_cells_past_the_border_in_1_13_only() {
+    // 1.13.2 ProjectileUtil.java:27 asks noCollision of the box, whose query takes a cell past the border
+    // as a full block for an entity inside it, by a block's margin its kept flag chooses (LevelReader.java:113-155,
+    // 172-200); 1.14.4 LevelReader.java:147-157 counts the border only for a box meeting its edge from inside.
+    // pj_fireball_border_crossing on 1.13.2 blows up at x 6.06 by a border at 5.5
+    let mut world = WorldSnapshot::new();
+    world.set_world_bounds(-64, 320, 0.0, 0.0, 10.0);
+    world.set_chunk_loaded(0, 0, true);
+    let fly = |release, outside_border| {
+        let mut hits = ProjectileHitState { outside_border, ..aged() };
+        let mut state = flying(ProjectileKind::Fireball);
+        state.position = Vec3::new(5.6, 1.0, 0.0);
+        state.velocity = Vec3::new(1.0, 0.0, 0.0);
+        let (result, _) = tick_projectile_with_targets(&mut state, &mut hits, &[], None, &world, release);
+        (result.block_hit, hits.outside_border)
+    };
+    assert_eq!(fly(R1_13, false), (true, false));
+    assert_eq!(fly(R1_13, true), (false, true));
+    assert_eq!(fly(R1_14, false), (false, false));
+    assert_eq!(fly(R1_12, false), (false, false));
+}
+
+// B290: each gate of this file that the sweep left open, on the two releases about its boundary.
+const R1_15_2: MinecraftVersion = v(1, 15, 2);
+const R1_16_0: MinecraftVersion = v(1, 16, 0);
+const R1_20_3: MinecraftVersion = v(1, 20, 3);
+const R1_20_6: MinecraftVersion = v(1, 20, 6);
+
+/// A scene of `kind` among no listed targets, for the tests of one predicate.
+fn scene_of<'a>(
+    kind: ProjectileKind,
+    owner: Option<ProjectileOwner>,
+    hits: &'a mut ProjectileHitState,
+) -> HitScene<'a> {
+    let mut scene = HitScene::new(&[], owner, hits);
+    scene.kind = kind;
+    scene.live = true;
+    scene
+}
+
+#[test]
+fn a_negative_damage_rounds_up_from_itself_until_1_13_and_from_zero_from_1_14() {
+    // 1.13.2 AbstractArrowEntity.java: MathHelper.ceil(f * this.damage); 1.14.4 AbstractArrow.java:341
+    // Mth.ceil(Math.max(f * baseDamage, 0.0D)): a negative base damage (the arrow's damage tag) is 0 from 1.14
+    assert_eq!(arrow_damage(1.0, -1.5, R1_13), -1);
+    assert_eq!(arrow_damage(1.0, -1.5, R1_14), 0);
+}
+
+#[test]
+fn leaving_the_owner_is_no_state_of_1_15_2() {
+    // 1.15.2 AbstractArrow.java:465 spares the owner by flightTime and has no leftOwner; 1.16
+    // Projectile.java:77-78 checkLeftOwner: no owner has left at once
+    let left = |release| {
+        let mut hits = ProjectileHitState::default();
+        let mut scene = scene_of(ProjectileKind::Arrow, None, &mut hits);
+        scene.check_left_owner(Vec3::new(0.0, 1.0, 0.0), Vec3::new(3.0, 0.0, 0.0), release);
+        hits.left_owner
+    };
+    assert!(!left(R1_15_2));
+    assert!(left(R1_16_0));
+}
+
+#[test]
+fn an_arrows_candidates_on_each_side_of_1_9_1_14_and_1_16() {
+    let mut hits = ProjectileHitState { flying_ticks: 50, ..ProjectileHitState::default() };
+    let scene = scene_of(ProjectileKind::Arrow, None, &mut hits);
+    // 1.8.8 AbstractArrow.java:204 asks collides() alone; 1.9.4 AbstractArrow.java: isAlive() too
+    let dead = ProjectileTarget { alive: false, ..target(1, 1.0) };
+    assert!(scene.can_hit(&dead, R1_8));
+    assert!(!scene.can_hit(&dead, R1_9));
+    // 1.13.2 has no piercingIgnoreEntityIds; 1.14.4 AbstractArrow.java:452 skips them
+    let mut hits = ProjectileHitState { pierced: vec![1], ..ProjectileHitState::default() };
+    let scene = scene_of(ProjectileKind::Arrow, None, &mut hits);
+    assert!(scene.can_hit(&target(1, 1.0), R1_13));
+    assert!(!scene.can_hit(&target(1, 1.0), R1_14));
+    // 1.15.2 AbstractArrow.java:465 spares the owner itself for five flying ticks; 1.16
+    // Projectile.java:141 spares what it rides with until the arrow has left
+    let mut hits = ProjectileHitState { flying_ticks: 50, ..ProjectileHitState::default() };
+    let scene = scene_of(ProjectileKind::Arrow, Some(owner(1)), &mut hits);
+    let boat = ProjectileTarget { root_vehicle: 1, ..target(2, 1.0) };
+    assert!(scene.can_hit(&boat, R1_15_2));
+    assert!(!scene.can_hit(&boat, R1_16_0));
+}
+
+#[test]
+fn an_arrow_turns_at_every_deflection_in_1_20_6_and_once_by_an_entity_from_1_21() {
+    // 1.20.6 Projectile.java:158-170 deflects each time; 1.21 Projectile.java:168-177 tests lastDeflectedBy
+    let breeze = ProjectileTarget { deflects: true, ..target(1, 1.0) };
+    let turned = |release| {
+        let targets = [breeze];
+        let mut hits = ProjectileHitState { last_deflected_by: Some(1), ..aged() };
+        let mut scene = HitScene::new(&targets, None, &mut hits);
+        let mut velocity = Vec3::new(3.0, 0.0, 0.0);
+        assert!(scene.hit((0, Vec3::new(0.7, 1.0, 0.0)), &mut velocity, release));
+        velocity.x
+    };
+    assert_eq!(turned(R1_20_6), -1.5);
+    assert_eq!(turned(R1_21), 3.0);
+}
+
+#[test]
+fn a_breeze_turns_an_arrow_by_its_random_from_1_20_3() {
+    // 1.20.2 AbstractArrow.java:337-390 has no DEFLECTS_ARROWS; 1.20.3 AbstractArrow.java:345, 396 deflect()
+    let breeze = ProjectileTarget { hurt: false, deflects: true, deflect_random: 0.25, ..target(1, 1.0) };
+    let world = WorldSnapshot::new();
+    assert_eq!(shot(&[breeze], &world, R1_20_2).2.entity_hits[0].reaction, ProjectileReaction::Refused);
+    assert_eq!(shot(&[breeze], &world, R1_20_3).2.entity_hits[0].reaction, ProjectileReaction::Deflected);
+}
+
+#[test]
+fn a_refusal_rounds_a_subnormal_motion_by_each_release_s_arithmetic() {
+    // 1.20.4 AbstractArrow.java:399 scale(-0.1); 1.20.5 AbstractArrow.java:401-402 deflect(REVERSE), the
+    // scale(-0.5) of ProjectileDeflection.REVERSE, then scale(0.2). The two agree but where halving the
+    // motion rounds: 5 of the least subnormal is 0.5 of it by -0.1 (up, 0.1 being over a tenth), 2 by
+    // -0.5 (to even) and 0.4 of it by 0.2
+    let turned = |release| {
+        let mut hits = aged();
+        let mut scene = scene_of(ProjectileKind::Arrow, None, &mut hits);
+        let mut velocity = Vec3::new(f64::from_bits(5), 0.0, 0.0);
+        scene.refused(&mut velocity, release);
+        velocity.x.to_bits()
+    };
+    assert_eq!(turned(R1_20_4), (-f64::from_bits(1)).to_bits());
+    assert_eq!(turned(R1_20_5), (-0.0_f64).to_bits());
+}
+
+#[test]
+fn a_refusal_starts_the_shooters_ticks_again_until_1_15_2() {
+    // 1.15.2 AbstractArrow.java:432 flightTime = 0; 1.16 AbstractArrow.java:373-376 has none
+    let ticks = |release| {
+        let mut hits = aged();
+        let mut scene = scene_of(ProjectileKind::Arrow, None, &mut hits);
+        scene.refused(&mut Vec3::new(3.0, 0.0, 0.0), release);
+        hits.flying_ticks
+    };
+    assert_eq!(ticks(R1_15_2), 0);
+    assert_eq!(ticks(R1_16_0), 20);
+}
+
+#[test]
+fn a_trident_turns_a_subnormal_motion_back_by_each_release_s_arithmetic() {
+    // 1.21.1 ThrownTrident.java:137 multiply(-0.01, -0.1, -0.01); 1.21.2 ThrownTrident.java:144-145 and
+    // 26.2 :153-154 deflect(REVERSE) (scale(-0.5)) then multiply(0.02, 0.2, 0.02); 26.3 ThrownTrident.java:152
+    // with ProjectileDeflection.java:14 multiply(-power * 0.5), -0.1 on y. Only a halving that rounds tells them apart
+    let turned = |release| {
+        let mut hits = aged();
+        let mut scene = scene_of(ProjectileKind::Trident, None, &mut hits);
+        scene.trident = true;
+        let mut velocity = Vec3::new(0.0, f64::from_bits(5), 0.0);
+        scene.hit_as_trident(&target(1, 1.0), Vec3::ZERO, &mut velocity, release);
+        velocity.y.to_bits()
+    };
+    let tenth = (-f64::from_bits(1)).to_bits();
+    let halved = (-0.0_f64).to_bits();
+    assert_eq!(turned(R1_21_1), tenth);
+    assert_eq!(turned(R1_21_2), halved);
+    assert_eq!(turned(R26_2), halved);
+    assert_eq!(turned(R26_3), tenth);
+}
+
+#[test]
+fn the_families_candidates_on_each_side_of_1_9_1_16_and_1_20_5() {
+    let mut hits = aged();
+    // 1.15.2 LlamaSpit: anything but its owner; 1.16 Projectile.java:138-145 asks isPickable
+    let ghost = ProjectileTarget { pickable: false, ..target(1, 2.0) };
+    let scene = scene_of(ProjectileKind::LlamaSpit, None, &mut hits);
+    assert!(scene.family_can_hit(&ghost, R1_15_2));
+    assert!(!scene.family_can_hit(&ghost, R1_16_0));
+    // 1.20.4 WindCharge.java:61-63 takes an end crystal; 1.20.5 AbstractWindCharge.java:52-58 not
+    let crystal = ProjectileTarget { end_crystal: true, ..target(1, 2.0) };
+    let mut hits = aged();
+    let scene = scene_of(ProjectileKind::WindCharge, None, &mut hits);
+    assert!(scene.family_can_hit(&crystal, R1_20_4));
+    assert!(!scene.family_can_hit(&crystal, R1_20_5));
+    // 1.8.9 Fireball tick asks collides() alone; 1.9.4 ProjectileUtil passes a noPhysics entity
+    let no_physics = ProjectileTarget { no_physics: true, ..target(1, 2.0) };
+    let mut hits = aged();
+    let scene = scene_of(ProjectileKind::Fireball, None, &mut hits);
+    assert!(scene.family_can_hit(&no_physics, R1_8));
+    assert!(!scene.family_can_hit(&no_physics, R1_9));
+}
+
+#[test]
+fn a_thrown_items_query_on_each_side_of_1_14_and_1_16() {
+    let neighbour = target(4, 1.0);
+    let first = || ProjectileHitState { tick_count: 0, ..aged() };
+    let thrower = Some(player_owner(9));
+    // 1.13.2 ThrowableEntity.java:145-169 ignores what its thrower's item meets on its first tick, as
+    // 1.15.2 ThrowableProjectile.java:109-123 does; 1.16 Projectile.java:138-145 has no such entity
+    for release in [R1_13, R1_15_2] {
+        assert!(!tick_family(ProjectileKind::Snowball, &mut first(), &[neighbour], thrower, release).1.discarded, "{release}");
+    }
+    let mut hits = first();
+    assert!(tick_family(ProjectileKind::Snowball, &mut hits, &[neighbour], thrower, R1_16_0).1.discarded);
+    assert_eq!((hits.ignored, hits.ignore_time), (None, 0), "1.16 keeps no ignored entity");
+    // 1.13.2 ThrowableEntity.java:153-160 starts nearest at 0, so a hit at a distance of 0 gives way to the next;
+    // 1.14.4 ThrowableProjectile.java:127 ProjectileUtil.getHitResult keeps the strict nearest. AABB.clip takes no
+    // hit at the start, so the distance is 0 as its square underflows: the item 1e-200 short of the first box
+    let start = f64::from(TARGET_MARGIN);
+    let (at, next) = (target(7, start), target(8, start + 1.5));
+    let hit = |release| {
+        let mut state = flying(ProjectileKind::Snowball);
+        state.position.x = -1.0e-200;
+        let world = WorldSnapshot::new();
+        let (_, report) = tick_projectile_with_targets(&mut state, &mut aged(), &[at, next], None, &world, release);
+        report.entity_hits[0].target
+    };
+    assert_eq!(hit(R1_13), 8);
+    assert_eq!(hit(R1_14), 7);
+}
+
+#[test]
+fn a_families_hit_is_at_the_entity_until_1_21_1_and_on_the_ray_from_1_21_2() {
+    // 1.21.1 ProjectileUtil.java:137 new EntityHitResult(entity); 1.21.2 ProjectileUtil.java:139 the clip point
+    let at = target(1, 2.0);
+    let location = |release| tick_family(ProjectileKind::Snowball, &mut aged(), &[at], None, release).2.entity_hits[0].location;
+    assert_eq!(location(R1_21_1), at.position);
+    assert_eq!(location(R1_21_2).x, 2.0 - f64::from(TARGET_MARGIN));
+}
+
+#[test]
+fn a_fireball_turns_at_every_deflection_and_halves_its_power_by_release() {
+    let breeze = ProjectileTarget { deflects: true, ..target(1, 2.0) };
+    // 1.20.6 Projectile.java:163 deflects each time; 1.21 Projectile.java:171 once by an entity
+    let again = |release| {
+        let mut hits = ProjectileHitState { last_deflected_by: Some(1), ..aged() };
+        tick_family(ProjectileKind::Fireball, &mut hits, &[breeze], None, release).0.velocity.x
+    };
+    assert!(again(R1_20_6) < 0.0);
+    assert!(again(R1_21) > 0.0);
+    // 1.20.6 AbstractHurtingProjectile.java:188 the power from the turned motion; 1.21
+    // AbstractHurtingProjectile.java:174 half the accelerationPower
+    let fresh = flying(ProjectileKind::Fireball);
+    let (state, ..) = tick_family(ProjectileKind::Fireball, &mut aged(), &[breeze], None, R1_20_6);
+    assert_ne!(state.power, fresh.power);
+    assert_eq!(state.acceleration_power, fresh.acceleration_power);
+    let (state, ..) = tick_family(ProjectileKind::Fireball, &mut aged(), &[breeze], None, R1_21);
+    assert_eq!(state.power, fresh.power);
+    assert_eq!(state.acceleration_power, fresh.acceleration_power * 0.5);
+}
+
+#[test]
+fn an_arrows_hit_at_its_start_gives_way_on_1_13_2_and_not_on_1_14_4() {
+    // 1.13.2 AbstractArrowEntity.java: nearest starts at 0.0 and a hit at 0 is replaced (`d1 < d0 || d0 == 0.0D`);
+    // 1.14.4 ProjectileUtil.java:117-129 the strict nearest from Double.MAX_VALUE
+    // (a distance of 0 from a square that underflows: the arrow 1e-200 short of the first box)
+    let world = WorldSnapshot::new();
+    let start = f64::from(TARGET_MARGIN);
+    let (first, second) = (target(7, start), target(8, start + 1.5));
+    let hit = |release| {
+        let mut state = ArrowState::new(Vec3::new(-1.0e-200, 1.0, 0.0), Vec3::new(3.0, 0.0, 0.0));
+        ids(&tick(&mut state, &mut aged(), &[first, second], &world, release).1)
+    };
+    assert_eq!(hit(R1_13), [8]);
+    assert_eq!(hit(R1_14), [7]);
 }

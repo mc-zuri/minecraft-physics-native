@@ -15,8 +15,8 @@
 //! | SHULKER     | none: scoped out, a shulker's push   | slows it         | none          | no         |
 //! | SHULKER_BOX | none: only Shulker.move              | slows it         | none          | no         |
 //!
-//! Before 1.11 there is no MoverType: a piston's push is `move_entity` with `by_piston` false, and
-//! backs off as any move does. move_entity with `by_piston` false stands for SELF and PLAYER only.
+//! Before 1.11 there is no MoverType: a piston's push is `move_entity` with SelfOrPlayer, and
+//! backs off as any move does. MoverType::ShulkerBox stands for SHULKER_BOX and SHULKER.
 //! The limit starts over at a new game time: TickScene::advance clears the deltas, and a line's
 //! nextTick asks the same of this test.
 //!
@@ -34,7 +34,7 @@
 
 use crate::math::Vec3;
 use crate::piston::{limit_piston_movement, move_entity};
-use crate::simulation::{PhysicsConfig, SimulationState};
+use crate::simulation::{MoverType, PhysicsConfig, SimulationState};
 use crate::version::MinecraftVersion;
 use crate::world::{BlockEffect, BlockShape, BlockState, WorldSnapshot, FENCE_LIKE};
 use crate::Aabb;
@@ -286,10 +286,16 @@ fn check_fixture(release: MinecraftVersion, fixture: &str) {
                             if let Some(delta) =
                                 limit_piston_movement(&state, delta, &mut piston_deltas, release)
                             {
-                                move_entity(&mut state, &world, delta, config, release, true);
+                                move_entity(&mut state, &world, delta, config, release, MoverType::Piston);
                             }
                         } else {
-                            move_entity(&mut state, &world, delta, config, release, false);
+                            // (MoverType's order: SELF, PLAYER, PISTON, SHULKER_BOX, SHULKER)
+                            let mover = if cause >= 3 {
+                                MoverType::ShulkerBox
+                            } else {
+                                MoverType::SelfOrPlayer
+                            };
+                            move_entity(&mut state, &world, delta, config, release, mover);
                         }
                         let actual = observed(&state);
                         let want = &expected[index * STATE_WORDS..(index + 1) * STATE_WORDS];

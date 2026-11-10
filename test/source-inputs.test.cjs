@@ -23,7 +23,7 @@ const script = name => path.join(root, 'scripts', name);
 const modern = JSON.parse(fs.readFileSync(path.join(generated, 'minecraft-versions.json'), 'utf8')).versions;
 const absentEnvironment = (base) => {
     const absent = path.join(base, 'absent');
-    return { ...process.env, MC_SOURCE_ROOT: absent, MC_SOURCE_CACHE: absent, MC_DECOMPILED_ROOT: absent, MC_EXTRACTED_DATA_REPO: absent, MC_DECOMP_SRC: absent };
+    return { ...process.env, MC_SOURCE_ROOT: absent, MC_SOURCE_CACHE: absent, MC_EXTRACTED_DATA_REPO: absent, MC_DECOMP_SRC: absent };
 };
 
 /** A stored zip of `entries`, enough for what scripts/zip-read.cjs reads. */
@@ -195,9 +195,9 @@ describe('what the exact clients changed', () => {
         }
     });
 
-    it('reads the identity of the oldest trees from what they embed', { skip: !fs.existsSync(path.join(root, '..', '..', 'pr', 'mc-decompiled')) }, () => {
-        const decompiled = path.join(root, '..', '..', 'pr', 'mc-decompiled');
-        for (const version of ['1.8.9', '1.9.4', '1.10.2', '1.11.2', '1.12.2', '1.13.2']) {
+    it('reads the identity of the oldest trees from what they embed', { skip: !fs.existsSync(require('../scripts/source-roots.cjs').legacySourcesRoot()) }, () => {
+        const decompiled = require('../scripts/source-roots.cjs').legacySourcesRoot();
+        for (const version of ['1.8.8', '1.9.4', '1.10.2', '1.11.2', '1.12.2', '1.13.2']) {
             assert.equal(directoryIdentity(path.join(decompiled, version)), version);
         }
     });

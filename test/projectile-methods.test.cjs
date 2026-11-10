@@ -30,10 +30,10 @@ describe('the projectile inventory', () => {
         }
     });
 
-    it('keeps the shared projectile base to the releases that have one', () => {
-        for (const version of versions) {
-            assert.equal(Boolean(audit[version].files['Projectile.java']), !legacy(version), version);
-        }
+    it('has Projectile.java in every release: the interface of shoot, as 1.14.4 has it, until a shared base class', () => {
+        // (the legacy releases' own decompiles name IProjectile as 1.14.4 does; the yarn trees read before did not)
+        for (const version of versions) assert.ok(audit[version].files['Projectile.java'], version);
+        for (const version of versions.filter(legacy)) assert.deepEqual(Object.keys(audit[version].files['Projectile.java'].methods), [], version);
     });
 
     it('tells a thrown tick from an arrow\'s, and keeps the impact callbacks', () => {

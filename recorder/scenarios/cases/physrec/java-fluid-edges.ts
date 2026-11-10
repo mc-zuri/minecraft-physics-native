@@ -1,11 +1,11 @@
 // Where fluids meet what the other families leave out: a holder of water that dries beside a current (wn_, B139, B148), the eyes
-// under a ceiling (ec_, B148), striders over lava by lava's own rules (sl_, B147), boats over ice and under water (bf_, B155, B146),
+// under a ceiling (ec_, B148), a column the client forgets (ul_, B120), striders over lava by lava's own rules (sl_, B147), boats over ice and under water (bf_, B155, B146),
 // boats at the top of a bubble column (bc_, B144), a web in lava (fw_, B145), shallow lava by gravity (ls_, B142), water drag off
 // the bottom (we_, B141), small bodies in lava (lg_, B138), powder snow's two ticks and cauldrons (pc_, B159), and effects that
 // arrive or leave across two systems (ex_, B132).
 import './_areas/index.ts'
 import {
-  B, F, JUMP, L, R, SNEAK, SPRINT, clearEffects, command, effect, giveEffect, hold, item, kase, look, press, releaseAll, server, setBlock, stable, summon, teleport, ticks, untilOr,
+  B, F, JUMP, L, R, SNEAK, SPRINT, clearEffects, command, effect, forgetChunk, giveEffect, hold, item, kase, look, press, releaseAll, server, setBlock, stable, summon, teleport, ticks, untilOr,
 } from '../../dsl/physrec.ts'
 import {
   BOAT_COLUMN_LANES, BOAT_FLOORS, CAMERA_CEILINGS, CAULDRONS, CRAWL_LANES, FLUID_CLIMBS, FLUID_WEBS, SHALLOW_CELLS, STRIDER_LANES, ULTRA_EDGE, ULTRA_EDGE_ORIGIN, ULTRA_LAVA, WET_NEIGHBOURS, laneZ,
@@ -43,6 +43,14 @@ CAMERA_CEILINGS.forEach((ceiling, i) => {
     out.push(kase(`ec_${slug(ceiling)}_s${scale}`, spec, ticks(20), press(JUMP, 4), ticks(20)))
   }
 })
+
+// ---- A column the client does not hold (B120) ------------------------------------------------------------------------------
+// The box reaches into chunk x<0, whose water the client has until the server's forget packet. Proof: isInWater and
+// fluidHeightWater over the forget, then eyeInWater and the fall on the walk across: the eyes pass through water only the server
+// has. Before 1.14 LivingEntity.travel sinks the player in the column it lacks (1.12.2 LivingEntity.java:1548-1553); from 1.14
+// ClientLevel.hasChunk is true (26.3 :490) and the column is plain air.
+out.push(kase('ul_water_across_the_column', { area: 'unloadedColumn', at: [0.2, 0, 8.5], yaw: 90, tier: 2, tags: ['water', 'eye', 'chunk'] },
+  ticks(6), server(forgetChunk([-1, 1, 8])), ticks(6), press(F, 25), ticks(10)))
 
 // ---- A strider's feet over lava (B147) ------------------------------------------------------------------------------------
 // LiquidBlock.getCollisionShape: the top half of a source under no lava, for a body above it that canStandOnFluid. Proof: pos,

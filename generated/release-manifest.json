@@ -15,22 +15,18 @@
         "sha1": null
       },
       "source": {
-        "status": "alias",
-        "embedded": "1.8.9",
-        "sourceRelease": "1.8.9",
-        "scope": [
-          "movement",
-          "collision",
-          "block-registry",
-          "block-states",
-          "fluids",
-          "protocol-version"
-        ],
-        "evidence": "76ac509fc4236d89bce1d08c7349dd4a01c040a465dba852acc7885bb5653df7",
-        "mapping": "yarn"
+        "status": "embedded",
+        "embedded": "1.8.8",
+        "clientJar": {
+          "sha1": "0983f08be6a4e624f5d85689d1aca869ed99c738",
+          "remappedSha256": "6b04ba67f26b024eca38da0b725c74707bbbfd452a19a9ff9f388cd9a9f95126"
+        },
+        "decompiler": "vineflower 1.12.0",
+        "mapping": "recorder",
+        "tree": "f37a571dec529037d6dc4eedbc16a6dd6d6c5548a127cb3d1b86760bfade1777"
       },
       "tables": {
-        "sha256": "fff7403b24a25531b3b9b731bb00cb9d44b75961934ddb5a2e77e0eff8a877f0"
+        "sha256": "1d7325193551c913e81aca08309ebe34453703e48a18f95ff488bb17052b87c0"
       }
     },
     "1.9.4": {
@@ -48,14 +44,16 @@
       "source": {
         "status": "embedded",
         "embedded": "1.9.4",
-        "mapping": "yarn",
         "clientJar": {
-          "sha1": "4a61c873be90bb1196d68dac7b29870408c56969"
+          "sha1": "4a61c873be90bb1196d68dac7b29870408c56969",
+          "remappedSha256": "b51df795602cf7db13963b4c47a2aac468c733b13653f67764acb5d7feb0ce75"
         },
-        "tree": "272df550fb4f4c6dbc3e095a075d5cc13cb4c56cd0a2c90af05e35893412d42e"
+        "decompiler": "vineflower 1.12.0",
+        "mapping": "recorder",
+        "tree": "6e971aaffe29609a374d4454df925c783050b1e31c869fdabb06d27308170bf9"
       },
       "tables": {
-        "sha256": "16e3b95f38413deac0607ea1738a6aee5f363a84ba5c0cb7bcc11eb2d72cd560"
+        "sha256": "197344c8d76184c197d1f12cf3c8e71350925fdbdba17a8ad4706c3451f28b81"
       }
     },
     "1.10.2": {
@@ -73,14 +71,16 @@
       "source": {
         "status": "embedded",
         "embedded": "1.10.2",
-        "mapping": "yarn",
         "clientJar": {
-          "sha1": "dc8e75ac7274ff6af462b0dcec43c307de668e40"
+          "sha1": "dc8e75ac7274ff6af462b0dcec43c307de668e40",
+          "remappedSha256": "e675cda5ba5f17b95195ed6e9cab04ab6ec9c1bd9b7d23526d54a69297a7a1ca"
         },
-        "tree": "1aa2f0e39924d89133922875af81846d9c7808e8f534bc56508120317e3cb414"
+        "decompiler": "vineflower 1.12.0",
+        "mapping": "recorder",
+        "tree": "3161eb70dbad73bd55f6714e11856119b055c8039a88ac144fa2312bedefcf06"
       },
       "tables": {
-        "sha256": "95b3cc3cf014c5db52335bf2215e84af37f5dccb287cffb37b8eb79f1eb17e95"
+        "sha256": "ac3e2def6062dcaec9b0d1cb7509fa6c4f075bfe917ee395e6d364d975a86c7e"
       }
     },
     "1.11.2": {
@@ -98,14 +98,16 @@
       "source": {
         "status": "embedded",
         "embedded": "1.11.2",
-        "mapping": "yarn",
         "clientJar": {
-          "sha1": "db5aa600f0b0bf508aaf579509b345c4e34087be"
+          "sha1": "db5aa600f0b0bf508aaf579509b345c4e34087be",
+          "remappedSha256": "57b0457a003b7bba8142897d0ae1cba5406519396bec31d5484a0161eb4b0672"
         },
-        "tree": "93d463aadee0c64eb85058c2a7a2c766ba0536e69cf0ea40d35d4602e9f714ed"
+        "decompiler": "vineflower 1.12.0",
+        "mapping": "recorder",
+        "tree": "738da8df1717628c02fbc7289572018de3b798ec870942a5bb42fc8fe4dc7ba9"
       },
       "tables": {
-        "sha256": "2fda5f7396c596e7a0312b9a5a637410a695f01c3c14d34c1d74497ae75b5839"
+        "sha256": "75bf952c28f854ba23752fa7b2e30d2647a70ab1195d628f228a2d1db08b16a4"
       }
     },
     "1.12.2": {
@@ -123,14 +125,16 @@
       "source": {
         "status": "embedded",
         "embedded": "1.12.2",
-        "mapping": "yarn",
         "clientJar": {
-          "sha1": "0f275bc1547d01fa5f56ba34bdc87d981ee12daf"
+          "sha1": "0f275bc1547d01fa5f56ba34bdc87d981ee12daf",
+          "remappedSha256": "4b13a30b9cec4e1f6ab3ef0fe6cb6eed1a6447f8bbafee2d99261f1174d1a6e2"
         },
-        "tree": "e8e8c847085390c41354ca3b780cf75efd7fd51b8b4d194a25cff4c3ee8f06b1"
+        "decompiler": "vineflower 1.12.0",
+        "mapping": "recorder",
+        "tree": "3a1e2c21410562c1e6044e9b25509b5e8a8b698a01d917455026b91d45c151fd"
       },
       "tables": {
-        "sha256": "d09aa04c85e1afb6ff4c5467e5f5ab10b3eb098d00d0149fccff4482b6f2d582"
+        "sha256": "f29156d138632d55dc42c31ad6ff44553d0fb0035032645b77c1e6c6f76c3868"
       }
     },
     "1.13.2": {
@@ -148,14 +152,16 @@
       "source": {
         "status": "embedded",
         "embedded": "1.13.2",
-        "mapping": "yarn",
         "clientJar": {
-          "sha1": "30bfe37a8db404db11c7edf02cb5165817afb4d9"
+          "sha1": "30bfe37a8db404db11c7edf02cb5165817afb4d9",
+          "remappedSha256": "634828d65d2212fe3b6e7e2e4a1befa5343b57ec7cdfbc36abf3ca7bf139236c"
         },
-        "tree": "7fed41809aaa561a9ab6619e8949d04ded3b74bd18c4e8ad0b72f5152eac13a7"
+        "decompiler": "vineflower 1.12.0",
+        "mapping": "recorder",
+        "tree": "93aeed68768b023f6c9df8f5047a5303ef1655cda0c14883f59f18fa6b927407"
       },
       "tables": {
-        "sha256": "d7ff260656d13a43456e7c44a1dac7db4519a21523c927ba71392bfa53803115"
+        "sha256": "f742ea9198a361ced9b7f823f7d581c19447871f9bceb3549fe1777df555abf8"
       }
     },
     "1.14.4": {

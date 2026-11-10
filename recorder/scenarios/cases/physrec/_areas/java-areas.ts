@@ -53,6 +53,29 @@ export const STEPS = ['stone_slab[type=bottom]', 'white_bed[part=foot,facing=eas
   'soul_sand', 'farmland', 'chest[facing=west]', 'stone', 'stone_stairs[facing=east]', 'stone_stairs[facing=west]',
   'oak_trapdoor[half=bottom,open=false]', 'oak_trapdoor[half=top,open=false]', 'lectern', 'cauldron', 'hopper',
   'composter', 'end_rod[facing=up]', 'lantern', 'pointed_dripstone', 'lily_pad', 'oak_fence', 'cobblestone_wall']
+// The player's lanes (java-player-edges): water at the eyes alone, then at the feet too; a pool that ends in a dry crawl
+// tunnel; a deep pool under open sky for the eyes at its surface.
+export const PLAYER_LANES = ['eyes', 'exit', 'surface'] as const
+const playerEdges = area('playerEdges', [-8, 24, -24, PLAYER_LANES.length * 4 - 16],
+  lanes(PLAYER_LANES, (lane, z) => lane === 'eyes'
+    ? [fill([4, 2, z - 1], [12, 2, z + 1], 'water'), fill([9, 1, z - 1], [12, 1, z + 1], 'water'), fill([4, 3, z - 1], [12, 3, z + 1], 'stone'), fill([13, 1, z - 1], [13, 3, z + 1], 'stone')]
+    : lane === 'exit'
+      ? [fill([-4, 1, z - 1], [7, 2, z + 1], 'water'), fill([-4, 3, z - 1], [7, 3, z + 1], 'stone'), fill([8, 2, z - 1], [16, 3, z + 1], 'stone')]
+      : [fill([-4, 1, z - 1], [12, 3, z + 1], 'water')]))
+// Blocks that take their shape from their neighbours, placed with updates: before 1.13 the client works it out at each
+// query (fences, panes, walls, stairs), from it the state says. Lanes along x, a run at x 3 to 5 with a branch at x 5.
+export const NEIGHBOUR_LANES = ['oak_fence', 'cobblestone_wall', 'glass_pane', 'iron_bars', 'stairs', 'gate'] as const
+const neighbours = area('neighbours', [-8, 24, -24, NEIGHBOUR_LANES.length * 4 - 16],
+  lanes(NEIGHBOUR_LANES, (lane, z) => lane === 'stairs'
+    ? [fill([3, 1, z], [3, 1, z], 'oak_stairs[facing=east]', { update: true }), fill([3, 1, z + 1], [3, 1, z + 1], 'oak_stairs[facing=north]', { update: true }),
+        fill([5, 1, z], [5, 1, z], 'oak_stairs[facing=west]', { update: true }), fill([5, 1, z - 1], [5, 1, z - 1], 'oak_stairs[facing=west]', { update: true }), fill([6, 1, z - 1], [6, 1, z - 1], 'oak_stairs[facing=north]', { update: true })]
+    : lane === 'gate'
+      ? [fill([4, 1, z - 1], [4, 1, z + 1], 'cobblestone_wall', { update: true }), fill([4, 1, z], [4, 1, z], 'oak_fence_gate[facing=east]', { update: true })]
+      : [fill([3, 1, z], [5, 1, z], lane, { update: true }), fill([5, 1, z + 1], [5, 1, z + 1], lane, { update: true }), fill([3, 1, z - 1], [3, 1, z - 1], 'stone')]))
+// Offset blocks a player can stand in: the grid of what it is already inside (Block.getOffset), and the block under it for dripstone.
+export const INSIDE_LANES = ['bamboo', 'pointed_dripstone'] as const
+const inside = area('insideOffset', [-8, 24, -24, INSIDE_LANES.length * 4 - 16],
+  lanes(INSIDE_LANES, (block, z) => [fill([3, 1, z], [3, 1, z], block), fill([6, 1, z - 1], [6, 1, z - 1], block), fill([7, 1, z + 1], [7, 1, z + 1], block)]))
 const steps = area('steps', [-8, 24, -24, STEPS.length * 4 - 16],
   lanes(STEPS, (b, z) => fill([3, 1, z - 1], [5, 1, z + 1], b, /fence|wall/.test(b) ? { update: true } : {})))
 
@@ -787,6 +810,10 @@ export const CAMERA_CEILINGS = ['air', 'stone', 'stone_slab[type=bottom]', 'ston
 const cameraCeilings = area('cameraCeilings', [-8, 12, -24, CAMERA_CEILINGS.length * 4 - 16],
   lanes(CAMERA_CEILINGS, (c, z) => [...walled([4, 1, z], [4, 1, z]), fill([4, 1, z], [4, 1, z], 'water'), fill([4, 2, z], [4, 2, z], c)]))
 
+// Chunk column x<0 holds water over a hole, the floor ends at the column's edge (B120): what the client forgets of it is what it
+// loses, while the server's player passes through water alone and no correction comes.
+const unloadedColumn = area('unloadedColumn', [-8, 8, 2, 14], fill([-8, -11, 2], [-1, 0, 14], 'air'), fill([-8, 1, 4], [-1, 2, 12], 'water'))
+
 // What a boat runs on (B155), and a boat held under (B146).
 export const BOAT_FLOORS = ['frosted_ice', 'ice_half', 'lily_on_ice', 'ice_then_stone', 'blue_then_ice', 'under_stone', 'under_falling']
 const boatFloors = area('boatFloors', [-8, 30, -24, BOAT_FLOORS.length * 4 - 16],
@@ -850,6 +877,11 @@ export const ULTRA_EDGE: readonly (readonly [Pos, Pos, string])[] = [
 ]
 const ultraEdge: PhysrecArea = { name: 'ultraEdge', extent: [-8, 24, -8, 24], origin: ULTRA_EDGE_ORIGIN, blocks: ULTRA_EDGE.map(([from, to, block]) => fill(from, to, block)) }
 
+// A fence on y=1 at x=1 that a piston at x=2 pushes west into x=0, its power the redstone block x=3 takes. A player on the post
+// at x=1.35 has the destination cell at x=0 on the edge of the cells the 1.14-1.17.1 walk reads on x, under its feet on y:
+// the walk reads a moving piston there (1.17.1 Shapes.java:268) and the fence's 1.5 high post holds it up (B290).
+const pistonFence = area('pistonFence', [-8, 12, -8, 8], fill([1, 1, 0], [1, 1, 0], 'oak_fence'), fill([2, 1, 0], [2, 1, 0], 'piston[facing=west]'))
+
 // A web in lava, and a pool to fall through it (B145).
 export const FLUID_WEBS = ['lava_web', 'lava_web_deep']
 const fluidWebs = area('fluidWebs', [-8, 16, -24, FLUID_WEBS.length * 4 - 16],
@@ -865,7 +897,7 @@ const crawlFields = area('crawlFields', [-8, 20, -24, CRAWL_LANES.length * 4 - 1
     l === 'soul_sand' ? fill([6, 0, z], [10, 0, z], l) : fill([6, 1, z], [10, 1, z], l),
   ]))
 
-export default [surfaces, transitions, steps, outlineSteps, ceilings, landing, ledges, walls, climbs, water, flow, lava, honeyWall,
+export default [playerEdges, neighbours, inside, surfaces, transitions, steps, outlineSteps, ceilings, landing, ledges, walls, climbs, water, flow, lava, honeyWall,
   tunnels, rails, boats, mounts, sky, skyWall, flight, waterfall, piston, straddle, pushout, ...farAreas, features, skyLava,
   currents, currentsNeg, currentsHigh, lavaFlow, waterlogged, shallowCells, fluidClimb, webPool, flowBlockers, fallingFaces, pistonCourse,
-  hazards, entitySteps, borderNeg, skyWater, skyShallow, skySlime, skyLadder, skyVine, skyScaffolding, boatShore, horsePool, dismounts, portals, mountCourse, nearWall(6), nearWall(9), nearWall(12), ringQuadrant('ringsPos', [96, 100, 96]), ringQuadrant('ringsNeg', [-96, 100, -96]), honeyPost, lowCeilings, bubbleTops, ledgePools, mixedFluids, pistonSurfaces, hotFloors, projectileRange, minecarts, minecartsWet, voidShaft, movers, waterStack, waterStackHigh, waterHolders, climbCurrents, iceLanes, fenceTops, minecartHazards, partials, flowBlockersMore, fallingFacesMore, suffocators, anvils, grates, wetNeighbours, cameraCeilings, boatFloors, boatColumns, striderLanes, fluidWebs, crawlFields, cauldrons, ultraLava, ultraEdge]
+  hazards, entitySteps, borderNeg, skyWater, skyShallow, skySlime, skyLadder, skyVine, skyScaffolding, boatShore, horsePool, dismounts, portals, mountCourse, nearWall(6), nearWall(9), nearWall(12), ringQuadrant('ringsPos', [96, 100, 96]), ringQuadrant('ringsNeg', [-96, 100, -96]), honeyPost, lowCeilings, bubbleTops, ledgePools, mixedFluids, pistonSurfaces, hotFloors, projectileRange, minecarts, minecartsWet, voidShaft, movers, waterStack, waterStackHigh, waterHolders, climbCurrents, iceLanes, fenceTops, minecartHazards, partials, flowBlockersMore, fallingFacesMore, suffocators, anvils, grates, wetNeighbours, cameraCeilings, unloadedColumn, boatFloors, boatColumns, striderLanes, fluidWebs, crawlFields, cauldrons, ultraLava, ultraEdge, pistonFence]

@@ -73,24 +73,24 @@
     "ThrowableProjectile.java:tick",
     "ThrowableProjectile.java:getGravity",
     "AbstractArrow.java:tick",
+    "AbstractArrow.java:shoot",
     "AbstractHurtingProjectile.java:tick",
+    "AbstractHurtingProjectile.java:getInertia",
     "FireworkRocketEntity.java:tick",
     "Boat.java:floatBoat",
     "Boat.java:controlBoat",
-    "FireworkRocketEntity.java:explode",
-    "ThrownTrident.java:tick",
-    "Entity.java:collide",
-    "ProjectileUtil.java:getHitResult",
-    "ProjectileUtil.java:getEntityHitResult",
     "ProjectileUtil.java:rotateTowardsMovement",
-    "AbstractArrow.java:shoot",
     "AbstractArrow.java:findHitEntity",
     "AbstractArrow.java:onHitEntity",
     "AbstractArrow.java:getWaterInertia",
+    "ThrownTrident.java:tick",
     "ThrownTrident.java:findHitEntity",
     "ThrownTrident.java:onHitEntity",
     "ThrownTrident.java:getWaterInertia",
-    "AbstractHurtingProjectile.java:getInertia",
+    "Entity.java:collide",
+    "ProjectileUtil.java:getHitResult",
+    "ProjectileUtil.java:getEntityHitResult",
+    "FireworkRocketEntity.java:explode",
     "LivingEntity.java:handleRelativeFrictionAndCalculateMovement",
     "Projectile.java:tick",
     "Projectile.java:shoot",
@@ -198,28 +198,21 @@
         "AbstractHorse.java:travel",
         "ThrowableProjectile.java:tick",
         "AbstractArrow.java:tick",
+        "AbstractArrow.java:shoot",
         "AbstractHurtingProjectile.java:tick",
         "FireworkRocketEntity.java:tick",
         "Boat.java:floatBoat",
-        "Boat.java:controlBoat"
+        "Boat.java:controlBoat",
+        "AbstractArrow.java:findHitEntity"
       ],
       "unavailable": [
-        "ThrownTrident.java:tick",
-        "ProjectileUtil.java:getHitResult",
-        "ProjectileUtil.java:getEntityHitResult",
         "ProjectileUtil.java:rotateTowardsMovement",
+        "ThrownTrident.java:tick",
         "ThrownTrident.java:findHitEntity",
         "ThrownTrident.java:onHitEntity",
         "ThrownTrident.java:getWaterInertia",
-        "Projectile.java:tick",
-        "Projectile.java:shoot",
-        "Projectile.java:shootFromRotation",
-        "Projectile.java:checkLeftOwner",
-        "Projectile.java:canHitEntity",
-        "Projectile.java:onHit",
-        "Projectile.java:onHitEntity",
-        "Projectile.java:onHitBlock",
-        "Projectile.java:updateRotation",
+        "ProjectileUtil.java:getHitResult",
+        "ProjectileUtil.java:getEntityHitResult",
         "ThrownTrident.java:tryPickup",
         "ProjectileUtil.java:getHitResultOnMoveVector",
         "AbstractBoat.java:floatBoat",
@@ -332,6 +325,7 @@
         "AbstractHorse.java:travel",
         "ThrowableProjectile.java:tick",
         "AbstractArrow.java:tick",
+        "AbstractArrow.java:shoot",
         "AbstractHurtingProjectile.java:tick",
         "Boat.java:floatBoat"
       ],
@@ -340,15 +334,6 @@
         "ThrownTrident.java:findHitEntity",
         "ThrownTrident.java:onHitEntity",
         "ThrownTrident.java:getWaterInertia",
-        "Projectile.java:tick",
-        "Projectile.java:shoot",
-        "Projectile.java:shootFromRotation",
-        "Projectile.java:checkLeftOwner",
-        "Projectile.java:canHitEntity",
-        "Projectile.java:onHit",
-        "Projectile.java:onHitEntity",
-        "Projectile.java:onHitBlock",
-        "Projectile.java:updateRotation",
         "ThrownTrident.java:tryPickup",
         "AbstractBoat.java:floatBoat",
         "AbstractBoat.java:controlBoat",
@@ -391,28 +376,17 @@
         "LocalPlayer.java:aiStep",
         "Boat.java:tick",
         "AbstractMinecart.java:moveAlongTrack",
-        "AbstractHorse.java:travel",
         "ThrowableProjectile.java:tick",
         "AbstractArrow.java:tick",
         "AbstractHurtingProjectile.java:tick",
         "FireworkRocketEntity.java:tick",
-        "Boat.java:controlBoat",
-        "FireworkRocketEntity.java:explode"
+        "Boat.java:controlBoat"
       ],
       "unavailable": [
         "ThrownTrident.java:tick",
         "ThrownTrident.java:findHitEntity",
         "ThrownTrident.java:onHitEntity",
         "ThrownTrident.java:getWaterInertia",
-        "Projectile.java:tick",
-        "Projectile.java:shoot",
-        "Projectile.java:shootFromRotation",
-        "Projectile.java:checkLeftOwner",
-        "Projectile.java:canHitEntity",
-        "Projectile.java:onHit",
-        "Projectile.java:onHitEntity",
-        "Projectile.java:onHitBlock",
-        "Projectile.java:updateRotation",
         "ThrownTrident.java:tryPickup",
         "AbstractBoat.java:floatBoat",
         "AbstractBoat.java:controlBoat",
@@ -615,7 +589,6 @@
         "LocalPlayer.java:aiStep",
         "LocalPlayer.java:sendPosition",
         "Boat.java:tick",
-        "AbstractMinecart.java:moveAlongTrack",
         "AbstractHorse.java:travel"
       ],
       "unavailable": [
@@ -623,15 +596,6 @@
         "ThrownTrident.java:findHitEntity",
         "ThrownTrident.java:onHitEntity",
         "ThrownTrident.java:getWaterInertia",
-        "Projectile.java:tick",
-        "Projectile.java:shoot",
-        "Projectile.java:shootFromRotation",
-        "Projectile.java:checkLeftOwner",
-        "Projectile.java:canHitEntity",
-        "Projectile.java:onHit",
-        "Projectile.java:onHitEntity",
-        "Projectile.java:onHitBlock",
-        "Projectile.java:updateRotation",
         "ThrownTrident.java:tryPickup",
         "AbstractBoat.java:floatBoat",
         "AbstractBoat.java:controlBoat",
@@ -699,22 +663,16 @@
         "AbstractArrow.java:tick",
         "AbstractHurtingProjectile.java:tick",
         "FireworkRocketEntity.java:tick",
-        "FireworkRocketEntity.java:explode"
+        "Boat.java:controlBoat",
+        "AbstractArrow.java:findHitEntity",
+        "AbstractArrow.java:onHitEntity",
+        "AbstractArrow.java:getWaterInertia"
       ],
       "unavailable": [
         "ThrownTrident.java:tick",
         "ThrownTrident.java:findHitEntity",
         "ThrownTrident.java:onHitEntity",
         "ThrownTrident.java:getWaterInertia",
-        "Projectile.java:tick",
-        "Projectile.java:shoot",
-        "Projectile.java:shootFromRotation",
-        "Projectile.java:checkLeftOwner",
-        "Projectile.java:canHitEntity",
-        "Projectile.java:onHit",
-        "Projectile.java:onHitEntity",
-        "Projectile.java:onHitBlock",
-        "Projectile.java:updateRotation",
         "ThrownTrident.java:tryPickup",
         "AbstractBoat.java:floatBoat",
         "AbstractBoat.java:controlBoat",
@@ -1412,24 +1370,24 @@
         "ThrowableProjectile.java:tick",
         "ThrowableProjectile.java:getGravity",
         "AbstractArrow.java:tick",
+        "AbstractArrow.java:shoot",
         "AbstractHurtingProjectile.java:tick",
+        "AbstractHurtingProjectile.java:getInertia",
         "FireworkRocketEntity.java:tick",
         "Boat.java:floatBoat",
         "Boat.java:controlBoat",
-        "FireworkRocketEntity.java:explode",
-        "ThrownTrident.java:tick",
-        "Entity.java:collide",
-        "ProjectileUtil.java:getHitResult",
-        "ProjectileUtil.java:getEntityHitResult",
         "ProjectileUtil.java:rotateTowardsMovement",
-        "AbstractArrow.java:shoot",
         "AbstractArrow.java:findHitEntity",
         "AbstractArrow.java:onHitEntity",
         "AbstractArrow.java:getWaterInertia",
+        "ThrownTrident.java:tick",
         "ThrownTrident.java:findHitEntity",
         "ThrownTrident.java:onHitEntity",
         "ThrownTrident.java:getWaterInertia",
-        "AbstractHurtingProjectile.java:getInertia",
+        "Entity.java:collide",
+        "ProjectileUtil.java:getHitResult",
+        "ProjectileUtil.java:getEntityHitResult",
+        "FireworkRocketEntity.java:explode",
         "LivingEntity.java:handleRelativeFrictionAndCalculateMovement",
         "Projectile.java:tick",
         "Projectile.java:shoot",
@@ -1646,24 +1604,24 @@
         "ThrowableProjectile.java:tick",
         "ThrowableProjectile.java:getGravity",
         "AbstractArrow.java:tick",
+        "AbstractArrow.java:shoot",
         "AbstractHurtingProjectile.java:tick",
+        "AbstractHurtingProjectile.java:getInertia",
         "FireworkRocketEntity.java:tick",
         "Boat.java:floatBoat",
         "Boat.java:controlBoat",
-        "FireworkRocketEntity.java:explode",
-        "ThrownTrident.java:tick",
-        "Entity.java:collide",
-        "ProjectileUtil.java:getHitResult",
-        "ProjectileUtil.java:getEntityHitResult",
         "ProjectileUtil.java:rotateTowardsMovement",
-        "AbstractArrow.java:shoot",
         "AbstractArrow.java:findHitEntity",
         "AbstractArrow.java:onHitEntity",
         "AbstractArrow.java:getWaterInertia",
+        "ThrownTrident.java:tick",
         "ThrownTrident.java:findHitEntity",
         "ThrownTrident.java:onHitEntity",
         "ThrownTrident.java:getWaterInertia",
-        "AbstractHurtingProjectile.java:getInertia",
+        "Entity.java:collide",
+        "ProjectileUtil.java:getHitResult",
+        "ProjectileUtil.java:getEntityHitResult",
+        "FireworkRocketEntity.java:explode",
         "LivingEntity.java:handleRelativeFrictionAndCalculateMovement",
         "Projectile.java:tick",
         "Projectile.java:shoot",
@@ -1824,16 +1782,16 @@
         "AbstractHorse.java:travel",
         "ThrowableProjectile.java:tick",
         "AbstractArrow.java:tick",
+        "AbstractArrow.java:shoot",
         "AbstractHurtingProjectile.java:tick",
         "FireworkRocketEntity.java:tick",
-        "Entity.java:collide",
-        "ProjectileUtil.java:getHitResult",
-        "ProjectileUtil.java:getEntityHitResult",
         "ProjectileUtil.java:rotateTowardsMovement",
-        "AbstractArrow.java:shoot",
         "AbstractArrow.java:findHitEntity",
         "AbstractArrow.java:onHitEntity",
         "ThrownTrident.java:onHitEntity",
+        "Entity.java:collide",
+        "ProjectileUtil.java:getHitResult",
+        "ProjectileUtil.java:getEntityHitResult",
         "LivingEntity.java:handleRelativeFrictionAndCalculateMovement",
         "Projectile.java:tick",
         "Projectile.java:shoot",
@@ -2243,13 +2201,13 @@
         "AbstractArrow.java:tick",
         "AbstractHurtingProjectile.java:tick",
         "Boat.java:controlBoat",
-        "FireworkRocketEntity.java:explode",
-        "ThrownTrident.java:tick",
-        "Entity.java:collide",
-        "ProjectileUtil.java:getEntityHitResult",
         "ProjectileUtil.java:rotateTowardsMovement",
         "AbstractArrow.java:onHitEntity",
+        "ThrownTrident.java:tick",
         "ThrownTrident.java:onHitEntity",
+        "Entity.java:collide",
+        "ProjectileUtil.java:getEntityHitResult",
+        "FireworkRocketEntity.java:explode",
         "LivingEntity.java:handleRelativeFrictionAndCalculateMovement",
         "Projectile.java:tick",
         "Projectile.java:shoot",
@@ -2660,24 +2618,24 @@
         "ThrowableProjectile.java:tick",
         "ThrowableProjectile.java:getGravity",
         "AbstractArrow.java:tick",
+        "AbstractArrow.java:shoot",
         "AbstractHurtingProjectile.java:tick",
+        "AbstractHurtingProjectile.java:getInertia",
         "FireworkRocketEntity.java:tick",
         "Boat.java:floatBoat",
         "Boat.java:controlBoat",
-        "FireworkRocketEntity.java:explode",
-        "ThrownTrident.java:tick",
-        "Entity.java:collide",
-        "ProjectileUtil.java:getHitResult",
-        "ProjectileUtil.java:getEntityHitResult",
         "ProjectileUtil.java:rotateTowardsMovement",
-        "AbstractArrow.java:shoot",
         "AbstractArrow.java:findHitEntity",
         "AbstractArrow.java:onHitEntity",
         "AbstractArrow.java:getWaterInertia",
+        "ThrownTrident.java:tick",
         "ThrownTrident.java:findHitEntity",
         "ThrownTrident.java:onHitEntity",
         "ThrownTrident.java:getWaterInertia",
-        "AbstractHurtingProjectile.java:getInertia",
+        "Entity.java:collide",
+        "ProjectileUtil.java:getHitResult",
+        "ProjectileUtil.java:getEntityHitResult",
+        "FireworkRocketEntity.java:explode",
         "LivingEntity.java:handleRelativeFrictionAndCalculateMovement",
         "Projectile.java:tick",
         "Projectile.java:shoot",
@@ -2771,24 +2729,24 @@
         "ThrowableProjectile.java:tick",
         "ThrowableProjectile.java:getGravity",
         "AbstractArrow.java:tick",
+        "AbstractArrow.java:shoot",
         "AbstractHurtingProjectile.java:tick",
+        "AbstractHurtingProjectile.java:getInertia",
         "FireworkRocketEntity.java:tick",
         "Boat.java:floatBoat",
         "Boat.java:controlBoat",
-        "FireworkRocketEntity.java:explode",
-        "ThrownTrident.java:tick",
-        "Entity.java:collide",
-        "ProjectileUtil.java:getHitResult",
-        "ProjectileUtil.java:getEntityHitResult",
         "ProjectileUtil.java:rotateTowardsMovement",
-        "AbstractArrow.java:shoot",
         "AbstractArrow.java:findHitEntity",
         "AbstractArrow.java:onHitEntity",
         "AbstractArrow.java:getWaterInertia",
+        "ThrownTrident.java:tick",
         "ThrownTrident.java:findHitEntity",
         "ThrownTrident.java:onHitEntity",
         "ThrownTrident.java:getWaterInertia",
-        "AbstractHurtingProjectile.java:getInertia",
+        "Entity.java:collide",
+        "ProjectileUtil.java:getHitResult",
+        "ProjectileUtil.java:getEntityHitResult",
+        "FireworkRocketEntity.java:explode",
         "LivingEntity.java:handleRelativeFrictionAndCalculateMovement",
         "Projectile.java:tick",
         "Projectile.java:shoot",
@@ -2911,24 +2869,24 @@
         "ThrowableProjectile.java:tick",
         "ThrowableProjectile.java:getGravity",
         "AbstractArrow.java:tick",
+        "AbstractArrow.java:shoot",
         "AbstractHurtingProjectile.java:tick",
+        "AbstractHurtingProjectile.java:getInertia",
         "FireworkRocketEntity.java:tick",
         "Boat.java:floatBoat",
         "Boat.java:controlBoat",
-        "FireworkRocketEntity.java:explode",
-        "ThrownTrident.java:tick",
-        "Entity.java:collide",
-        "ProjectileUtil.java:getHitResult",
-        "ProjectileUtil.java:getEntityHitResult",
         "ProjectileUtil.java:rotateTowardsMovement",
-        "AbstractArrow.java:shoot",
         "AbstractArrow.java:findHitEntity",
         "AbstractArrow.java:onHitEntity",
         "AbstractArrow.java:getWaterInertia",
+        "ThrownTrident.java:tick",
         "ThrownTrident.java:findHitEntity",
         "ThrownTrident.java:onHitEntity",
         "ThrownTrident.java:getWaterInertia",
-        "AbstractHurtingProjectile.java:getInertia",
+        "Entity.java:collide",
+        "ProjectileUtil.java:getHitResult",
+        "ProjectileUtil.java:getEntityHitResult",
+        "FireworkRocketEntity.java:explode",
         "LivingEntity.java:handleRelativeFrictionAndCalculateMovement",
         "Projectile.java:tick",
         "Projectile.java:shoot",
@@ -3131,9 +3089,10 @@
           "Player"
         ]
       },
-      "unavailableSources": [
-        "minecraftData"
-      ]
+      "protocol": {
+        "previous": 759,
+        "current": 760
+      }
     },
     {
       "previous": "1.19.1",
@@ -3158,24 +3117,24 @@
         "ThrowableProjectile.java:tick",
         "ThrowableProjectile.java:getGravity",
         "AbstractArrow.java:tick",
+        "AbstractArrow.java:shoot",
         "AbstractHurtingProjectile.java:tick",
+        "AbstractHurtingProjectile.java:getInertia",
         "FireworkRocketEntity.java:tick",
         "Boat.java:floatBoat",
         "Boat.java:controlBoat",
-        "FireworkRocketEntity.java:explode",
-        "ThrownTrident.java:tick",
-        "Entity.java:collide",
-        "ProjectileUtil.java:getHitResult",
-        "ProjectileUtil.java:getEntityHitResult",
         "ProjectileUtil.java:rotateTowardsMovement",
-        "AbstractArrow.java:shoot",
         "AbstractArrow.java:findHitEntity",
         "AbstractArrow.java:onHitEntity",
         "AbstractArrow.java:getWaterInertia",
+        "ThrownTrident.java:tick",
         "ThrownTrident.java:findHitEntity",
         "ThrownTrident.java:onHitEntity",
         "ThrownTrident.java:getWaterInertia",
-        "AbstractHurtingProjectile.java:getInertia",
+        "Entity.java:collide",
+        "ProjectileUtil.java:getHitResult",
+        "ProjectileUtil.java:getEntityHitResult",
+        "FireworkRocketEntity.java:explode",
         "LivingEntity.java:handleRelativeFrictionAndCalculateMovement",
         "Projectile.java:tick",
         "Projectile.java:shoot",
@@ -3206,9 +3165,10 @@
         "AbstractArrow.java:applyInertia",
         "AbstractHurtingProjectile.java:applyInertia"
       ],
-      "unavailableSources": [
-        "minecraftData"
-      ]
+      "protocol": {
+        "previous": 760,
+        "current": 760
+      }
     },
     {
       "previous": "1.19.2",
@@ -3238,24 +3198,24 @@
         "ThrowableProjectile.java:tick",
         "ThrowableProjectile.java:getGravity",
         "AbstractArrow.java:tick",
+        "AbstractArrow.java:shoot",
         "AbstractHurtingProjectile.java:tick",
+        "AbstractHurtingProjectile.java:getInertia",
         "FireworkRocketEntity.java:tick",
         "Boat.java:floatBoat",
         "Boat.java:controlBoat",
-        "FireworkRocketEntity.java:explode",
-        "ThrownTrident.java:tick",
-        "Entity.java:collide",
-        "ProjectileUtil.java:getHitResult",
-        "ProjectileUtil.java:getEntityHitResult",
         "ProjectileUtil.java:rotateTowardsMovement",
-        "AbstractArrow.java:shoot",
         "AbstractArrow.java:findHitEntity",
         "AbstractArrow.java:onHitEntity",
         "AbstractArrow.java:getWaterInertia",
+        "ThrownTrident.java:tick",
         "ThrownTrident.java:findHitEntity",
         "ThrownTrident.java:onHitEntity",
         "ThrownTrident.java:getWaterInertia",
-        "AbstractHurtingProjectile.java:getInertia",
+        "Entity.java:collide",
+        "ProjectileUtil.java:getHitResult",
+        "ProjectileUtil.java:getEntityHitResult",
+        "FireworkRocketEntity.java:explode",
         "LivingEntity.java:handleRelativeFrictionAndCalculateMovement",
         "Projectile.java:tick",
         "Projectile.java:shoot",
@@ -3400,9 +3360,9 @@
         "LocalPlayer.java:aiStep",
         "Boat.java:tick",
         "AbstractHorse.java:travel",
-        "Entity.java:collide",
         "AbstractArrow.java:onHitEntity",
         "ThrownTrident.java:onHitEntity",
+        "Entity.java:collide",
         "Projectile.java:canHitEntity",
         "AbstractHorse.java:tickRidden",
         "AbstractHorse.java:getRiddenInput"
@@ -3512,14 +3472,14 @@
         "AbstractArrow.java:tick",
         "AbstractHurtingProjectile.java:tick",
         "FireworkRocketEntity.java:tick",
-        "FireworkRocketEntity.java:explode",
+        "AbstractArrow.java:findHitEntity",
+        "AbstractArrow.java:onHitEntity",
         "ThrownTrident.java:tick",
+        "ThrownTrident.java:onHitEntity",
         "Entity.java:collide",
         "ProjectileUtil.java:getHitResult",
         "ProjectileUtil.java:getEntityHitResult",
-        "AbstractArrow.java:findHitEntity",
-        "AbstractArrow.java:onHitEntity",
-        "ThrownTrident.java:onHitEntity",
+        "FireworkRocketEntity.java:explode",
         "Projectile.java:shootFromRotation",
         "Projectile.java:checkLeftOwner",
         "Projectile.java:onHit",
@@ -3739,9 +3699,9 @@
         "Player.java:travel",
         "Player.java:rideTick",
         "AbstractHurtingProjectile.java:tick",
-        "ProjectileUtil.java:getHitResult",
         "AbstractArrow.java:onHitEntity",
         "ThrownTrident.java:onHitEntity",
+        "ProjectileUtil.java:getHitResult",
         "ProjectileUtil.java:getHitResultOnMoveVector",
         "AbstractHurtingProjectile.java:getLiquidInertia"
       ],
@@ -3901,11 +3861,11 @@
         "FireworkRocketEntity.java:tick",
         "Boat.java:floatBoat",
         "Boat.java:controlBoat",
-        "ThrownTrident.java:tick",
-        "ProjectileUtil.java:getEntityHitResult",
         "AbstractArrow.java:findHitEntity",
         "AbstractArrow.java:onHitEntity",
+        "ThrownTrident.java:tick",
         "ThrownTrident.java:onHitEntity",
+        "ProjectileUtil.java:getEntityHitResult",
         "LivingEntity.java:handleRelativeFrictionAndCalculateMovement",
         "Projectile.java:shoot",
         "Projectile.java:checkLeftOwner",
@@ -4055,9 +4015,9 @@
         "AbstractHurtingProjectile.java:tick",
         "FireworkRocketEntity.java:tick",
         "Boat.java:floatBoat",
-        "Entity.java:collide",
         "AbstractArrow.java:onHitEntity",
         "ThrownTrident.java:onHitEntity",
+        "Entity.java:collide",
         "Projectile.java:shoot",
         "Projectile.java:shootFromRotation",
         "AbstractArrow.java:onHitBlock"
@@ -4193,6 +4153,7 @@
       "categories": [
         "source",
         "mappings",
+        "protocol",
         "registries",
         "dataPacks"
       ],
@@ -4212,12 +4173,12 @@
         "FireworkRocketEntity.java:tick",
         "Boat.java:floatBoat",
         "Boat.java:controlBoat",
-        "FireworkRocketEntity.java:explode",
+        "AbstractArrow.java:onHitEntity",
         "ThrownTrident.java:tick",
+        "ThrownTrident.java:onHitEntity",
         "ProjectileUtil.java:getHitResult",
         "ProjectileUtil.java:getEntityHitResult",
-        "AbstractArrow.java:onHitEntity",
-        "ThrownTrident.java:onHitEntity",
+        "FireworkRocketEntity.java:explode",
         "LivingEntity.java:handleRelativeFrictionAndCalculateMovement",
         "Projectile.java:checkLeftOwner",
         "AbstractArrow.java:onHitBlock",
@@ -4258,6 +4219,28 @@
           "VoxelShape"
         ]
       },
+      "protocol": {
+        "previous": 767,
+        "current": 768,
+        "packets": {
+          "added": [
+            "toServer:player_input",
+            "toClient:sync_entity_position"
+          ],
+          "removed": [
+            "toServer:steer_vehicle"
+          ],
+          "changed": [
+            "toServer:flying",
+            "toServer:position",
+            "toServer:look",
+            "toServer:position_look",
+            "toClient:position",
+            "toClient:explosion",
+            "toClient:entity_update_attributes"
+          ]
+        }
+      },
       "registries": {
         "blocks": {
           "added": [
@@ -4286,6 +4269,105 @@
             "stripped_pale_oak_log",
             "stripped_pale_oak_wood"
           ]
+        },
+        "entities": {
+          "added": [
+            "acacia_boat",
+            "acacia_chest_boat",
+            "bamboo_chest_raft",
+            "bamboo_raft",
+            "birch_boat",
+            "birch_chest_boat",
+            "cherry_boat",
+            "cherry_chest_boat",
+            "creaking",
+            "creaking_transient",
+            "dark_oak_boat",
+            "dark_oak_chest_boat",
+            "jungle_boat",
+            "jungle_chest_boat",
+            "mangrove_boat",
+            "mangrove_chest_boat",
+            "oak_boat",
+            "oak_chest_boat",
+            "pale_oak_boat",
+            "pale_oak_chest_boat",
+            "spruce_boat",
+            "spruce_chest_boat"
+          ],
+          "removed": [
+            "boat",
+            "chest_boat"
+          ]
+        },
+        "attributes": {
+          "added": [
+            "minecraft:armor",
+            "minecraft:armor_toughness",
+            "minecraft:attack_damage",
+            "minecraft:attack_knockback",
+            "minecraft:attack_speed",
+            "minecraft:block_break_speed",
+            "minecraft:block_interaction_range",
+            "minecraft:burning_time",
+            "minecraft:explosion_knockback_resistance",
+            "minecraft:entity_interaction_range",
+            "minecraft:fall_damage_multiplier",
+            "minecraft:flying_speed",
+            "minecraft:follow_range",
+            "minecraft:gravity",
+            "minecraft:jump_strength",
+            "minecraft:knockback_resistance",
+            "minecraft:luck",
+            "minecraft:max_absorption",
+            "minecraft:max_health",
+            "minecraft:mining_efficiency",
+            "minecraft:movement_efficiency",
+            "minecraft:movement_speed",
+            "minecraft:oxygen_bonus",
+            "minecraft:safe_fall_distance",
+            "minecraft:scale",
+            "minecraft:sneaking_speed",
+            "minecraft:spawn_reinforcements",
+            "minecraft:step_height",
+            "minecraft:submerged_mining_speed",
+            "minecraft:sweeping_damage_ratio",
+            "minecraft:tempt_range",
+            "minecraft:water_movement_efficiency"
+          ],
+          "removed": [
+            "minecraft:generic.armor",
+            "minecraft:generic.armor_toughness",
+            "minecraft:generic.attack_damage",
+            "minecraft:generic.attack_knockback",
+            "minecraft:generic.attack_speed",
+            "minecraft:player.block_break_speed",
+            "minecraft:player.block_interaction_range",
+            "minecraft:generic.burning_time",
+            "minecraft:generic.explosion_knockback_resistance",
+            "minecraft:player.entity_interaction_range",
+            "minecraft:generic.fall_damage_multiplier",
+            "minecraft:generic.flying_speed",
+            "minecraft:generic.follow_range",
+            "minecraft:generic.gravity",
+            "minecraft:generic.jump_strength",
+            "minecraft:generic.knockback_resistance",
+            "minecraft:generic.luck",
+            "minecraft:generic.max_absorption",
+            "minecraft:generic.max_health",
+            "minecraft:player.mining_efficiency",
+            "minecraft:generic.movement_efficiency",
+            "minecraft:generic.movement_speed",
+            "minecraft:generic.oxygen_bonus",
+            "minecraft:generic.safe_fall_distance",
+            "minecraft:generic.scale",
+            "minecraft:player.sneaking_speed",
+            "minecraft:zombie.spawn_reinforcements",
+            "minecraft:generic.step_height",
+            "minecraft:player.submerged_mining_speed",
+            "minecraft:player.sweeping_damage_ratio",
+            "minecraft:generic.water_movement_efficiency"
+          ]
         }
       },
       "dataPacks": {
@@ -4295,19 +4377,7 @@
             "bats_spawnable_on"
           ]
         }
-      },
-      "unavailableSources": [
-        "minecraftData"
-      ]
-    },
-    {
-      "previous": "1.21.2",
-      "current": "1.21.3",
-      "categories": [],
-      "changed": [],
-      "unavailableSources": [
-        "minecraftData"
-      ]
+      }
     },
     {
       "previous": "1.21.3",
@@ -4326,9 +4396,9 @@
         "LocalPlayer.java:aiStep",
         "AbstractArrow.java:tick",
         "FireworkRocketEntity.java:tick",
+        "ThrownTrident.java:onHitEntity",
         "Entity.java:collide",
         "ProjectileUtil.java:getEntityHitResult",
-        "ThrownTrident.java:onHitEntity",
         "Projectile.java:checkLeftOwner",
         "LivingEntity.java:travelInFluid",
         "AbstractBoat.java:tick",
@@ -4446,8 +4516,8 @@
         "AbstractMinecart.java:tick",
         "AbstractArrow.java:tick",
         "FireworkRocketEntity.java:tick",
-        "Entity.java:collide",
         "AbstractArrow.java:onHitEntity",
+        "Entity.java:collide",
         "LivingEntity.java:handleRelativeFrictionAndCalculateMovement",
         "AbstractHorse.java:tickRidden",
         "AbstractBoat.java:floatBoat",
@@ -4639,24 +4709,6 @@
       }
     },
     {
-      "previous": "1.21.6",
-      "current": "1.21.7",
-      "categories": [],
-      "changed": [],
-      "unavailableSources": [
-        "minecraftData"
-      ]
-    },
-    {
-      "previous": "1.21.7",
-      "current": "1.21.8",
-      "categories": [],
-      "changed": [],
-      "unavailableSources": [
-        "minecraftData"
-      ]
-    },
-    {
       "previous": "1.21.8",
       "current": "1.21.9",
       "categories": [
@@ -4824,9 +4876,10 @@
           "Entity"
         ]
       },
-      "unavailableSources": [
-        "minecraftData"
-      ]
+      "protocol": {
+        "previous": 773,
+        "current": 773
+      }
     },
     {
       "previous": "1.21.10",
@@ -4834,6 +4887,7 @@
       "categories": [
         "source",
         "mappings",
+        "registries",
         "dataPacks"
       ],
       "changed": [
@@ -4842,9 +4896,9 @@
         "LocalPlayer.java:aiStep",
         "AbstractMinecart.java:tick",
         "FireworkRocketEntity.java:tick",
-        "ProjectileUtil.java:getEntityHitResult",
         "AbstractArrow.java:findHitEntity",
         "ThrownTrident.java:findHitEntity",
+        "ProjectileUtil.java:getEntityHitResult",
         "Projectile.java:shoot",
         "Projectile.java:shootFromRotation",
         "LivingEntity.java:travelInFluid",
@@ -4869,16 +4923,32 @@
           "VoxelShape"
         ]
       },
+      "protocol": {
+        "previous": 773,
+        "current": 774
+      },
+      "registries": {
+        "entities": {
+          "added": [
+            "camel_husk",
+            "nautilus",
+            "parched",
+            "zombie_nautilus"
+          ]
+        },
+        "effects": {
+          "added": [
+            "BreathOfTheNautilus"
+          ]
+        }
+      },
       "dataPacks": {
         "blockTags": {
           "added": [
             "can_glide_through"
           ]
         }
-      },
-      "unavailableSources": [
-        "minecraftData"
-      ]
+      }
     },
     {
       "previous": "1.21.11",
@@ -4901,19 +4971,19 @@
         "AbstractMinecart.java:tick",
         "ThrowableProjectile.java:tick",
         "AbstractArrow.java:tick",
+        "AbstractArrow.java:shoot",
         "AbstractHurtingProjectile.java:tick",
         "FireworkRocketEntity.java:tick",
-        "FireworkRocketEntity.java:explode",
+        "ProjectileUtil.java:rotateTowardsMovement",
+        "AbstractArrow.java:findHitEntity",
+        "AbstractArrow.java:onHitEntity",
         "ThrownTrident.java:tick",
+        "ThrownTrident.java:findHitEntity",
+        "ThrownTrident.java:onHitEntity",
         "Entity.java:collide",
         "ProjectileUtil.java:getHitResult",
         "ProjectileUtil.java:getEntityHitResult",
-        "ProjectileUtil.java:rotateTowardsMovement",
-        "AbstractArrow.java:shoot",
-        "AbstractArrow.java:findHitEntity",
-        "AbstractArrow.java:onHitEntity",
-        "ThrownTrident.java:findHitEntity",
-        "ThrownTrident.java:onHitEntity",
+        "FireworkRocketEntity.java:explode",
         "LivingEntity.java:handleRelativeFrictionAndCalculateMovement",
         "Projectile.java:shoot",
         "Projectile.java:shootFromRotation",
@@ -5056,9 +5126,12 @@
       "current": "26.1.1",
       "categories": [],
       "changed": [],
+      "protocol": {
+        "previous": 775,
+        "current": 775
+      },
       "unavailableSources": [
-        "mappings",
-        "minecraftData"
+        "mappings"
       ]
     },
     {
@@ -5084,24 +5157,24 @@
         "ThrowableProjectile.java:tick",
         "ThrowableProjectile.java:getGravity",
         "AbstractArrow.java:tick",
+        "AbstractArrow.java:shoot",
         "AbstractHurtingProjectile.java:tick",
+        "AbstractHurtingProjectile.java:getInertia",
         "FireworkRocketEntity.java:tick",
         "Boat.java:floatBoat",
         "Boat.java:controlBoat",
-        "FireworkRocketEntity.java:explode",
-        "ThrownTrident.java:tick",
-        "Entity.java:collide",
-        "ProjectileUtil.java:getHitResult",
-        "ProjectileUtil.java:getEntityHitResult",
         "ProjectileUtil.java:rotateTowardsMovement",
-        "AbstractArrow.java:shoot",
         "AbstractArrow.java:findHitEntity",
         "AbstractArrow.java:onHitEntity",
         "AbstractArrow.java:getWaterInertia",
+        "ThrownTrident.java:tick",
         "ThrownTrident.java:findHitEntity",
         "ThrownTrident.java:onHitEntity",
         "ThrownTrident.java:getWaterInertia",
-        "AbstractHurtingProjectile.java:getInertia",
+        "Entity.java:collide",
+        "ProjectileUtil.java:getHitResult",
+        "ProjectileUtil.java:getEntityHitResult",
+        "FireworkRocketEntity.java:explode",
         "LivingEntity.java:handleRelativeFrictionAndCalculateMovement",
         "Projectile.java:tick",
         "Projectile.java:shoot",
@@ -5132,15 +5205,19 @@
         "AbstractArrow.java:applyInertia",
         "AbstractHurtingProjectile.java:applyInertia"
       ],
+      "protocol": {
+        "previous": 775,
+        "current": 775
+      },
       "unavailableSources": [
-        "mappings",
-        "minecraftData"
+        "mappings"
       ]
     },
     {
       "previous": "26.1.2",
       "current": "26.2",
       "categories": [
+        "protocol",
         "registries",
         "dataPacks"
       ],
@@ -5163,24 +5240,24 @@
         "ThrowableProjectile.java:tick",
         "ThrowableProjectile.java:getGravity",
         "AbstractArrow.java:tick",
+        "AbstractArrow.java:shoot",
         "AbstractHurtingProjectile.java:tick",
+        "AbstractHurtingProjectile.java:getInertia",
         "FireworkRocketEntity.java:tick",
         "Boat.java:floatBoat",
         "Boat.java:controlBoat",
-        "FireworkRocketEntity.java:explode",
-        "ThrownTrident.java:tick",
-        "Entity.java:collide",
-        "ProjectileUtil.java:getHitResult",
-        "ProjectileUtil.java:getEntityHitResult",
         "ProjectileUtil.java:rotateTowardsMovement",
-        "AbstractArrow.java:shoot",
         "AbstractArrow.java:findHitEntity",
         "AbstractArrow.java:onHitEntity",
         "AbstractArrow.java:getWaterInertia",
+        "ThrownTrident.java:tick",
         "ThrownTrident.java:findHitEntity",
         "ThrownTrident.java:onHitEntity",
         "ThrownTrident.java:getWaterInertia",
-        "AbstractHurtingProjectile.java:getInertia",
+        "Entity.java:collide",
+        "ProjectileUtil.java:getHitResult",
+        "ProjectileUtil.java:getEntityHitResult",
+        "FireworkRocketEntity.java:explode",
         "LivingEntity.java:handleRelativeFrictionAndCalculateMovement",
         "Projectile.java:tick",
         "Projectile.java:shoot",
@@ -5211,6 +5288,15 @@
         "AbstractArrow.java:applyInertia",
         "AbstractHurtingProjectile.java:applyInertia"
       ],
+      "protocol": {
+        "previous": 775,
+        "current": 776,
+        "packets": {
+          "changed": [
+            "toClient:entity_update_attributes"
+          ]
+        }
+      },
       "registries": {
         "blocks": {
           "added": [
@@ -5242,6 +5328,26 @@
             "sulfur_spike",
             "sulfur_stairs",
             "sulfur_wall"
+          ]
+        },
+        "entities": {
+          "added": [
+            "sulfur_cube"
+          ],
+          "changed": [
+            "bee"
+          ]
+        },
+        "attributes": {
+          "added": [
+            "minecraft:air_drag_modifier",
+            "minecraft:below_name_distance",
+            "minecraft:bounciness",
+            "minecraft:friction_modifier",
+            "minecraft:name_tag_distance"
+          ],
+          "changed": [
+            "minecraft:knockback_resistance"
           ]
         }
       },
@@ -5284,8 +5390,7 @@
         }
       },
       "unavailableSources": [
-        "mappings",
-        "minecraftData"
+        "mappings"
       ]
     },
     {
@@ -5301,9 +5406,9 @@
         "Entity.java:move",
         "Player.java:aiStep",
         "LocalPlayer.java:aiStep",
-        "Entity.java:collide",
         "AbstractArrow.java:onHitEntity",
         "ThrownTrident.java:onHitEntity",
+        "Entity.java:collide",
         "Projectile.java:onHit",
         "LivingEntity.java:travelInFluid",
         "AbstractBoat.java:tick",

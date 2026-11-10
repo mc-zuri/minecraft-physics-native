@@ -30,9 +30,10 @@ const stateOf = (name, props, metadata = 0) => ({
 });
 
 describe('fluid tables', () => {
-    it('lists every registered release, and the one with no exact source by name', () => {
+    it('lists every registered release, each from its exact source', () => {
         assert.deepEqual([...Object.keys(manifest.releases), ...manifest.unverified].sort(), [...registered].sort());
-        assert.deepEqual(manifest.unverified, ['1.8.8']);
+        // (1.8.8 too, since its own jar is decompiled: it was the one without)
+        assert.deepEqual(manifest.unverified, []);
         for (const [version, release] of Object.entries(manifest.releases)) {
             assert.match(release.source, /\S/, version);
             assert.match(release.sha256, /^[0-9a-f]{64}$/, version);

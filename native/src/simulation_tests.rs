@@ -17,7 +17,7 @@ mod tests {
     #[test]
     fn landing_damage_rounding_is_explicit_and_version_selectable() {
         // LivingEntity.computeFallDamage before 1.20.5: ceil((fd - 3.0F - jumpBoost) * mult)
-        // (1.20.4 LivingEntity.java:1564), with safe_fall_distance standing for the 3.0F
+        // (1.20.4 LivingEntity.java:1572), with safe_fall_distance standing for the 3.0F
         assert_eq!(
             landing_damage(4.25, 3.0, 1.0, None, LandingDamageRounding::Ceil),
             2.0
@@ -40,13 +40,13 @@ mod tests {
     fn landing_damage_formula_follows_the_release() {
         use crate::simulation::attribute_landing_damage;
         use crate::version::MinecraftVersion;
-        // 1.20.4 LivingEntity.java:1564: float ceil, Jump Boost subtracted
+        // 1.20.4 LivingEntity.java:1572: float ceil, Jump Boost subtracted
         assert_eq!(landing_damage(5.0, 3.0, 1.0, None, LandingDamageRounding::Ceil), 2.0);
         assert_eq!(landing_damage(5.0, 3.0, 1.0, Some(0), LandingDamageRounding::Ceil), 1.0);
         // the float subtraction: 3.0000001f - 3.0f is one ulp, ceil 1
         let just_over = f64::from(f32::from_bits(3.0_f32.to_bits() + 1));
         assert_eq!(landing_damage(just_over, 3.0, 1.0, None, LandingDamageRounding::Ceil), 1.0);
-        // 1.20.5 LivingEntity.java:1607-1609 (1.21.4 :1662-1664): float, no epsilon, ceil, so an
+        // 1.20.5 LivingEntity.java:1597-1599 (1.21.4 :1625-1627): float, no epsilon, ceil, so an
         // exact excess is not rounded up and fd == safe deals nothing
         let v1_20_5 = MinecraftVersion::new(1, 20, 5);
         let v1_21_4 = MinecraftVersion::new(1, 21, 4);
@@ -54,7 +54,7 @@ mod tests {
         assert_eq!(attribute_landing_damage(3.0, 3.0, 1.0, 1.0, LandingDamageRounding::Ceil, v1_21_4), 0.0);
         assert_eq!(attribute_landing_damage(4.25, 3.0, 1.0, 1.0, LandingDamageRounding::Ceil, v1_21_4), 2.0);
         assert_eq!(attribute_landing_damage(4.25, 3.0, 1.0, 0.5, LandingDamageRounding::Ceil, v1_21_4), 1.0);
-        // 1.21.5 LivingEntity.java:1672-1682: floor((fd + 1.0E-6 - safe) * multiplier)
+        // 1.21.5 LivingEntity.java:1643-1653: floor((fd + 1.0E-6 - safe) * multiplier)
         let v1_21_5 = MinecraftVersion::new(1, 21, 5);
         assert_eq!(attribute_landing_damage(5.0, 3.0, 1.0, 1.0, LandingDamageRounding::Floor, v1_21_5), 2.0);
         assert_eq!(attribute_landing_damage(4.9999995, 3.0, 1.0, 1.0, LandingDamageRounding::Floor, v1_21_5), 2.0);
@@ -65,7 +65,7 @@ mod tests {
     #[test]
     fn release_profiles_pick_the_vanilla_fall_damage_rounding() {
         use crate::simulation::VersionPhysicsProfile;
-        // 1.21.4 LivingEntity.java:1664 ceil, 1.21.5 :1678 floor
+        // 1.21.4 LivingEntity.java:1627 ceil, 1.21.5 :1648 floor
         assert_eq!(
             <crate::versioned::v1_21_4::Profile as VersionPhysicsProfile>::landing_damage_rounding(),
             LandingDamageRounding::Ceil
@@ -96,7 +96,7 @@ mod tests {
             accumulated_fall_distance(fd, dy, MinecraftVersion::new(1, 18, 1)),
             f64::from((f64::from(1.3_f32) + 0.1) as f32)
         );
-        // 1.21.5 Entity.java:1286: a double field, fd -= (double)(float)dy
+        // 1.21.5 Entity.java:1323: a double field, fd -= (double)(float)dy
         assert_eq!(
             accumulated_fall_distance(1.3, dy, MinecraftVersion::new(1, 21, 5)),
             1.3 + f64::from(0.1_f32)
@@ -197,6 +197,7 @@ mod tests {
             no_gravity: true,
             half_width: 0.3,
             height: 1.8,
+            controlled_by_local_instance: true,
             ..SimulationState::default()
         };
 
@@ -376,7 +377,7 @@ mod tests {
     fn entity_state_clones_and_merges_keep_the_entitys_own_gravity() {
         use crate::entity::{Dimensions, EntityFlags, EntityState};
         // Entity.isNoGravity (1.21.11 Entity.java:1443-1445) and the GRAVITY and STEP_HEIGHT
-        // attributes (1.21.11 Attributes.java:46, 86) are the entity's own: a prediction that
+        // attributes (1.21.11 Attributes.java:26-66, 42-80) are the entity's own: a prediction that
         // goes through EntityState and back keeps them
         let full = SimulationState {
             position: Vec3::new(1.0, 2.0, 3.0),
@@ -545,8 +546,8 @@ mod tests {
 
     #[test]
     fn move_flying_before_1_9_turns_the_degrees_into_radians_in_two_roundings() {
-        // 1.8.9 Entity.java:942-943: MathHelper.sin(this.yaw * (float) Math.PI / 180.0F); from
-        // 1.9.4 Entity.java:1050-1051: this.yaw * (float) (Math.PI / 180.0). At 28.927 degrees
+        // 1.8.8 Entity.java:937-938: Mth.sin(this.yaw * (float) Math.PI / 180.0F); from
+        // 1.9.4 Entity.java:1046-1047: this.yaw * (float) (Math.PI / 180.0). At 28.927 degrees
         // the two land on adjacent sine table entries (5266 and 5265).
         let degrees = 28.927_f32;
         let two_roundings = f64::from(0.504_871_43_f32);
@@ -596,7 +597,7 @@ mod tests {
 
     #[test]
     fn only_the_client_sinks_over_a_column_not_loaded_and_a_column_that_loads_ends_it() {
-        // world.isClient && !loaded (1.8.9 LivingEntity.java:1186-1190): the server takes gravity.
+        // world.isClient && !loaded (1.8.8 LivingEntity.java:1177-1181): the server takes gravity.
         // Leaving a loaded column, an unloaded destination and a re-entry differ by the column alone.
         let mut world = WorldSnapshot::new();
         world.set_chunk_loaded(0, 0, true);
@@ -1120,6 +1121,8 @@ mod tests {
             is_player: true,
             minor_horizontal_collision_supported: true,
             no_gravity: true,
+            controlled_by_local_instance: true,
+            client_side: true,
             ..SimulationState::default()
         };
 
@@ -1645,9 +1648,9 @@ mod tests {
     #[test]
     fn a_glide_falls_by_the_final_gravity_from_1_20_5() {
         // 1.20.5+ travel takes d = getFinalGravity(), 0 with NoGravity, and the glide adds
-        // d * (-1 + lift * 0.75) (1.20.5 LivingEntity.java:2111, Entity.java:1112-1114; 1.21.11
-        // Entity.java:1398-1400, LivingEntity.java:2460-2467); before, the glide's 0.08 ignores
-        // NoGravity (1.16.5 LivingEntity.java:1963)
+        // d * (-1 + lift * 0.75) (1.20.5 LivingEntity.java:2107, Entity.java:1143-1145; 1.21.11
+        // Entity.java:1443-1445, LivingEntity.java:2434-2441); before, the glide's 0.08 ignores
+        // NoGravity (1.16.5 LivingEntity.java:1961)
         let glide = |release| {
             let mut state = SimulationState {
                 position: Vec3::new(0.5, 10.0, 0.5),
@@ -1753,6 +1756,38 @@ mod tests {
             (old.position, old.bounding_box),
             (state.position, Some(state.bounds_around_position()))
         );
+    }
+
+    #[test]
+    fn a_changed_pose_height_rebuilds_the_kept_box_from_its_corner_with_the_float_width() {
+        // 1.16.5 walk/sneak_br t=20: aiStep left a box 1.1e-16 narrower than 0.6F; the pose update
+        // to standing rebuilds it from its corner (Entity#refreshDimensions, 1.16.5
+        // Entity.java:2326-2327), and the recorded end-of-tick box is that one
+        let kept = Aabb::new(
+            Vec3::new(-1.1436244409274199, 100.0, -1.1436244409274199),
+            Vec3::new(-0.5436244170855621, 101.5, -0.5436244170855621),
+        );
+        assert_ne!(kept.max.x - kept.min.x, f64::from(0.6_f32));
+        let mut state = SimulationState {
+            half_width: 0.3,
+            height: 1.5,
+            bounding_box: Some(kept),
+            ..SimulationState::default()
+        };
+        crate::simulation::set_pose_height(&mut state, f64::from(1.8_f32));
+        assert_eq!(
+            state.bounding_box,
+            Some(Aabb::new(
+                kept.min,
+                Vec3::new(-0.54362441708556197, 100.0 + f64::from(1.8_f32), -0.54362441708556197),
+            ))
+        );
+        // the same size again leaves the box: the size only changes on a changed pose
+        let squared = state.bounding_box;
+        state.bounding_box = Some(kept);
+        crate::simulation::set_pose_height(&mut state, f64::from(1.8_f32));
+        assert_eq!(state.bounding_box, Some(kept));
+        assert_ne!(Some(kept), squared);
     }
 
     #[test]
@@ -2428,7 +2463,7 @@ mod tests {
     #[test]
     fn swimming_steering_reads_any_fluid_at_y_plus_one_minus_a_tenth() {
         // Player.travel: getFluidState(BlockPos.containing(x, y + 1.0 - 0.1, z)).isEmpty() (1.13.2
-        // PlayerEntity.java:1489, 1.21.11 Player.java:1364, 26.3 :1301)
+        // Player.java:1473, 1.21.11 Player.java:1326, 26.3 :1301)
         let water = BlockState {
             fluid: FluidState::Water,
             ..BlockState::default()
@@ -2472,7 +2507,7 @@ mod tests {
     #[test]
     fn fluid_falling_adjustment_skips_a_zero_gravity_from_1_20_5() {
         // LivingEntity.getFluidFallingAdjustedMovement: `gravity != 0.0 && !isSprinting()` from
-        // 1.20.5 (1.20.5 LivingEntity.java:2288, 1.21.11 :2545, 26.3 :2609)
+        // 1.20.5 (1.20.5 LivingEntity.java:2290, 1.21.11 :2522, 26.3 :2609)
         let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 0, 0),
@@ -2785,9 +2820,9 @@ mod tests {
     }
 
     // Entity.move refreshes verticalCollision and onGround on every move until 1.21.4
-    // (1.21.3 Entity.java:675-676), which keeps them for a zero-Y move of an entity that is not
+    // (1.21.3 Entity.java:698-699), which keeps them for a zero-Y move of an entity that is not
     // controlled locally (`Math.abs(movement.y) > 0.0 || isLocalPlayerOrLogicalSideForUpdatingMovement()`,
-    // 1.21.4 Entity.java:683).
+    // 1.21.4 Entity.java:707).
     #[test]
     fn a_zero_y_move_refreshes_the_ground_state_of_a_remote_entity_until_1_21_4() {
         let mut world = WorldSnapshot::new();
@@ -2834,7 +2869,7 @@ mod tests {
 
     // From 1.21.2 the client runs Entity.checkFallDamage (the fall distance, the water push)
     // only for an entity it controls: `!isClientSide() || isLogicalSideForUpdatingMovement()`
-    // (1.21.3 Entity.java:686), isLocalInstanceAuthoritative from 1.21.5 (1.21.5 Entity.java:708).
+    // (1.21.3 Entity.java:709), isLocalInstanceAuthoritative from 1.21.5 (1.21.5 Entity.java:743).
     // Before, it runs for every entity (1.21 Entity.java:656).
     #[test]
     fn a_remote_entity_gains_no_fall_distance_on_the_client_from_1_21_2() {
@@ -2870,7 +2905,7 @@ mod tests {
         assert!(fallen(crate::versioned::v26_3::Profile::rules(), true) > 0.0);
     }
 
-    // Entity.checkSupportingBlock (1.21.11 Entity.java:665-685, the same from 1.20
+    // Entity.checkSupportingBlock (1.21.11 Entity.java:699-722, the same from 1.20
     // updateSupportingBlockPos): with no block under the box, the box where the move started is
     // tried only when the last check found a block (onGroundNoBlocks); with no move to retry, the
     // block kept before stays; off the ground there is none.
@@ -2932,7 +2967,7 @@ mod tests {
     }
 
     // Entity.setOnGround(false) empties mainSupportingBlockPos and onGroundNoBlocks (1.21.11
-    // Entity.java:680-684), which Player.tick does each tick the player rides (Player.java:238-241)
+    // Entity.java:680-684), which Player.tick does each tick the player rides (Player.java:223-226)
     // and a respawned LocalPlayer starts without: a state handed in off the ground (dismounted)
     // keeps neither from before it rode. Landing on a boat-like collider with no block under the box,
     // the box where the move started is tried (onGroundNoBlocks false), finding the slime block
@@ -2975,7 +3010,7 @@ mod tests {
     }
 
     // CollisionGetter.findSupportingBlock walks BlockCollisions with the entity's CollisionContext
-    // (1.21.11 CollisionGetter.java:138-153): powder snow holds up an entity that walks on it
+    // (1.21.11 CollisionGetter.java:139-154): powder snow holds up an entity that walks on it
     // (PowderSnowBlock.getCollisionShape) and so supports it.
     #[test]
     fn the_supporting_block_uses_the_entity_collision_context() {
@@ -3069,8 +3104,8 @@ mod tests {
 
     #[test]
     fn lava_beside_water_neither_pushes_nor_counts_its_height_in_1_16_and_1_16_1() {
-        // 1.16 Entity.updateWaterState returns once touching water, before it measures the lava
-        // (1.16 Entity.java:1042-1051); 1.16.2 always measures it (1.16.5 Entity.java:1046-1052)
+        // 1.16 Entity.updateInWaterStateAndDoFluidPushing returns once touching water, before it measures the lava
+        // (1.16 Entity.java:1039-1048); 1.16.2 always measures it (1.16.5 Entity.java:1043-1049)
         let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 0, 0),
@@ -3109,10 +3144,10 @@ mod tests {
 
     #[test]
     fn lava_counts_from_the_move_that_reached_its_surface_in_1_16_and_1_16_1() {
-        // 1.16 Entity.isInLava is the flag FluidBlock.onEntityCollision sets in the move, for a
-        // lava block whose float top is above the box's foot (1.16 Entity.java:657-659,
-        // 1160-1166, FluidBlock.java:170-177); from 1.16.2 the lava height of the base tick
-        // (1.16.5 Entity.java:1181-1183)
+        // 1.16 Entity.isInLava is the flag LiquidBlock.entityInside sets in the move, for a
+        // lava block whose float top is above the box's foot (1.16 Entity.java:660-662,
+        // 1160-1166, LiquidBlock.java:173-180); from 1.16.2 the lava height of the base tick
+        // (1.16.5 Entity.java:1178-1180)
         let lava = fluid_block_world(FluidState::Lava);
         let release = MinecraftVersion::new(1, 16, 1);
         let mut reaching = SimulationState {
@@ -3285,6 +3320,7 @@ mod tests {
             no_gravity,
             half_width: 0.3,
             height: 1.8,
+            controlled_by_local_instance: true,
             ..SimulationState::default()
         };
         crate::versioned::dispatch(release, &mut state, &world, PhysicsConfig::default())
@@ -3402,7 +3438,7 @@ mod tests {
     #[test]
     fn water_gravity_uses_version_rule_divisor() {
         // getFluidFallingAdjustedMovement subtracts gravity / 16.0 in water (1.20.4
-        // LivingEntity.java:2219-2222, 1.21.11 :2547-2550); the profile's divisor is the one used
+        // LivingEntity.java:2219-2222, 1.21.11 :2524-2527); the profile's divisor is the one used
         let fall = |divisor: Option<f64>| {
             let mut world = WorldSnapshot::new();
             load_chunks_around_origin(&mut world);
@@ -3596,14 +3632,14 @@ mod tests {
         };
 
         // before 1.21.5 LivingEntity.fall refreshes the water, then Entity.fall counts the drop
-        // whatever the water (1.21.4 LivingEntity.java:341-345, Entity.java:1272-1274)
+        // whatever the water (1.21.4 LivingEntity.java:317-322, Entity.java:1295-1297)
         let mut state = falling;
         crate::versioned::dispatch("1.21.4", &mut state, &world, PhysicsConfig::default())
             .unwrap();
         assert!(state.in_water);
         assert_eq!(state.fall_distance, 1.5);
 
-        // from 1.21.5 the drop counts only out of the water (1.21.5 Entity.java:1285-1287)
+        // from 1.21.5 the drop counts only out of the water (1.21.5 Entity.java:1322-1324)
         let mut state = falling;
         tick(&mut state, &world, PhysicsConfig::default());
         assert!(state.in_water);
@@ -3685,7 +3721,7 @@ mod tests {
         crate::versioned::dispatch("1.8.8", &mut state, &world, PhysicsConfig::default()).unwrap();
 
         assert!(state.in_water);
-        // a float field: (float)((double)fallDistance - dy) (1.8.9 Entity.java:805)
+        // a float field: (float)((double)fallDistance - dy) (1.8.8 Entity.java:802)
         assert_eq!(state.fall_distance, f64::from(1.2_f32));
     }
 
@@ -3809,7 +3845,8 @@ mod tests {
             state.velocity.y
         };
 
-        assert_eq!(sink("1.8.8"), 0.0);
+        // (1.8.8 has no NoGravity: the water takes its 0.02 off whatever the flag, 1.8.8 LivingEntity.java:1230)
+        assert_eq!(sink("1.8.8"), -0.02);
         assert_eq!(sink("1.12.2"), 0.0);
         assert_eq!(sink("1.13.2"), -0.03999999910593033 * f64::from(0.8_f32));
     }
@@ -3874,8 +3911,8 @@ mod tests {
             fall_flying: true,
             no_gravity: false,
             look: Vec3::new(0.0, 0.0, 1.0),
-            // the elytra pose of PlayerEntity.updateSize (1.9.4 PlayerEntity.java:366-367, 1.13.2
-            // :423-424)
+            // the elytra pose of Player.updatePlayerPose (1.9.4 Player.java:367-368, 1.13.2
+            // :422-423)
             height: java_float(0.6),
             ..legacy_water_player(Vec3::new(0.5, y, 0.5), Vec3::new(0.1, -0.1, 0.0))
         }
@@ -3885,11 +3922,11 @@ mod tests {
     fn a_gliding_player_travels_in_the_lava_its_turned_over_box_touches_before_1_14() {
         // Source-predicted; no live trace of this fixture exists. isTouchingLava contracts the box
         // by 0.4F each way, which takes the 0.6F high box past itself, and Box's constructor turns
-        // it back (1.9.4 Entity.java:1035-1036, Box.java:24-31, 111-119; 1.13.2 Entity.java:1144-
-        // 1146, Box.java:42-49, 232-234): 64.9 - 65.1 at y 64.7. World.containsMaterial reads floor
-        // to ceil, the cells 64 and 65 (1.13.2 World.java:1373-1395). The lava branch of travel comes
+        // it back (1.9.4 Entity.java:1031-1032, AABB.java:25-32, 112-120; 1.13.2 Entity.java:1143-
+        // 1146, AABB.java:38-45, 228-230): 64.9 - 65.1 at y 64.7. Level.containsMaterial reads floor
+        // to ceil, the cells 64 and 65 (1.13.2 Level.java:1362-1384). The lava branch of travel comes
         // before the elytra's: the velocity is halved and loses 0.02 (1.9.4 LivingEntity.java:1326-
-        // 1327, 1440-1445; 1.13.2 :1516-1518, 1631-1636)
+        // 1327, 1439-1444; 1.13.2 :1517-1519, 1631-1636)
         for version in ["1.9.4", "1.10.2", "1.11.2", "1.12.2", "1.13.2"] {
             for cell in [(0, 64, 0), (0, 65, 0)] {
                 let mut state = gliding_player(64.7);
@@ -3923,9 +3960,9 @@ mod tests {
 
     #[test]
     fn the_modern_lava_flag_keeps_its_own_box_and_its_own_tick_from_1_14() {
-        // Source-predicted control. From 1.14 isInLava is the flag FluidBlock.onEntityCollision sets
-        // in the move's block check, over the box contracted by 0.001 (1.14 Entity.java:1109-1115,
-        // FluidBlock.java:166-169): the first tick still glides, the next is in lava, and a box whose
+        // Source-predicted control. From 1.14 isInLava is the flag 1.14.4 LiquidBlock.entityInside sets
+        // in the move's block check, over the box contracted by 0.001 (1.14.4 Entity.java:1167-1173,
+        // LiquidBlock.java:158-161): the first tick still glides, the next is in lava, and a box whose
         // legacy contraction misses the cell below reads it
         let world = lava_world((0, 65, 0));
         let mut state = gliding_player(64.7);
@@ -3956,7 +3993,7 @@ mod tests {
         // Side by side with a slab: 5e-8 into its width neither lists it nor blocks the box (26.3
         // BlockCollisions.java:91-103; VoxelShape.collide reads the box's edge 1e-7 in), 2e-7 into
         // it does both, on the release's own path: the block walk for this one-axis move to 1.17.1
-        // (1.16.5 Entity.java:835, VoxelShapes.java:243-306), the list from 1.18
+        // (1.16.5 Entity.java:834, Shapes.java:235-296), the list from 1.18
         let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 0, 1),
@@ -4087,7 +4124,7 @@ mod tests {
 
     #[test]
     fn the_eyes_are_tested_at_the_eye_height() {
-        // Entity.updateFluidOnEyes takes getEyeY(), y + the eye height (1.21.11 Entity.java:1542),
+        // Entity.updateFluidOnEyes takes getEyeY(), y + the eye height (1.21.11 Entity.java:1591),
         // not y + height - 0.1: eyes at 1.82 are under a water top of 1 + 8/9F
         let mut world = WorldSnapshot::new();
         load_chunks_around_origin(&mut world);
@@ -4279,8 +4316,8 @@ mod tests {
 
     #[test]
     fn a_passenger_takes_no_item_use_slowdown_in_any_release() {
-        // isUsingItem() && !hasVehicle() (1.8.9 ClientPlayerEntity.java:540, 1.13.2 :703, 1.14 :621,
-        // 1.20.4 :662, 1.21.4 :667; 1.21.5 LocalPlayer.java:629, 26.3 :695): the rider's travel from
+        // isUsingItem() && !hasVehicle() (1.8.8 LocalPlayer.java:538, 1.13.2 :698, 1.14.4 :596,
+        // 1.20.4 :672, 1.21.4 :642; 1.21.5 LocalPlayer.java:610, 26.3 :695): the rider's travel from
         // rest, whose result stays in its motion, runs on the whole input
         let travelled = |release, using_item, passenger| {
             let mut state = SimulationState {
@@ -4346,6 +4383,48 @@ mod tests {
         tick_release(&mut skipped, &world, MinecraftVersion::new(1, 19, 1));
         assert_eq!(skipped.position, standing().position);
         assert_eq!(skipped.velocity, standing().velocity);
+    }
+
+    #[test]
+    fn a_removed_player_still_runs_its_base_tick_from_1_19_1() {
+        // D-215: LivingEntity.tick runs super.tick(), Entity.baseTick with its fluid refresh and the
+        // fall halved in lava, and skips only aiStep for a removed entity (1.21.4 LivingEntity.java
+        // tick, LocalPlayer.java:836-840): a removed player in lava keeps its place and motion and
+        // halves its fall distance
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState { id: 1, shape: Some(BlockShape::full_block()), ..BlockState::default() },
+        );
+        world.set_block(
+            (0, 1, 0),
+            BlockState {
+                fluid: FluidState::Lava,
+                fluid_source: true,
+                ..BlockState::default()
+            },
+        );
+        // (26.1 scans the fluids only with the chunks around loaded: EntityFluidInteraction)
+        for (x, z) in [(-1, -1), (-1, 0), (0, -1)] {
+            world.set_chunk_loaded(x, z, true);
+        }
+        for release in [MinecraftVersion::new(1, 19, 1), MinecraftVersion::new(1, 21, 4), MinecraftVersion::new(26, 3, 0)] {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 1.0, 0.5),
+                on_ground: true,
+                is_player: true,
+                controlled_by_local_instance: true,
+                removed: true,
+                fall_distance: 4.0,
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            tick_release(&mut state, &world, release);
+            assert_eq!(state.position, Vec3::new(0.5, 1.0, 0.5), "{release:?}");
+            assert!(state.in_lava, "{release:?}");
+            assert_eq!(state.fall_distance, 2.0, "{release:?}");
+        }
     }
 
     #[test]
@@ -4610,7 +4689,7 @@ mod tests {
         assert_eq!(launched(true, false, false, MinecraftVersion::new(1, 12, 2)), 0.0);
         assert_eq!(launched(false, true, false, MinecraftVersion::new(1, 12, 2)), 0.0);
         // 26.1 keeps a passenger from it (26.3 TridentItem.java:64), rain or not. Before, it launches,
-        // and the push is the motion rideTick then zeroes: the seat stays (1.20.4 Entity.java:1843-1847,
+        // and the push is the motion rideTick then zeroes: the seat stays (1.20.4 Entity.java:1850-1854,
         // 1.21.11 and 26.3 Entity.java:2465-2470); the launch shows in the lift off the ground
         let lift = |release| {
             let mut state = SimulationState {
@@ -4641,8 +4720,8 @@ mod tests {
     #[test]
     fn a_riptide_lift_is_stuck_in_the_cobweb_it_reaches_until_1_21_2() {
         // TridentItem.releaseUsing's lift is an Entity.move, whose checkInsideBlocks runs to 1.21.1
-        // (1.20.4 Entity.java:713, 1.21 :713); from 1.21.2 it only queues its path, and the tick's
-        // check starts from where the tick began (1.21.3 Entity.java:752-767, LivingEntity.java:2785)
+        // (1.20.4 Entity.java:716, 1.21 :738); from 1.21.2 it only queues its path, and the tick's
+        // check starts from where the tick began (1.21.3 Entity.java:776-793, LivingEntity.java:2818)
         let mut world = pool();
         world.set_block(
             (0, 3, 0),
@@ -4669,6 +4748,180 @@ mod tests {
         let free = launch("1.21.2");
         assert!(!free.move_slowed);
         assert!(free.position.x > 1.9, "{}", free.position.x);
+    }
+
+    #[test]
+    fn a_riptide_lift_s_own_path_is_swept_from_1_21_5() {
+        // D-189: from 1.21.5 the lift is an Entity.move that records its Movement in
+        // movementThisTick, which the tick's applyEffectsFromBlocks sweeps with its own (1.21.5
+        // Entity.java:685, 707-721, 1119-1135; 26.3 :788, 946-957); 1.21.4 sweeps from the old
+        // position the tick set after the lift (1.21.4 Entity.java:788-802). The sweep steps past
+        // its start before it visits (1.21.5 BlockGetter.java:164-245), so a lift from the top of
+        // soul sand (y 1.875) sweeps the cell at y 2, which the box after the lift (from y 3.075)
+        // is not in: a cobweb there catches the player from 1.21.5 alone
+        let mut world = pool();
+        world.set_block(
+            (0, 1, 0),
+            BlockState {
+                id: 31,
+                shape: Some(BlockShape {
+                    bounds: Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.875, 1.0)),
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        world.set_block(
+            (0, 2, 0),
+            BlockState {
+                id: 30,
+                shape: Some(BlockShape {
+                    effect: BlockEffect::Web,
+                    bounds: Aabb::new(Vec3::ZERO, Vec3::ZERO),
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        let caught = |release: &str| {
+            let mut state = releasing_riptide(1, Vec3::new(0.5, 1.875, 0.5), true);
+            crate::versioned::dispatch(release, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            assert!(state.position.y > 3.0, "{release}: lifted to {}", state.position.y);
+            state.stuck_speed_multiplier != Vec3::ZERO
+        };
+        assert!(!caught("1.21.4"));
+        assert!(caught("1.21.5"));
+        assert!(caught("26.3"));
+    }
+
+    #[test]
+    fn a_riptide_lift_into_a_ceiling_over_slime_keeps_its_rise() {
+        // D-211: the lift is an Entity.move, whose vertical collision runs the block under the
+        // feet's updateEntityAfterFallOn, a ceiling's too: the slime block's bounceUp changes
+        // nothing while the motion rises, where any other block zeroes it (1.13.2 Entity.java
+        // move, SlimeBlock.java:52-64; 1.20.4 Entity.java:663, SlimeBlock.java:45-60; 26.1.2
+        // the same). A lift under a ceiling 0.0125 above the head, looking up 45 degrees, over a
+        // floor of slime blocks or of stone
+        let world = |floor: BlockEffect| {
+            let mut world = WorldSnapshot::new();
+            for z in 0..=2 {
+                world.set_block(
+                    (0, 0, z),
+                    BlockState {
+                        shape: Some(BlockShape { effect: floor, ..BlockShape::full_block() }),
+                        ..BlockState::default()
+                    },
+                );
+            }
+            world.set_block(
+                (0, 2, 0),
+                BlockState {
+                    shape: Some(BlockShape {
+                        bounds: Aabb::new(Vec3::new(0.0, 0.8125, 0.0), Vec3::new(1.0, 1.0, 1.0)),
+                        ..BlockShape::full_block()
+                    }),
+                    ..BlockState::default()
+                },
+            );
+            world
+        };
+        let rise = |floor: BlockEffect, release: &str| {
+            let mut state = SimulationState {
+                in_water: false,
+                in_rain: true,
+                pitch: f64::from(-45.0_f32 * 0.017453292_f32),
+                yaw: 0.0,
+                ..releasing_riptide(1, Vec3::new(0.5, 1.0, 0.5), true)
+            };
+            crate::versioned::dispatch(release, &mut state, &world(floor), PhysicsConfig::default())
+                .unwrap();
+            state.velocity.y
+        };
+        for release in ["1.13.2", "1.20.4", "26.1.2"] {
+            assert!(rise(BlockEffect::Slime, release) > 0.5, "{release}: {}", rise(BlockEffect::Slime, release));
+            assert!(rise(BlockEffect::None, release) <= 0.0, "{release}: {}", rise(BlockEffect::None, release));
+        }
+    }
+
+    #[test]
+    fn a_riptide_lift_puts_out_a_wet_burning_player_before_its_tick_to_1_21_1() {
+        // D-228: the lift is an Entity.move, whose fire part runs to 1.21.1 (1.17 Entity.java:630-648,
+        // 1.21.1 :738-760): a burning player in the rain is put out by it, so the server's baseTick
+        // finds no fire to burn down and leaves the frozen ticks (1.17 Entity.java:421-436), which
+        // aiStep then thaws by 2. From 1.21.2 the move applies nothing itself (1.21.2 Entity.java:776-810)
+        let frozen = |release: &str| {
+            let mut state = SimulationState {
+                in_water: false,
+                in_rain: true,
+                client_side: false,
+                remaining_fire_ticks: Some(40),
+                ticks_frozen: 10,
+                ..releasing_riptide(1, Vec3::new(0.5, 1.0, 0.5), true)
+            };
+            crate::versioned::dispatch(release, &mut state, &floor_with_step(1.0), PhysicsConfig::default())
+                .unwrap();
+            assert!(state.position.y > 2.1, "{release}: lifted");
+            state.ticks_frozen
+        };
+        assert_eq!(frozen("1.17"), 8);
+        assert_eq!(frozen("1.21.1"), 8);
+        assert_eq!(frozen("1.21.2"), 0);
+    }
+
+    #[test]
+    fn a_riptide_release_lifts_the_player_before_the_entities_tick() {
+        // D-214: Minecraft.tick handles the use key, whose release launches and lifts the player,
+        // before the level ticks its entities (1.13.2 Minecraft.java:1115, 1146; 1.16.5 :1420,
+        // 1443; 26.3 :1786, 1797, 1930): a mob that ticks before the player and meets only the box
+        // under the lift pushes nothing
+        use crate::entity::{NearbyEntity, NearbyEntityKind};
+        let mut world = WorldSnapshot::new();
+        for x in -1..=4 {
+            for z in -1..=1 {
+                world.set_block(
+                    (x, 0, z),
+                    BlockState { id: 1, shape: Some(BlockShape::full_block()), ..BlockState::default() },
+                );
+            }
+        }
+        let bounds = Aabb::new(Vec3::new(0.5, 1.0, 0.2), Vec3::new(1.1, 1.5, 0.8));
+        let mob = NearbyEntity {
+            kind: NearbyEntityKind::Living,
+            position: Vec3::new(0.8, 1.0, 0.5),
+            bounding_box: bounds,
+            tick_position: Vec3::new(0.8, 1.0, 0.5),
+            tick_bounding_box: bounds,
+            ticks_before_player: true,
+            team_pushes: true,
+            spectator: false,
+        };
+        for version in ["1.13.2", "1.16.5", "1.21.4", "26.3"] {
+            let release = MinecraftVersion::parse(version).unwrap();
+            let mut state = SimulationState {
+                in_water: false,
+                in_rain: true,
+                controlled_by_local_instance: true,
+                ..releasing_riptide(1, Vec3::new(0.5, 1.0, 0.5), true)
+            };
+            let outcome = crate::simulation::tick_local_player_scene(
+                &mut world.clone(),
+                &mut state,
+                None,
+                &[mob],
+                (0, 0),
+                false,
+                &[],
+                &mut [0.0; 3],
+                PhysicsConfig::default(),
+                release,
+                |state, world| crate::versioned::release_riptide(version, state, world, PhysicsConfig::default()),
+                |state, world| crate::versioned::dispatch(version, state, world, PhysicsConfig::default()),
+            )
+            .unwrap();
+            assert!(state.position.y > 2.1, "{version}: lifted");
+            assert!(outcome.entity_pushes.is_empty(), "{version}: {:?}", outcome.entity_pushes);
+        }
     }
 
     #[test]
@@ -4844,7 +5097,7 @@ mod tests {
 
     #[test]
     fn before_1_13_one_layer_of_snow_is_a_floor_of_no_height() {
-        // 1.8.9 BlockSnow.java:44-54 (yarn SnowLayerBlock) and 1.12.2 SnowLayerBlock.java:75-79: the
+        // 1.8.8 SnowLayerBlock.java:45-57 and 1.12.2 SnowLayerBlock.java:75-79: the
         // collision box is (layers - 1) * 0.125 high, a box of no height for one layer, which
         // AxisAlignedBB.calculateYOffset stops a fall at. From 1.13 Shapes.box makes it empty.
         let mut world = WorldSnapshot::new();
@@ -4875,9 +5128,9 @@ mod tests {
 
     #[test]
     fn before_1_13_a_sneaking_player_stays_on_one_layer_of_snow() {
-        // 1.8.9 Entity.java:487 (1.12.2 :621-626): the sneak back-off tests the lowered box with
-        // World.getCollisionBoxes, which before 1.13 holds the box of no height of one layer of
-        // snow (1.12.2 SnowLayerBlock.java:75-79, Block.java:395-399): over air, the snow holds the
+        // 1.8.8 Entity.java:489 (1.12.2 :621-626): the sneak back-off tests the lowered box with
+        // Level.getCollisionBoxes, which before 1.13 holds the box of no height of one layer of
+        // snow (1.12.2 SnowLayerBlock.java:75-79, Block.java:435-439): over air, the snow holds the
         // player up and it walks on. From 1.13 the snow has no collision and it backs off.
         let mut world = WorldSnapshot::new();
         world.set_block(
@@ -4931,32 +5184,42 @@ mod tests {
     const LEGACY_BORDER_VERSIONS: [&str; 5] = ["1.8.8", "1.9.4", "1.11.2", "1.12.2", "1.13.2"];
 
     #[test]
-    fn before_1_14_the_cells_outside_the_border_collide_as_stone_in_loaded_chunks_only() {
-        // 1.8.9 World.java:886-920 (1.12.2 World.java:1127-1175, 1.13.2
-        // IWorldReaderBase.java:112-156): a cell outside the border (WorldBorder.contains(BlockPos))
-        // is stone for an entity inside it, only in a column whose chunk is loaded.
+    fn before_1_14_the_cells_outside_the_border_collide_as_stone_whether_the_chunk_is_loaded_or_not() {
+        // 1.8.8 Level.java:1045-1072 (1.12.2 Level.java:1108-1156, 1.13.2 LevelReader.java:112-156):
+        // a cell outside the border (WorldBorder.isWithinBounds(BlockPos)) is stone for an entity
+        // inside it, in every column blockExists / hasChunkAt takes, which on the client is every
+        // column, loaded or not (1.8.8 ClientChunkCache.java:31-33; 1.12.2
+        // MultiPlayerLevel.java:103-105; 1.13.2 MultiPlayerLevel.java:110-112)
         let mut world = WorldSnapshot::new();
         world.set_world_bounds(-64, 320, 0.0, 0.0, 9.0);
         let east = Vec3::new(0.5, 0.0, 0.0);
-        for version in LEGACY_BORDER_VERSIONS {
-            let unloaded =
-                walking_by_the_border(&world, version, Vec3::new(4.5, 0.0, 0.5), east, false);
-            assert_eq!(unloaded.position.x, 4.5 + 0.5, "{version}");
-        }
-        world.set_chunk_loaded(0, 0, true);
-        for version in LEGACY_BORDER_VERSIONS {
-            let walker =
-                walking_by_the_border(&world, version, Vec3::new(4.5, 0.0, 0.5), east, false);
-            assert!(walker.collided_horizontally, "{version}");
-            assert_eq!(walker.position.x, 4.5 + (5.0 - (4.5 + 0.3)), "{version}");
-            assert!(!walker.outside_border, "{version}");
+        for loaded in [false, true] {
+            world.set_chunk_loaded(0, 0, loaded);
+            for version in LEGACY_BORDER_VERSIONS {
+                let walker =
+                    walking_by_the_border(&world, version, Vec3::new(4.5, 0.0, 0.5), east, false);
+                assert!(walker.collided_horizontally, "{version} loaded {loaded}");
+                assert_eq!(walker.position.x, 4.5 + (5.0 - (4.5 + 0.3)), "{version} loaded {loaded}");
+                assert!(!walker.outside_border, "{version} loaded {loaded}");
+            }
         }
     }
 
     #[test]
+    fn a_move_of_nothing_asks_nothing_of_the_border_in_1_13_2() {
+        // 1.13.2 Entity.java:675 skips the query on an all-zero move, 1.12.2 Level.java:1133 does not
+        let mut world = WorldSnapshot::new();
+        world.set_world_bounds(-64, 320, 0.0, 0.0, 9.0);
+        world.set_chunk_loaded(0, 0, true);
+        let still = |version| walking_by_the_border(&world, version, Vec3::new(6.0, 0.0, 0.5), Vec3::ZERO, false);
+        assert!(still("1.12.2").outside_border);
+        assert!(!still("1.13.2").outside_border);
+    }
+
+    #[test]
     fn before_1_14_an_entity_flagged_outside_the_border_must_be_a_block_inside_to_meet_it() {
-        // 1.8.9 World.java:942-960 isInsideBorder: the border shrinks by 1 for an entity flagged
-        // outside (Entity.isOutsideBorder) and grows by 1 for any other; World.java:904-908 sets
+        // 1.8.8 Level.java:930-948 isInsideBorder: the border shrinks by 1 for an entity flagged
+        // outside (Entity.isOutsideBorder) and grows by 1 for any other; Level.java:892-896 sets
         // the flag to whether the entity was outside.
         let mut world = WorldSnapshot::new();
         world.set_world_bounds(-64, 320, 0.0, 0.0, 9.0);
@@ -4982,7 +5245,7 @@ mod tests {
     fn before_1_14_an_entity_reaching_past_the_border_meets_the_cells_ahead_of_it() {
         // The stone cells are boxes of their own: one the entity reaches into does not collide
         // (AxisAlignedBB.calculateZOffset; 1.13.2 IWorldReaderBase.java:141 leaves it out), one
-        // ahead does. From 1.14 (1.14 Entity.java collide) the border is a shape only for a box
+        // ahead does. From 1.14 (1.14.4 Entity.java collide) the border is a shape only for a box
         // that reaches into no part of it.
         let mut world = WorldSnapshot::new();
         world.set_world_bounds(-64, 320, 0.0, 0.0, 9.0);
@@ -5089,7 +5352,8 @@ mod tests {
 
         tick(&mut state, &world, PhysicsConfig::default());
 
-        let sprint_speed = java_float(0.1 * (1.0 + 0.30000001192092896));
+        // (the base is 0.1F widened: Player.createAttributes, D-194)
+        let sprint_speed = java_float(f64::from(0.1_f32) * (1.0 + 0.30000001192092896));
         assert_eq!(state.position.x, 0.5 + java_float(0.98) * sprint_speed);
     }
 
@@ -5479,7 +5743,7 @@ mod tests {
         };
         // in water against a ladder: 1.14+ (both handlers) climbs at 0.2 before the 0.8 drag and
         // the -gravity / 16 fall, while 1.13.2's inline travel has no climb in water (1.13.2
-        // EntityLivingBase.java:1617-1650; 1.14.4 LivingEntity.java:1773-1775)
+        // LivingEntity.java:1646-1684; 1.14.4 LivingEntity.java:1773-1775)
         let climbed = 0.2 * 0.800000011920929 - 0.08 / 16.0;
         let v1_21_2 = crate::versioned::rules_for_version("1.21.2").unwrap();
         let v1_21_1 = crate::versioned::rules_for_version("1.21.1").unwrap();
@@ -5544,9 +5808,9 @@ mod tests {
     fn depth_strider_and_water_efficiency_hold_independently_in_every_release() {
         // The water branch of travel, on the ground: before 1.21 the Depth Strider level (at most
         // 3) moves the 0.8F slow-down toward 0.54600006F and the 0.02F speed toward getSpeed() by
-        // level / 3F (1.8.9 EntityLivingBase.java:1488-1505, 1.20.6 LivingEntity.java:2122-2133);
+        // level / 3F (1.8.8 LivingEntity.java:1209-1228, 1.20.6 LivingEntity.java:2122-2133);
         // from 1.21 the WATER_MOVEMENT_EFFICIENCY attribute does so by its full value, and the
-        // enchantment level alone does nothing (1.21 LivingEntity.java:2108-2118). The forward
+        // enchantment level alone does nothing (1.21 LivingEntity.java:2130-2140). The forward
         // input is 0.98F; moveRelative multiplies it in float through 1.13.2 (1.13.2
         // Entity.java:moveRelative) and in double from 1.14 (1.14.4 Entity.java:getInputVector).
         for version in crate::versioned::SUPPORTED_VERSIONS {
@@ -5618,7 +5882,7 @@ mod tests {
         // of 1.18.2 / 1.19 (origin/client1.18.1 LivingEntity.java:2151-2163, origin/client1.19
         // :2205-2217), so a NoGravity entity keeps the 0.8 drag alone and any other one also
         // loses gravity / 16; from 1.20.5 the test is on the gravity argument, which NoGravity
-        // makes 0 (1.20.5 LivingEntity.java:2288), the same result for this fixture
+        // makes 0 (1.20.5 LivingEntity.java:2290), the same result for this fixture
         let dragged = -0.1 * 0.800000011920929;
         for version in ["1.18", "1.18.1", "1.18.2", "1.19", "1.19.1", "1.19.2", "1.20.4", "1.20.5"] {
             assert_eq!(water_fall_velocity(version, true), dragged, "{version} NoGravity");
@@ -5799,9 +6063,42 @@ mod tests {
         crate::versioned::dispatch("1.20.5", &mut state, &world, PhysicsConfig::default())
             .unwrap();
 
-        // ceil((10.0F - 4.0F) * 1.0F * 1.0) (1.20.5 LivingEntity.java:1607-1609), the drop of
+        // ceil((10.0F - 4.0F) * 1.0F * 1.0) (1.20.5 LivingEntity.java:1597-1599), the drop of
         // the landing tick not counted before 1.21.5
         assert_eq!(state.fall_damage, 6.0);
+    }
+
+    // D-186: a player standing on the ground with a negative safe fall distance takes no damage:
+    // Block.fallOn runs only for a fall distance above 0 (26.3 Entity.java:1601-1604, 1.20.5 the
+    // same), so ceil(0 - safe) never reaches the damage
+    #[test]
+    fn a_negative_safe_fall_distance_deals_nothing_without_a_fall() {
+        let mut world = WorldSnapshot::new();
+        world.set_block(
+            (0, 0, 0),
+            BlockState {
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            },
+        );
+        for version in ["1.20.5", "1.21.4", "1.21.5", "26.3"] {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 1.0, 0.5),
+                velocity: Vec3::new(0.0, -0.0784000015258789, 0.0),
+                half_width: 0.3,
+                height: 1.8,
+                on_ground: true,
+                fall_distance: 0.0,
+                safe_fall_distance: -3.0,
+                controlled_by_local_instance: true,
+
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
+                .unwrap();
+            assert!(state.on_ground, "{version}");
+            assert_eq!(state.fall_damage, 0.0, "{version}");
+        }
     }
 
     #[test]
@@ -5831,7 +6128,7 @@ mod tests {
             .unwrap();
 
         // 1.20.6 has 1.20.5's computeFallDamage: ceil(5.0F - 3.0F), Jump Boost only through the
-        // attribute (1.20.5 LivingEntity.java:1602-1609; 1.21 :1575-1582 the same)
+        // attribute (1.20.5 LivingEntity.java:1593-1599; 1.21 :1590-1596 the same)
         assert_eq!(state.fall_damage, 2.0);
     }
 
@@ -5857,7 +6154,7 @@ mod tests {
             ..SimulationState::default()
         };
 
-        // 1.21.5 Entity.java:1284-1297: fd -= (float)dy first, then fallOn with it:
+        // 1.21.5 Entity.java:1321-1331: fd -= (float)dy first, then fallOn with it:
         // floor(4.1 + 0.9 + 1.0E-6 - 3.0) = 2, where landing on fd = 4.1 alone gives 1
         let mut state = falling;
         crate::versioned::dispatch("1.21.5", &mut state, &world, PhysicsConfig::default())
@@ -5872,7 +6169,7 @@ mod tests {
             .unwrap();
         assert_eq!(state.fall_damage, 1.0);
 
-        // 1.21.4 Entity.java:1259-1274: the landing tick does not count its drop, so
+        // 1.21.4 Entity.java:1287-1297: the landing tick does not count its drop, so
         // ceil(4.0F - 3.0F) = 1
         let mut state = SimulationState {
             fall_distance: 4.0,
@@ -5970,7 +6267,7 @@ mod tests {
         );
 
         // 1.19 Entity.java:571-580: FALLDAMAGE_RESETTING gives the block a full cube
-        // (RaycastContext.java:72), the reset comes before checkFallDamage adds this move's drop
+        // (ClipContext.java:91), the reset comes before checkFallDamage adds this move's drop
         assert_eq!(falling_through(&world, "1.19", 3.0, 2.0), 2.0);
         assert_eq!(falling_through(&world, "1.18.2", 3.0, 2.0), 2.0);
         assert_eq!(falling_through(&world, "26.2", 3.0, 2.0), 2.0);
@@ -5980,7 +6277,7 @@ mod tests {
 
     #[test]
     fn water_the_move_passes_through_resets_the_fall_distance() {
-        // the clip's ClipContext.Fluid.WATER (1.19 Entity.java:574-576)
+        // the clip's ClipContext.Fluid.WATER (1.19 Entity.java:581-581)
         let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 3, 0),
@@ -6007,7 +6304,7 @@ mod tests {
             },
         );
 
-        // 1.21.9 Entity.java:704-705: min(length, 8.0) along the move; the block is 9 down
+        // 1.21.9 Entity.java:740-741: min(length, 8.0) along the move; the block is 9 down
         assert_eq!(falling_through(&world, "1.21.9", 12.0, 11.0), 16.0);
         assert_eq!(falling_through(&world, "1.21.8", 12.0, 11.0), f64::from(11.0_f32));
     }
@@ -6040,7 +6337,7 @@ mod tests {
             state.fall_distance
         };
 
-        // 1.21.9 ClipContext.java:65-68: END_GATEWAY and END_PORTAL are full cubes for a player
+        // 1.21.9 ClipContext.java:66-69: END_GATEWAY and END_PORTAL are full cubes for a player
         assert_eq!(fall("1.21.9", true), 2.0);
         assert_eq!(fall("1.21.9", false), 7.0);
         assert_eq!(fall("1.21.8", true), 7.0);
@@ -6069,8 +6366,8 @@ mod tests {
             ..SimulationState::default()
         };
 
-        // Entity.baseTick: fallDistance *= 0.5F in lava (1.8.9 Entity.java:410, 1.16.5 :523,
-        // 1.21.4 :487), *= 0.5 once a double (1.21.5 :490)
+        // Entity.baseTick: fallDistance *= 0.5F in lava (1.8.8 Entity.java:412, 1.16.5 :526,
+        // 1.21.4 :514), *= 0.5 once a double (1.21.5 :518)
         for version in ["1.8.8", "1.12.2", "1.16.5", "1.21.4", "26.2"] {
             let mut state = in_lava;
             crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
@@ -6129,7 +6426,7 @@ mod tests {
         crate::versioned::dispatch("1.20.4", &mut state, &world, PhysicsConfig::default())
             .unwrap();
 
-        // ceil(6.1F - 3.0F - 0.0F) (1.20.4 LivingEntity.java:1564)
+        // ceil(6.1F - 3.0F - 0.0F) (1.20.4 LivingEntity.java:1572)
         assert_eq!(state.fall_damage, 4.0);
     }
 
@@ -6159,7 +6456,7 @@ mod tests {
         crate::versioned::dispatch("1.20.4", &mut state, &world, PhysicsConfig::default())
             .unwrap();
 
-        // ceil((6.1F - 3.0F) * 0.5F) (1.20.4 LivingEntity.java:1564)
+        // ceil((6.1F - 3.0F) * 0.5F) (1.20.4 LivingEntity.java:1572)
         assert_eq!(state.fall_damage, 2.0);
     }
 
@@ -6408,8 +6705,8 @@ mod tests {
     #[test]
     fn creative_flight_keeps_the_fall_distance_in_1_8() {
         use crate::simulation::accumulated_fall_distance;
-        // Player.travel's flight resets fallDistance from 1.9 (1.9.4 PlayerEntity.java:1403-1411);
-        // 1.8 only scales the vertical motion by 0.6 (1.8.9 PlayerEntity.java:1303-1309)
+        // Player.travel's flight resets fallDistance from 1.9 (1.9.4 Player.java:1389-1397);
+        // 1.8 only scales the vertical motion by 0.6 (1.8.8 Player.java:1296-1302)
         let descend = |version: &str| {
             let mut state = SimulationState {
                 is_player: true,
@@ -6443,8 +6740,8 @@ mod tests {
     fn elytra_raises_the_fall_distance_to_one_before_1_19_3() {
         use crate::simulation::accumulated_fall_distance;
         // LivingEntity.travel's glide: `if (vy > -0.5) fallDistance = 1.0F` for 1.9 - 1.19.2 (1.9.4
-        // LivingEntity.java:1328-1329, 1.16.5 :2028-2029, 1.19.2 :2107-2109); from 1.19.3
-        // checkSlowFallDistance only lowers a larger one (1.19.3 Entity.java:2156-2158)
+        // LivingEntity.java:1328-1329, 1.16.5 :2026-2027, 1.19.2 :2105-2107); from 1.19.3
+        // checkSlowFallDistance only lowers a larger one (1.19.3 Entity.java:2169-2171)
         let glide = |version: &str, fall_distance: f64| {
             let mut state = SimulationState {
                 is_player: true,
@@ -6517,7 +6814,7 @@ mod tests {
             ..SimulationState::default()
         };
 
-        // Entity.baseTick halves it first (1.21.4 Entity.java:487)
+        // Entity.baseTick halves it first (1.21.4 Entity.java:514)
         for (version, expected) in [("1.21.1", 2.0), ("1.21.2", 1.0), ("1.21.5", 1.0), ("26.3", 1.0)] {
             let mut state = in_lava;
             crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
@@ -6593,7 +6890,7 @@ mod tests {
 
         // until 1.19.4 travel resets it under Slow Falling only when not rising, before the move
         // (1.13.2 LivingEntity.java:1511-1513, 1.19.4 :1986-1990), and under Levitation after the
-        // air move (1.13.2 :1609-1612, 1.19.4 :2093-2095); 1.9 - 1.12 Levitation never resets it
+        // air move (1.13.2 :1610-1612, 1.19.4 :2103-2105); 1.9 - 1.12 Levitation never resets it
         // (1.12.2 LivingEntity.java:1543-1545)
         for (version, release) in [
             ("1.13.2", MinecraftVersion::new(1, 13, 2)),
@@ -6611,7 +6908,7 @@ mod tests {
             accumulated_fall_distance(5.0, dy, MinecraftVersion::new(1, 12, 2))
         );
         // from 1.20 aiStep resets it for either effect before travel (1.20
-        // LivingEntity.java:2566-2567, 1.21.5 :2756-2758)
+        // LivingEntity.java:2578-2579, 1.21.5 :2736-2738)
         for (version, release) in [
             ("1.20", MinecraftVersion::new(1, 20, 0)),
             ("1.21.5", MinecraftVersion::new(1, 21, 5)),
@@ -6627,7 +6924,7 @@ mod tests {
     #[test]
     fn levitation_resets_the_fall_distance_after_the_landing_until_1_19_4() {
         // a landing under Levitation hurts until 1.19.4, whose reset follows the move (1.19.4
-        // LivingEntity.java:2093-2095); from 1.20 the reset before travel spares it (1.20 :2566)
+        // LivingEntity.java:2103-2105); from 1.20 the reset before travel spares it (1.20 :2578)
         assert_eq!(levitating_landing("1.19.4"), (17.0, 0.0));
         assert_eq!(levitating_landing("1.20"), (0.0, 0.0));
     }
@@ -7120,6 +7417,7 @@ mod tests {
             position: Vec3::new(0.5, 0.25, 0.5),
             height: 0.5,
             client_side: true,
+            controlled_by_local_instance: true,
             can_simulate_movement: exact,
             ..SimulationState::default()
         };
@@ -7501,6 +7799,36 @@ mod tests {
     }
 
     #[test]
+    fn powder_snow_holds_a_falling_block_whose_feet_are_inside_it() {
+        // (PowderSnowBlock.getCollisionShape: a FallingBlockEntity takes the full block wherever its
+        // feet are, after the long fall's lower shape: 1.17 PowderSnowBlock.java:92-98, 26.3 :98-104)
+        let world = powder_snow_world();
+        let query = Aabb::new(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(2.0, 2.0, 2.0));
+        let release = crate::version::MinecraftVersion::new(1, 21, 1);
+        let shapes = |context: EntityCollisionContext| world.collision_shapes_for_entity(query, &context, release);
+        let inside = EntityCollisionContext {
+            bottom: 0.5,
+            walks_on_powder_snow: true,
+            ..EntityCollisionContext::default()
+        };
+        assert!(shapes(inside).is_empty());
+        let falling = EntityCollisionContext { falling_block: true, ..inside };
+        assert_eq!(shapes(falling), vec![Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0))]);
+        assert_eq!(shapes(EntityCollisionContext { descending: true, ..falling }), shapes(falling));
+        let caught = shapes(EntityCollisionContext { fall_distance: 3.0, ..falling });
+        assert_eq!(caught, vec![Aabb::new(Vec3::ZERO, Vec3::new(1.0, f64::from(0.9_f32), 1.0))]);
+        // (the moving entity's body: no living entity, walking on powder snow)
+        let body = SimulationState {
+            position: Vec3::new(0.5, 0.5, 0.5),
+            non_living: true,
+            powder_snow_walkable: true,
+            ..SimulationState::default()
+        };
+        assert!(crate::simulation::entity_collision_context(&body).falling_block);
+        assert!(!crate::simulation::entity_collision_context(&SimulationState { non_living: false, ..body }).falling_block);
+    }
+
+    #[test]
     fn powder_snow_walkers_sink_when_they_descend() {
         let world = powder_snow_world();
         let mut standing = SimulationState {
@@ -7710,8 +8038,8 @@ mod tests {
     #[test]
     fn a_flight_into_a_wall_deals_ten_times_the_speed_lost_less_3() {
         // the speed is the motion's before the glide's 0.99, the damage a float:
-        // (float)(lost * 10 - 3) (1.9.4 LivingEntity.java:1335, 1363-1371; 1.20.4 :2133; 1.21.3
-        // :2278-2286; 26.3 :2504-2510, 2546-2553). 1.8.9's LivingEntity has no flyIntoWall.
+        // (float)(lost * 10 - 3) (1.9.4 LivingEntity.java:1335, 1363-1371; 1.20.4 :2144; 1.21.3
+        // :2295-2303; 26.3 :2504-2510, 2546-2553). 1.8.9's LivingEntity has no flyIntoWall.
         for version in [
             "1.9.4", "1.13.2", "1.16.5", "1.20.4", "1.21.1", "1.21.3", "1.21.5", "1.21.11", "26.2",
             "26.3",
@@ -7858,7 +8186,7 @@ mod tests {
     #[test]
     fn a_glide_stopped_on_a_climbable_block_hits_no_wall_from_1_21_5() {
         // 1.21.5 travelFallFlying leaves a climbable block's travel to travelInAir (1.21.5
-        // LivingEntity.java:2299-2302); before, the glide goes on (1.21.3 :2278-2286)
+        // LivingEntity.java:2273-2276); before, the glide goes on (1.21.3 :2295-2303)
         let climbing = |release| {
             wall_impact(
                 Vec3::new(1.0, 0.0, 0.0),
@@ -7873,8 +8201,8 @@ mod tests {
 
     #[test]
     fn contact_damage_is_the_servers_alone() {
-        // hurt is the server's in every family (1.8.9 ClientPlayerEntity.java:90-92, LivingEntity.java:672-674;
-        // 1.20.4 ClientPlayerEntity.java:151-153, LivingEntity.java:1096-1098; 1.21.3 MagmaBlock.java:30; 26.3
+        // hurt is the server's in every family (1.8.8 LocalPlayer.java:88-90, LivingEntity.java:673-675;
+        // 1.20.4 LocalPlayer.java:149-151, LivingEntity.java:1096-1098; 1.21.3 MagmaBlock.java:30; 26.3
         // Entity.java:1969-1975); the block's other effects stay on the client's side
         let effect_world = |effect, position| {
             let mut world = WorldSnapshot::new();
@@ -8056,8 +8384,8 @@ mod tests {
     #[test]
     fn magma_burns_a_fall_flying_entity_and_spares_frost_walker() {
         // MagmaBlock.stepOn tests only isSteppingCarefully and LivingEntity, plus Frost Walker
-        // before 1.21 (1.20.4 MagmaBlock.java:29, 1.21.11 MagmaBlock.java:29); from 1.21 Frost
-        // Walker's damage immunity to #burn_from_stepping (1.21.11 Enchantments.java:389-394)
+        // before 1.21 (1.20.4 MagmaBlock.java:31, 1.21.11 MagmaBlock.java:29); from 1.21 Frost
+        // Walker's damage immunity to #burn_from_stepping (1.21.11 Enchantments.java:139-139)
         let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 0, 0),
@@ -8094,8 +8422,8 @@ mod tests {
     #[test]
     fn fire_resistance_refuses_what_burns_and_not_a_cactus() {
         // LivingEntity.hurtServer refuses a #is_fire damage under the effect (1.20.4
-        // LivingEntity.java:1104, 26.3 :1154), hot_floor and campfire among them (1.21.11
-        // DamageTypeTagsProvider.java:59-68; hotFloor.setFire, 1.10.2 DamageSource.java:20)
+        // LivingEntity.java:1108, 26.3 :1154), hot_floor and campfire among them (1.21.11
+        // DamageTypeTagsProvider.java:23-24; hotFloor.setFire, 1.10.2 DamageSource.java:20)
         let release = MinecraftVersion::new(26, 3, 0);
         for (effect, unprotected) in [
             (BlockEffect::Campfire, 1.0),
@@ -8144,7 +8472,7 @@ mod tests {
     #[test]
     fn lit_campfires_spare_frost_walker() {
         // CampfireBlock.entityInside skips a wearer of Frost Walker before 1.21 (1.20.5
-        // CampfireBlock.java:104), the enchantment's immunity to the campfire damage type from 1.21
+        // CampfireBlock.java:102), the enchantment's immunity to the campfire damage type from 1.21
         let world = passable_effect_world((0, 1, 0), BlockEffect::SoulCampfire);
         for release in [MinecraftVersion::new(1, 20, 4), MinecraftVersion::new(1, 21, 11)] {
             let mut state = SimulationState {
@@ -8183,7 +8511,7 @@ mod tests {
 
     #[test]
     fn inside_block_signals_come_from_the_box_after_the_move() {
-        // Entity.move calls checkInsideBlocks after the move (1.19.2 Entity.java:692), and from
+        // Entity.move calls checkInsideBlocks after the move (1.19.2 Entity.java:688), and from
         // 1.21.2 applyEffectsFromBlocks takes the tick's moves: a cactus the move reaches hurts
         // in the same tick
         let world = passable_effect_world((1, 1, 0), BlockEffect::Cactus);
@@ -8208,7 +8536,7 @@ mod tests {
     #[test]
     fn inside_block_signals_deflate_the_box_by_the_release_inset() {
         // Entity.checkInsideBlocks deflates by 0.001 before 1.19.3, by 1e-7 to 1.21.1 (1.19.2
-        // Entity.java:891-894, 1.19.3 :899-902) and 1.0E-5F from 1.21.2 (1.21.5 Entity.java:1096)
+        // Entity.java:891-894, 1.19.3 :904-907) and 1.0E-5F from 1.21.2 (1.21.5 Entity.java:1128)
         let world = passable_effect_world((1, 1, 0), BlockEffect::Cactus);
         let touching = |release| {
             let mut state = SimulationState {
@@ -8250,10 +8578,10 @@ mod tests {
 
     #[test]
     fn lava_clears_the_freeze_ticks() {
-        // Entity.lavaIgnite's igniteForTicks from 1.21.5 (1.21.5 Entity.java:538-571) and
-        // InsideBlockEffectType.CLEAR_FREEZE from 1.21.9 (1.21.11 LavaFluid.java:117). Before
+        // Entity.lavaIgnite's igniteForTicks from 1.21.5 (1.21.5 Entity.java:571-604) and
+        // InsideBlockEffectType.CLEAR_FREEZE from 1.21.9 (1.21.11 LavaFluid.java:108). Before
         // 1.21.5 Entity.baseTick clears them only for an entity already burning at the start of
-        // the tick (1.21.4 Entity.java:460-479), which needs the fire ticks the engine does not keep
+        // the tick (1.21.4 Entity.java:486-506), which needs the fire ticks the engine does not keep
         let lava = fluid_block_world(FluidState::Lava);
         for release in [
             MinecraftVersion::new(1, 21, 5),
@@ -8277,7 +8605,7 @@ mod tests {
     #[test]
     fn lava_clears_the_freeze_ticks_along_the_move_from_1_21_5() {
         // Entity.collidedWithFluid tests the fluid's AABB along the move from the box before it
-        // (1.21.5 Entity.java:1134-1143), AABB.collidedAlongVector holding either centre or the
+        // (1.21.5 Entity.java:1167-1176), AABB.collidedAlongVector holding either centre or the
         // path between in the AABB grown by half the box less 1e-7 (1.21.5 AABB.java:387-403):
         // the source's top of 8/9 reaches a 1.8 box's centre at 1.7889
         let lava = fluid_block_world(FluidState::Lava);
@@ -8311,10 +8639,10 @@ mod tests {
     #[test]
     fn a_fall_through_stacked_powder_snow_freezes_once_a_step_from_1_21_5() {
         // FREEZE adds one tick in each StepBasedCollector step (1.21.5
-        // InsideBlockEffectType.java:7-12, InsideBlockEffectApplier.java advanceStep): a 2.5 drop's
+        // InsideBlockEffectType.java:7-13, InsideBlockEffectApplier.java advanceStep): a 2.5 drop's
         // walk reaches the cells 3 - 5 at step 1 and cell 2 at step 2 (1.21.5
-        // BlockGetter.java:172-190, 226-246), two steps; the column's empty collision shape lets
-        // the fall through (fallDistance 0 before the move, 1.21.5 PowderSnowBlock.java:113-123)
+        // BlockGetter.java:164-184, 220-240), two steps; the column's empty collision shape lets
+        // the fall through (fallDistance 0 before the move, 1.21.5 PowderSnowBlock.java:96-106)
         let mut world = WorldSnapshot::new();
         for y in 0..6 {
             world.set_block(
@@ -8355,10 +8683,10 @@ mod tests {
     fn powder_snow_misses_a_long_fall_above_its_lower_shape_from_1_21_5() {
         // PowderSnowBlock.getEntityInsideCollisionShape is the collision shape for the entity,
         // FALLING_COLLISION_SHAPE (0.9F high) past a fall of 2.5 (1.21.5 - 1.21.11
-        // PowderSnowBlock.java:108-123, 26.3 :89-104), and Entity.checkInsideBlocks gives
-        // entityInside only when the move collides along with it (1.21.11 Entity.java:1225-1226):
+        // PowderSnowBlock.java:92-106, 26.3 :89-104), and Entity.checkInsideBlocks gives
+        // entityInside only when the move collides along with it (1.21.11 Entity.java:1266-1267):
         // a box falling from 1.2 to 0.95 keeps its centre above the shape grown by 0.9 - 1e-7.
-        // 1.21.4 has only the full inside shape (1.21.4 Entity.java:1072-1100)
+        // 1.21.4 has only the full inside shape (1.21.4 Entity.java:1096-1124)
         let world = powder_snow_world();
         let fall = |release| {
             let mut state = SimulationState {
@@ -8408,8 +8736,8 @@ mod tests {
     #[test]
     fn soul_speed_reads_the_block_on_in_1_16_and_1_16_1() {
         // LivingEntity.onSoulSpeedBlock: getBlockStateOn, floor(y - 0.2F), in 1.16 and 1.16.1
-        // (1.16 LivingEntity.java:653-655, Entity.java:683-698), the block below that affects the
-        // movement from 1.16.2 (1.16.5 LivingEntity.java:664-666)
+        // (1.16 LivingEntity.java:650-652, Entity.java:683-698), the block below that affects the
+        // movement from 1.16.2 (1.16.5 LivingEntity.java:661-663)
         let world = passable_effect_world((0, 0, 0), BlockEffect::SoulSand);
         let speed = |release, y| {
             let mut state = SimulationState {
@@ -8435,8 +8763,8 @@ mod tests {
     #[test]
     fn block_fall_callback_runs_on_any_vertical_collision() {
         // Block.updateEntityMovementAfterFallOn on any vertical collision, a ceiling's too (1.21
-        // Entity.java:665-668), only for a locally controlled entity from 1.21.2 (1.21.3
-        // :698-703, 1.21.11 :768-773); 26.2's restitution takes a vertical move's (26.2
+        // Entity.java:690-693), only for a locally controlled entity from 1.21.2 (1.21.3
+        // :721-726, 1.21.11 :804-809); 26.2's restitution takes a vertical move's (26.2
         // Entity.java:793, 815)
         let mut world = WorldSnapshot::new();
         world.set_block(
@@ -8481,7 +8809,7 @@ mod tests {
         // a step-up onto a slab from a move with no y: movement.y > 0 = delta.y collides, but
         // 26.2 restitutes only `movedVertically = Math.abs(delta.y) > 0.0` (origin/client26.2
         // Entity.java:793, 815); onEntityLand before it takes any such collision (1.21.11
-        // Entity.java:768-773)
+        // Entity.java:804-809)
         let mut steps = WorldSnapshot::new();
         ground_block(&mut steps, (0, 0, 0), 1.0);
         ground_block(&mut steps, (1, 0, 0), 1.0);
@@ -8580,6 +8908,77 @@ mod tests {
         assert!(!state.inside_wall);
     }
 
+    #[test]
+    fn the_knockbacks_length_is_a_float_root_to_1_16_5() {
+        let (x, z) = (0.1, 0.2);
+        let root = (x * x + z * z as f64).sqrt();
+        let push = |release| {
+            crate::simulation::living_knockback(Vec3::ZERO, false, f64::from(0.4_f32), x, z, 0.0, 1.0, release).unwrap().x
+        };
+        let float_root = f64::from(root as f32);
+        let power = f64::from(0.4_f32);
+        assert_eq!(push(MinecraftVersion::new(1, 16, 5)), -(x / float_root * power));
+        assert_eq!(push(MinecraftVersion::new(1, 17, 0)), -(x / root * power));
+    }
+
+    #[test]
+    fn rain_stops_the_rise_of_the_fire_ticks_and_puts_a_fire_out_before_1_16() {
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), BlockState { fluid: FluidState::Lava, ..BlockState::default() });
+        let ticks_after = |in_rain, fire_immune| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 0.0, 0.5),
+                half_width: 0.3,
+                height: 1.8,
+                in_rain,
+                fire_immune,
+                remaining_fire_ticks: Some(5),
+                ..SimulationState::default()
+            };
+            crate::simulation::legacy_inside_fire(&mut state, &world, &[], -20, MinecraftVersion::new(1, 15, 2));
+            state.remaining_fire_ticks
+        };
+        assert_eq!(ticks_after(false, false), Some(6));
+        assert_eq!(ticks_after(true, false), Some(-20));
+        assert_eq!(ticks_after(false, true), Some(6), "1.15.2 Entity.java:636-641 does not ask");
+    }
+
+    #[test]
+    fn inside_wall_moves_the_shape_to_the_eye_to_1_18_1_and_to_its_cell_from_1_18_2() {
+        // a thin floor of the cell: at the eye, 1.53 up, it stands around the eye box; in its cell it is
+        // below it (1.18.1 Entity.java:1707, 1.18.2 :1640)
+        assert!(in_wall_at(MinecraftVersion::new(1, 18, 1), Some(true), 0.0, 0.1));
+        assert!(!in_wall_at(MinecraftVersion::new(1, 18, 2), Some(true), 0.0, 0.1));
+        assert!(!in_wall_at(MinecraftVersion::new(1, 19, 0), Some(true), 0.0, 0.1));
+    }
+
+    #[test]
+    fn a_move_with_no_y_lands_from_26_2_only_if_it_also_hit_something_sideways() {
+        // restituteMovementAfterCollisions: movedVertically && verticalCollision || horizontalCollision,
+        // and the vertical part follows the collision (26.2 Entity.java:815, 846)
+        let release = MinecraftVersion::new(26, 2, 0);
+        let state = SimulationState { controlled_by_local_instance: true, ..SimulationState::default() };
+        assert!(!crate::simulation::block_fall_callback_runs(&state, true, false, 0.0, release));
+        assert!(crate::simulation::block_fall_callback_runs(&state, true, true, 0.0, release));
+        assert!(crate::simulation::block_fall_callback_runs(&state, true, false, -0.1, release));
+        assert!(!crate::simulation::block_fall_callback_runs(&state, false, true, 0.0, release));
+    }
+
+    #[test]
+    fn the_sneak_is_a_float_product_from_1_18_2() {
+        let input = |release| {
+            let state = SimulationState {
+                sneaking: true,
+                is_player: true,
+                input: Vec3::new(f64::from(0.7_f32), 0.0, 0.0),
+                ..SimulationState::default()
+            };
+            crate::simulation::input_move_vector(&state, release)[0]
+        };
+        assert_eq!(input(MinecraftVersion::new(1, 18, 1)), (f64::from(0.7_f32) * 0.3) as f32);
+        assert_eq!(input(MinecraftVersion::new(1, 18, 2)), 0.7_f32 * 0.3_f32);
+    }
+
     fn in_wall_at(release: MinecraftVersion, suffocating: Option<bool>, min_y: f64, max_y: f64) -> bool {
         let mut world = WorldSnapshot::new();
         world.set_block(
@@ -8607,7 +9006,7 @@ mod tests {
 
     #[test]
     fn inside_wall_needs_a_suffocating_block() {
-        // client1.21.11 Entity.java:2200 and 1.8.9 Entity.java:1304 test isSuffocating
+        // client1.21.11 Entity.java:2200 and 1.8.8 Entity.java:1299 test isSuffocating
         // (isVisuallyOpaque): glass, a full collision cube, is no wall.
         for release in [MinecraftVersion::new(1, 8, 8), MinecraftVersion::new(1, 21, 11)] {
             assert!(in_wall_at(release, None, 0.0, 1.0));
@@ -8617,8 +9016,8 @@ mod tests {
 
     #[test]
     fn inside_wall_before_1_13_tests_its_own_predicate() {
-        // 1.8.9 Entity.java:1304 (Block.isLeafBlock: blocksMovement && renderAsNormalBlock,
-        // Block.java:330-332) and 1.12.2 Entity.java:1619 (causesSuffocation, Block.java:323-325)
+        // 1.8.8 Entity.java:1299 (Block.isLeafBlock: blocksMovement && renderAsNormalBlock,
+        // Block.java:367-369) and 1.12.2 Entity.java:1609 (causesSuffocation, Block.java:365-367)
         // are not pushOutOfBlocks' isNormalCube: glowstone, ice or a redstone block is a wall
         // there though no normal cube.
         for release in [
@@ -8656,8 +9055,8 @@ mod tests {
 
     #[test]
     fn inside_wall_from_1_16_to_1_17_counts_the_world_border_the_box_touches() {
-        // 1.16.5 Entity.java:1648 and 1.17 :1669 call getBlockCollisions with the entity, whose
-        // BlockCollisionSpliterator offers the border's shape first (1.16 :56-58, 101-129; 1.17
+        // 1.16.5 Entity.java:1640 and 1.17 :1658 call getBlockCollisions with the entity, whose
+        // BlockCollisionSpliterator offers the border's shape first (1.16 :47-48, 103-130; 1.17
         // :58-59, 102-125) when the box touches it from inside; the block predicate does not
         // filter it. 1.15 (8 points), 1.18 (getStatesInBox) and 1.19 (BlockPos.betweenClosed)
         // look at blocks alone.
@@ -8708,27 +9107,28 @@ mod tests {
     #[test]
     fn inside_wall_follows_each_release_algorithm() {
         // A suffocating bottom slab under an eye 0.03 above it: before 1.16 the eye's cell is
-        // enough (1.15 Entity.java:1578-1586); 1.16's box 0.1 tall reaches down to it
-        // (1.16.5 Entity.java:1645-1648); 1.17's 1e-6 box does not (1.17 Entity.java:1667-1669).
+        // enough (1.15 Entity.java:1572-1580); 1.16's box 0.1 tall reaches down to it
+        // (1.16.5 Entity.java:1637-1640); 1.17's 1e-6 box does not (1.17 Entity.java:1656-1658).
         assert!(in_wall_at(MinecraftVersion::new(1, 15, 2), Some(true), 0.0, 0.5));
         assert!(in_wall_at(MinecraftVersion::new(1, 16, 5), Some(true), 0.0, 0.5));
         assert!(!in_wall_at(MinecraftVersion::new(1, 17, 1), Some(true), 0.0, 0.5));
         // A suffocating top slab around the eye: 1.18 moves the shape to the eye in place of its
-        // cell, so it starts 0.5 above the eye (client1.18.1 Entity.java:1705-1708); 1.19 moves it
-        // to its cell (1.19 Entity.java:1683-1692).
-        assert!(!in_wall_at(MinecraftVersion::new(1, 18, 2), Some(true), 0.5, 1.0));
+        // cell, so it starts 0.5 above the eye (client1.18.1 Entity.java:1705-1708); 1.18.2 moves it
+        // to its cell (1.18.2 Entity.java:1640, 1.19 Entity.java:1683-1692).
+        assert!(!in_wall_at(MinecraftVersion::new(1, 18, 1), Some(true), 0.5, 1.0));
         assert!(in_wall_at(MinecraftVersion::new(1, 19, 0), Some(true), 0.5, 1.0));
-        assert!(in_wall_at(MinecraftVersion::new(1, 18, 2), Some(true), 0.0, 1.0));
+        assert!(in_wall_at(MinecraftVersion::new(1, 18, 2), Some(true), 0.5, 1.0));
+        assert!(in_wall_at(MinecraftVersion::new(1, 18, 1), Some(true), 0.0, 1.0));
     }
 
     #[test]
     fn inside_wall_joins_the_collision_shape_with_the_eye_box() {
         // From 1.19 Entity.isInWall joins each suffocating shape with the eye box through
         // Shapes.joinIsNotEmpty(shape.move(pos), Shapes.create(eyeBox), AND) (1.19
-        // Entity.java:1683-1692, client1.21.11 Entity.java:2122-2130), whose index merger folds
+        // Entity.java:1683-1692, client1.21.11 Entity.java:2197-2203), whose index merger folds
         // coordinates within 1e-7 together (Shapes.java:179-193): an overlap of 5e-8 is none. In
         // 1.16 - 1.17.1 getBlockCollisions tests the Shapes.block() object with the strict
-        // AABB.intersects (1.17 Entity.java:1669, 1.16.5 BlockCollisionSpliterator.java:74-82), so the
+        // AABB.intersects (1.17 Entity.java:1658, 1.16.5 CollisionSpliterator.java:74-82), so the
         // same sliver of a full cube counts there.
         let in_wall = |release: MinecraftVersion, min_y: f64, overlap: f64| {
             let mut world = WorldSnapshot::new();
@@ -8768,7 +9168,7 @@ mod tests {
 
     #[test]
     fn mth_floor_of_a_position_past_the_int_range_wraps_until_26_1() {
-        // 1.19.4 MathHelper.floor: the cast then one down wraps to the top (1.19.4 MathHelper.java);
+        // 1.19.4 Mth.floor: the cast then one down wraps to the top (1.19.4 Mth.java);
         // 26.3 Mth.floor saturates (26.3 Mth.java:69-71)
         let state = SimulationState {
             position: Vec3::new(-3.0e9, 64.0, 0.5),
@@ -8783,8 +9183,8 @@ mod tests {
     #[test]
     fn a_fall_past_the_int_range_deals_what_mth_ceil_leaves() {
         // computeFallDamage is an int: Mth.ceil wraps a huge fall to a negative, no damage, in 1.21.4
-        // (1.21.4 LivingEntity.java:1657-1664); Mth.floor stays at the top from 1.21.5 (1.21.5
-        // :1672-1682), the same value 26.3's cast gives
+        // (1.21.4 LivingEntity.java:1621-1627); Mth.floor stays at the top from 1.21.5 (1.21.5
+        // :1643-1653), the same value 26.3's cast gives
         use crate::simulation::{attribute_landing_damage, LandingDamageRounding};
         let damage = |rounding, release| attribute_landing_damage(3.0e9, 3.0, 1.0, 1.0, rounding, release);
         let (ceil, floor) = (LandingDamageRounding::Ceil, LandingDamageRounding::Floor);
@@ -8797,7 +9197,7 @@ mod tests {
     #[test]
     fn the_same_block_is_a_wall_by_eye_height_width_and_flags() {
         // Entity.isInWall reads the eye and 0.8 of the width, each release in its form (1.15
-        // Entity.java:1578-1586, 1.16.5 :1645-1648, 1.17 :1667-1669, 1.19 :1683-1692, 26.3 :2325-2335)
+        // Entity.java:1572-1580, 1.16.5 :1637-1640, 1.17 :1656-1658, 1.19 :1683-1692, 26.3 :2325-2335)
         // and Entity.noPhysics stops it: a crouch's eye below the block, a scale's narrower box beside
         // it, a spectator and a sleeper are no wall where a plain player is. Negative cells round down.
         let mut world = WorldSnapshot::new();
@@ -8842,7 +9242,7 @@ mod tests {
     fn a_sleeper_in_a_wall_is_no_wall_and_still_pushed_out() {
         // LivingEntity.isInWall answers false for a sleeper (26.3 LivingEntity.java:3823-3825), and
         // LocalPlayer.aiStep's moveTowardsClosestSpace asks only noPhysics and from 26.3 isPassenger
-        // (1.20.4 ClientPlayerEntity.java:675, 26.3 LocalPlayer.java:774): the phases part
+        // (1.20.4 LocalPlayer.java:685, 26.3 LocalPlayer.java:774): the phases part
         let world = wall_along_z(None);
         for version in ["1.21.1", "26.3"] {
             let mut state = SimulationState {
@@ -8876,7 +9276,7 @@ mod tests {
     #[test]
     fn a_spectator_leaves_the_ground_and_its_block_on_the_tick_it_turns() {
         // Player.tick: noPhysics = isSpectator(), then setOnGround(false) (26.3 Player.java:218-220,
-        // 1.20.4 PlayerEntity.java), which empties the supporting block (1.21.11 Entity.java:680-684)
+        // 1.20.4 Player.java), which empties the supporting block (1.21.11 Entity.java:680-684)
         let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 0, 0),
@@ -8910,7 +9310,7 @@ mod tests {
 
     #[test]
     fn a_sleeping_entity_is_never_inside_a_wall() {
-        // client1.21.11 LivingEntity.java:3654-3656, 1.8.9 PlayerEntity.java:1111-1113.
+        // client1.21.11 LivingEntity.java:3654-3656, 1.8.8 Player.java:1104-1106.
         let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 1, 0),
@@ -8948,8 +9348,8 @@ mod tests {
 
     #[test]
     fn non_finite_entity_motion_is_taken_before_1_21_11() {
-        // 1.21.10 Entity.setDeltaMovement has no finite guard (1.21.10 Entity.java:3640-3642;
-        // 1.21.11 :3664-3668 refuses it)
+        // 1.21.10 Entity.setDeltaMovement has no finite guard (1.21.10 Entity.java:3709-3711;
+        // 1.21.11 :3727-3732 refuses it)
         let mut set = SimulationState {
             velocity: Vec3::new(0.25, 0.0, -0.5),
             ..SimulationState::default()
@@ -8982,7 +9382,7 @@ mod tests {
             velocity: Vec3::new(0.25, 0.0, -0.5),
             ..SimulationState::default()
         };
-        // 1.21.11 Entity.addDeltaMovement: a non-finite impulse is ignored (Entity.java:3670-3674)
+        // 1.21.11 Entity.addDeltaMovement: a non-finite impulse is ignored (Entity.java:3734-3739)
         let guarded = MinecraftVersion::new(1, 21, 11);
         state.add_delta_movement(Vec3::new(f64::INFINITY, 0.0, 0.0), guarded);
         assert_eq!(state.velocity, Vec3::new(0.25, 0.0, -0.5));
@@ -8993,7 +9393,7 @@ mod tests {
         state.velocity = Vec3::new(0.25, 0.0, -0.5);
         state.add_delta_movement(Vec3::new(0.1, 0.0, 0.2), guarded);
         assert_eq!(state.velocity, Vec3::new(0.35, 0.0, -0.3));
-        // 1.21.10 adds anything (Entity.java:3644-3646)
+        // 1.21.10 adds anything (Entity.java:3713-3715)
         state.add_delta_movement(Vec3::new(f64::INFINITY, 0.0, 0.0), MinecraftVersion::new(1, 21, 10));
         assert_eq!(state.velocity.x, f64::INFINITY);
     }
@@ -9094,8 +9494,8 @@ mod tests {
 
     #[test]
     fn fire_resistance_refuses_every_hot_surface_and_leaves_the_rest() {
-        // LivingEntity.hurt returns false for a fire source under the effect (1.8.9
-        // LivingEntity.java:682, 1.20.4 :1104, 26.3 :1154); a hot floor and a fire are such sources,
+        // LivingEntity.hurt returns false for a fire source under the effect (1.8.8
+        // LivingEntity.java:683, 1.20.4 :1108, 26.3 :1154); a hot floor and a fire are such sources,
         // a cactus is not
         let hit = |effect: BlockEffect, below: bool, fire_resistance: bool| {
             let mut world = WorldSnapshot::new();
@@ -9390,7 +9790,7 @@ mod tests {
         tick(&mut mob, &world, PhysicsConfig::default());
 
         // SlimeBlock.bounceUp scales by 0.8 only an entity that is not a LivingEntity, and every
-        // entity this travel moves is one (1.21.11 SlimeBlock.java:44, 1.9.4 SlimeBlock.java:38-41)
+        // entity this travel moves is one (1.21.11 SlimeBlock.java:43, 1.9.4 SlimeBlock.java:38-41)
         assert!((player.velocity.y - 0.2 * java_float(0.98)).abs() < 1.0e-12);
         assert!((mob.velocity.y - 0.2 * java_float(0.98)).abs() < 1.0e-12);
     }
@@ -9471,7 +9871,7 @@ mod tests {
         let drag = java_float(0.98);
         assert!(player.on_ground);
         assert_eq!(player.velocity.y, 0.5 * 0.6600000262260437 * drag);
-        // BedBlock.bounceUp: the 0.8 is for an entity that is not living (1.21.11 BedBlock.java:149-150)
+        // BedBlock.bounceUp: the 0.8 is for an entity that is not living (1.21.11 BedBlock.java:142-143)
         assert_eq!(mob.velocity.y, 0.5 * 0.6600000262260437 * drag);
         assert_eq!(sneaking.velocity.y, 0.0);
     }
@@ -9538,6 +9938,10 @@ mod tests {
     /// The fall damage of a player landing with a fall distance of 20 on a block with this effect
     /// (topped at `top`), its own drop this tick nothing.
     fn landing_damage_on(version: &str, effect: BlockEffect, top: f64, sneaking: bool) -> (f64, f64) {
+        landing_damage_as(true, version, effect, top, sneaking)
+    }
+
+    fn landing_damage_as(is_player: bool, version: &str, effect: BlockEffect, top: f64, sneaking: bool) -> (f64, f64) {
         let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 0, 0),
@@ -9556,7 +9960,7 @@ mod tests {
             velocity: Vec3::new(0.0, -0.5, 0.0),
             half_width: 0.3,
             height: 1.8,
-            is_player: true,
+            is_player,
             sneaking,
             no_gravity: true,
             fall_distance: 20.0,
@@ -9572,9 +9976,9 @@ mod tests {
     #[test]
     fn hay_and_honey_deal_a_fifth_of_the_fall_damage() {
         // HayBlock.fallOn: causeFallDamage(fd, 0.2F) from 1.9 (1.9.4 HayBlock.java:19-20; 1.8.9
-        // has no fallOn), HoneyBlock.fallOn the same (1.15 HoneyBlock.java:55-61, 1.21.5 :51-57).
-        // ceil((20F - 3F) * 0.2F) = ceil(3.4000001F) before 1.21.5 (1.20.4 LivingEntity.java:1564,
-        // 1.21.4 :1662-1664), floor((20 + 1.0E-6 - 3) * 0.2F) from it (1.21.5 :1672-1682).
+        // has no fallOn), HoneyBlock.fallOn the same (1.15 HoneyBlock.java:55-61, 1.21.5 :48-54).
+        // ceil((20F - 3F) * 0.2F) = ceil(3.4000001F) before 1.21.5 (1.20.4 LivingEntity.java:1572,
+        // 1.21.4 :1662-1664), floor((20 + 1.0E-6 - 3) * 0.2F) from it (1.21.5 :1643-1653).
         assert_eq!(landing_damage_on("1.8.8", BlockEffect::Hay, 1.0, false).0, 17.0);
         for version in ["1.9.4", "1.12.2", "1.16.5", "1.20.4", "1.21.1"] {
             assert_eq!(landing_damage_on(version, BlockEffect::Hay, 1.0, false), (4.0, 0.0), "{version}");
@@ -9589,8 +9993,8 @@ mod tests {
     #[test]
     fn an_upward_dripstone_tip_doubles_a_longer_fall() {
         // PointedDripstoneBlock.fallOn: causeFallDamage(fd + 2.0F, 2.0F) (1.17
-        // PointedDripstoneBlock.java:128-130, 1.21.4 :149-151): ceil((22F - 3F) * 2.0F); from
-        // 1.21.5 causeFallDamage(fd + 2.5, 2.0F) (1.21.5 :147-149): floor((22.5 + 1.0E-6 - 3) * 2)
+        // PointedDripstoneBlock.java:131-133, 1.21.4 :135-137): ceil((22F - 3F) * 2.0F); from
+        // 1.21.5 causeFallDamage(fd + 2.5, 2.0F) (1.21.5 :135-137): floor((22.5 + 1.0E-6 - 3) * 2)
         for version in ["1.17", "1.19.4", "1.20.4", "1.21.1"] {
             let (damage, fall_distance) =
                 landing_damage_on(version, BlockEffect::PointedDripstoneTip, 1.0, false);
@@ -9601,13 +10005,19 @@ mod tests {
     }
 
     #[test]
-    fn landing_on_powder_snow_hurts_only_before_1_18() {
-        // PowderSnowBlock.fallOn only plays a sound from 1.18 (1.18 PowderSnowBlock.java:85-91,
-        // 1.21.5 :99-105); 1.17 and 1.17.1 (whose jar declares no fallOn) keep Block.fallOn.
-        // Over 2.5 blocks of fall the snow holds the player at 0.9F (1.17 :88).
+    fn landing_on_powder_snow_hurts_only_a_mob_before_1_18() {
+        // PowderSnowBlock.fallOn only plays a sound from 1.18 (1.18 PowderSnowBlock.java:87-93,
+        // 1.21.5 :84-90); 1.17 and 1.17.1 (whose jar declares no fallOn) keep Block.fallOn for a mob,
+        // which lands in its own move. A player's landing is ServerPlayer.doCheckFallDamage, after the
+        // server's move ran the block's slowMovement, which zeroes the fall (1.17 Entity.java:2134-2137,
+        // ServerGamePacketListenerImpl.java:852, :884): fd_on_powder_snow_h6 on 1.17 and 1.17.1, health 20.
+        // Over 2.5 blocks of fall the snow holds the player at 0.9F (1.17 :115).
         let top = f64::from(0.9_f32);
-        assert_eq!(landing_damage_on("1.17", BlockEffect::PowderSnow, top, false), (17.0, 0.0));
-        assert_eq!(landing_damage_on("1.17.1", BlockEffect::PowderSnow, top, false), (17.0, 0.0));
+        assert_eq!(landing_damage_as(false, "1.17", BlockEffect::PowderSnow, top, false).0, 17.0);
+        assert_eq!(landing_damage_as(false, "1.17.1", BlockEffect::PowderSnow, top, false).0, 17.0);
+        assert_eq!(landing_damage_as(false, "1.18", BlockEffect::PowderSnow, top, false).0, 0.0);
+        assert_eq!(landing_damage_on("1.17", BlockEffect::PowderSnow, top, false), (0.0, 0.0));
+        assert_eq!(landing_damage_on("1.17.1", BlockEffect::PowderSnow, top, false), (0.0, 0.0));
         for version in ["1.18", "1.19.4", "1.21.1", "1.21.5", "26.3"] {
             assert_eq!(landing_damage_on(version, BlockEffect::PowderSnow, top, false), (0.0, 0.0), "{version}");
         }
@@ -9650,6 +10060,7 @@ mod tests {
             half_width: 0.3,
             height: 1.8,
             is_player: true,
+            controlled_by_local_instance: true,
             ..SimulationState::default()
         };
 
@@ -9815,7 +10226,7 @@ mod tests {
         tick(&mut state, &world, PhysicsConfig::default());
 
         assert!(state.velocity.y < -0.1274);
-        // fallDistance -= (double)(float)dy (1.21.5 Entity.java:1286)
+        // fallDistance -= (double)(float)dy (1.21.5 Entity.java:1323)
         assert_eq!(state.fall_distance, f64::from(0.2_f32));
     }
 
@@ -9928,7 +10339,7 @@ mod tests {
     #[test]
     fn entity_gravity_and_step_height_are_sanitized_as_ranged_attributes() {
         // RangedAttribute.sanitizeValue: NaN is the minimum, the rest clamped to GRAVITY's -1..1 and
-        // STEP_HEIGHT's 0..10 (1.21.11 RangedAttribute.java:35-37, Attributes.java:46, 86)
+        // STEP_HEIGHT's 0..10 (1.21.11 RangedAttribute.java:30-32, Attributes.java:26-66, 42-80)
         let tick = |gravity: f64, step_height: f64| {
             let mut state = SimulationState {
                 position: Vec3::new(0.5, 2.0, 0.5),
@@ -10031,8 +10442,8 @@ mod tests {
 
     #[test]
     fn a_sneak_jump_backs_off_from_the_edge_before_1_19() {
-        // client1.14.4 Entity.java:600-640 and 1.18 PlayerEntity.java:1018-1020 test no rising
-        // move; 1.19 adds `movement.y <= 0.0` (1.19 PlayerEntity.java:1059-1064)
+        // client1.14.4 Entity.java:600-640 and 1.18 Player.java:1017-1019 test no rising
+        // move; 1.19 adds `movement.y <= 0.0` (1.19 Player.java:1056-1061)
         let mut world = WorldSnapshot::new();
         ground_block(&mut world, (0, 0, 0), 1.0);
         let jump = Vec3::new(0.8, 0.42, 0.0);
@@ -10050,9 +10461,9 @@ mod tests {
 
     #[test]
     fn an_airborne_sneaker_backs_off_only_from_1_16_2() {
-        // before 1.16.2 only `onGround` (1.16 PlayerEntity.java:1035-1036); from
+        // before 1.16.2 only `onGround` (1.16 Player.java:1030-1031); from
         // 1.16.2 isAboveGround: the box moved down by the step less the fall distance meets the
-        // ground (1.16.5 PlayerEntity.java:1116-1120)
+        // ground (1.16.5 Player.java:1111-1114)
         let mut world = WorldSnapshot::new();
         ground_block(&mut world, (0, 0, 0), 1.0);
         let state = SimulationState {
@@ -10068,7 +10479,7 @@ mod tests {
     #[test]
     fn a_flying_sneaker_backs_off_until_1_16_1() {
         // `!this.abilities.flying` arrives in 1.16.2 (1.16.2 Player.maybeBackOffFromEdge bytecode
-        // 0-7; 1.16 PlayerEntity.java has none)
+        // 0-7; 1.16 Player.java has none)
         let mut world = WorldSnapshot::new();
         ground_block(&mut world, (0, 0, 0), 1.0);
         let state = SimulationState {
@@ -10082,8 +10493,8 @@ mod tests {
 
     #[test]
     fn the_whole_box_meets_a_block_at_body_height_before_1_20_5() {
-        // before 1.20.5 the whole box moved by (x, -step, z) (1.20.4 PlayerEntity.java:1059); from
-        // 1.20.5 the feet's slab (1.20.5 :1125-1128)
+        // before 1.20.5 the whole box moved by (x, -step, z) (1.20.4 Player.java:1055); from
+        // 1.20.5 the feet's slab (1.20.5 :1076-1079)
         let mut world = WorldSnapshot::new();
         ground_block(&mut world, (0, 0, 0), 1.0);
         ground_block(&mut world, (1, 1, 0), 1.0);
@@ -10094,9 +10505,9 @@ mod tests {
 
     #[test]
     fn the_feet_slab_reaches_the_float_step_and_its_epsilon_below() {
-        // 1.20.5 - 1.21.4: minY - (float) 0.6F - 1.0E-5F (1.21.4 PlayerEntity.java:1128-1132);
-        // 1.21.5 on: minY - 0.6F - 1e-7, 1e-7 in all round (1.21.5 Player.java:1081-1085); the
-        // whole box moved by -0.6F before (1.20.4 PlayerEntity.java:1059)
+        // 1.20.5 - 1.21.4: minY - (float) 0.6F - 1.0E-5F (1.21.4 Player.java:1070-1073);
+        // 1.21.5 on: minY - 0.6F - 1e-7, 1e-7 in all round (1.21.5 Player.java:1023-1026); the
+        // whole box moved by -0.6F before (1.20.4 Player.java:1055)
         let step = f64::from(0.6_f32);
         let lower = |top: f64| {
             let mut world = WorldSnapshot::new();
@@ -10117,7 +10528,7 @@ mod tests {
         );
         assert!(backed_off_x(&within_the_float_epsilon, sneaker(1.0), walk, "1.21.5") < 0.8);
         // a full cube's top 0.6F + 1e-7 down (not 0.6 + 1e-7): the float step reaches it (a full
-        // cube takes the strict `intersects`, client1.21.11 BlockCollisions.java:86-88; another
+        // cube takes the strict `intersects`, client1.21.11 BlockCollisions.java:96-98; another
         // shape's overlap of under 1e-7 would not count, Shapes.joinIsNotEmpty)
         let mut cube_below = WorldSnapshot::new();
         ground_block(&mut cube_below, (1, -1, 0), 1.0);
@@ -10138,7 +10549,7 @@ mod tests {
 
     #[test]
     fn a_ground_box_within_1e_7_of_the_feet_holds_the_sneaker_until_1_21_4() {
-        // the 1e-7 inset all round arrives in 1.21.5 (1.21.5 Player.java:1081-1085)
+        // the 1e-7 inset all round arrives in 1.21.5 (1.21.5 Player.java:1023-1026)
         let mut world = WorldSnapshot::new();
         ground_block(&mut world, (0, 0, 0), 1.0);
         // the move leaves the box overlapping the block by 5e-8
@@ -10166,10 +10577,10 @@ mod tests {
     #[test]
     fn a_boat_under_the_feet_holds_a_sneaker_over_a_gap() {
         // CollisionGetter.noCollision counts the entity colliders (client1.21.11
-        // CollisionGetter.java:52-54, EntityGetter.java:54-72; client1.14.4 EntityGetter.java
-        // :54-68); before 1.14 World.getCollisionBoxes(entity, box) does (1.8.9 Entity.java:487,
-        // 1.12.2 Entity.java:616 and World.java:1180-1203, 1.13.2 Entity.java:627 and World.java
-        // :1805-1808)
+        // CollisionGetter.java:52-54, EntityGetter.java:51-77; client1.14.4 EntityGetter.java
+        // :54-68); before 1.14.4 Level.getCollisionBoxes(entity, box) does (1.8.8 Entity.java:489,
+        // 1.12.2 Entity.java:619 and Level.java:1161-1184, 1.13.2 Entity.java:632 and Level.java
+        // :1794-1797)
         let mut world = WorldSnapshot::new();
         world.set_entity_colliders(vec![EntityCollider {
             bounds: Aabb::new(Vec3::new(-0.2, 0.4375, -0.2), Vec3::new(1.175, 1.0, 1.175)),
@@ -10190,7 +10601,7 @@ mod tests {
     #[test]
     fn the_fluid_hop_box_is_free_of_shapes_it_does_not_meet() {
         // Entity.isFree: only the shapes overlapping the box count (client1.21.11
-        // BlockCollisions.java:86-104, 1.13.2 RenderBlockView.java:122); a fence's 1.5 high shape
+        // BlockCollisions.java:86-104, 1.13.2 LevelReader.java:122); a fence's 1.5 high shape
         // in the cell beside does, a carpet under the box's cells does not
         let mut world = WorldSnapshot::new();
         ground_block(&mut world, (0, 0, 0), 0.0625);
@@ -10238,12 +10649,12 @@ mod tests {
 
     #[test]
     fn a_shape_the_sneaker_presses_within_1e_7_does_not_hold_it_from_1_13() {
-        // from 1.13 a block's shape counts only where VoxelShapes.matchesAnywhere /
+        // from 1.13 a block's shape counts only where Shapes.joinIsNotEmpty /
         // Shapes.joinIsNotEmpty(shape, box, AND) finds it, and the index merger merges coordinates
-        // within 1e-7 (1.14 SimpleDoubleListPair.java:34-37, client1.21.11 IndirectMerger.java
+        // within 1e-7 (1.14.4 IndirectMerger.java:42-46, client1.21.11 IndirectMerger.java
         // ctor); a full cube takes the strict `intersects` from 1.16 (1.16.5
-        // BlockCollisionSpliterator.java:75-82), every shape before 1.13 (1.12.2 Block.java
-        // :395-399)
+        // CollisionSpliterator.java:75-82), every shape before 1.13 (1.12.2 Block.java
+        // :435-439)
         let mut half = WorldSnapshot::new();
         place_box(&mut half, (0, 0, 0), Vec3::ZERO, Vec3::new(0.5, 1.0, 1.0));
         // the box's min x 5e-8 inside the shape's face at x = 0.5
@@ -10263,7 +10674,7 @@ mod tests {
             );
         }
         // 1.5e-7 inside the face: no release merges it away, 1.13.x included, whose lowered box is
-        // the bounding box offset with no deflate (1.13.2 Entity.java:627, 639, 650)
+        // the bounding box offset with no deflate (1.13.2 Entity.java:632, 644, 653)
         let pressed_half = Vec3::new(0.8 - 1.5e-7, 0.0, 0.5);
         for version in ["1.12.2", "1.13.2", "1.14.4", "1.16.5", "1.20.4"] {
             assert_eq!(
@@ -10293,9 +10704,9 @@ mod tests {
 
     #[test]
     fn an_entity_collider_the_sneaker_overlaps_by_5e_8_holds_it_in_1_13_2() {
-        // 1.13.2 World.method_16369 adds the entity boxes that `intersects` the lowered box, and
+        // 1.13.2 Level.getCollisions adds the entity boxes that `intersects` the lowered box, and
         // that box is the bounding box offset by (x, -stepHeight, z) with no deflate (1.13.2
-        // World.java:1805-1808, class_3593.java:22-37, Entity.java:627, 639, 650); from 1.14 the
+        // Level.java:1794-1797, class_3593.java:22-31, Entity.java:632, 644, 653); from 1.14 the
         // colliders meeting the query grown by 1e-7 (client1.14.4 EntityGetter.java:54-68)
         let mut world = WorldSnapshot::new();
         // its +x side 5e-8 inside the sneaker's -x side at 0.5
@@ -10308,7 +10719,7 @@ mod tests {
             assert_eq!(backed_off_z_from(&world, at, version), 0.3, "{version}");
         }
         // clear of it by 5e-8 the sneaker backs off, but from 1.14 the 1e-7 growth still meets it;
-        // from 1.21.5 the feet's slab is 1e-7 in all round (1.21.5 Player.java:1077-1085), out of
+        // from 1.21.5 the feet's slab is 1e-7 in all round (1.21.5 Player.java:1019-1026), out of
         // its reach again
         let clear = Vec3::new(0.8 + 1.0e-7, 1.0, 0.5);
         for (version, z) in [
@@ -10325,7 +10736,7 @@ mod tests {
     #[test]
     fn a_full_unit_box_of_a_joined_shape_takes_the_merger_from_1_16() {
         // the spliterator's strict branch is for the Shapes.block() object only (1.16.5
-        // BlockCollisionSpliterator.java:74, client1.21.11 BlockCollisions.java:91); a block whose
+        // CollisionSpliterator.java:74, client1.21.11 BlockCollisions.java:91); a block whose
         // shape is joined from several boxes, one of them filling the cell, goes through
         // joinIsNotEmpty and its 1e-7 merging (client1.21.11 Shapes.java:179-185)
         let unit = BlockShape {
@@ -10359,7 +10770,7 @@ mod tests {
     fn the_fluid_hop_box_meets_a_shapes_block_cube_strictly_and_a_joined_one_merged() {
         // Entity.isFree from 1.16: the strict `intersects` for the Shapes.block() object, the
         // merger for any other shape, a joined one filling the cell included (1.16.5
-        // BlockCollisionSpliterator.java:74-82, client1.21.11 BlockCollisions.java:91-100)
+        // CollisionSpliterator.java:74-82, client1.21.11 BlockCollisions.java:91-100)
         let unit = BlockShape {
             bounds: Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0)),
             ..BlockShape::full_block()
@@ -10393,7 +10804,7 @@ mod tests {
             assert!(!block.is_free_for_entity(hop, entity, release), "{version}");
             assert!(joined.is_free_for_entity(hop, entity, release), "{version}");
         }
-        // merged for both 1.13 - 1.15 (1.15 CollisionView.java:109)
+        // merged for both 1.13 - 1.15 (1.15 CollisionGetter.java:109)
         let release = MinecraftVersion::parse("1.15.2").unwrap();
         assert!(block.is_free_for_entity(hop, entity, release));
     }
@@ -10401,9 +10812,9 @@ mod tests {
     #[test]
     fn the_fluid_hop_box_is_free_of_a_face_it_overlaps_within_1e_7_from_1_13() {
         // Entity.isFree's shapes go through matchesAnywhere / joinIsNotEmpty from 1.13 (1.13.2
-        // RenderBlockView.java:123, client1.21.11 BlockCollisions.java:86-104), whose merger merges
+        // LevelReader.java:123, client1.21.11 BlockCollisions.java:86-104), whose merger merges
         // coordinates within 1e-7 (client1.21.11 IndirectMerger.java ctor); the strict
-        // `intersects` before (1.12.2 Block.java:395-399)
+        // `intersects` before (1.12.2 Block.java:435-439)
         let mut world = WorldSnapshot::new();
         // a fence post, its side at x = 1.375
         place_box(
@@ -10436,7 +10847,7 @@ mod tests {
     #[test]
     fn the_fluid_hop_box_is_free_of_scaffolding_the_entity_is_not_above() {
         // Entity.isFree takes the shapes in the entity's CollisionContext (client1.21.11
-        // Entity.java:642-644): scaffolding is empty to an entity not above it
+        // Entity.java:676-678): scaffolding is empty to an entity not above it
         // (ScaffoldingBlock.getCollisionShape :113-121)
         let mut world = WorldSnapshot::new();
         place_scaffolding(&mut world, (1, 0, 0), false);
@@ -10459,9 +10870,9 @@ mod tests {
     #[test]
     fn the_world_border_collides_with_no_collision_queries() {
         // 1.18+: the border's shape where it meets the query, for an entity inside and close to it
-        // (1.18 CollisionView.java:57-62); 1.14 - 1.17: its shape whatever the query once the
+        // (1.18 CollisionGetter.java:57-62); 1.14 - 1.17: its shape whatever the query once the
         // entity's box touches it from inside (client1.14.4 LevelReader.java:146-155, 1.16
-        // BlockCollisionSpliterator.java:101-115)
+        // CollisionSpliterator.java:101-115)
         let mut world = WorldSnapshot::new();
         world.set_world_bounds(-64, 320, 0.0, 0.0, 10.0);
         world.set_chunk_loaded(0, 0, true);
@@ -10492,8 +10903,8 @@ mod tests {
     #[test]
     fn the_1_16_2_push_out_tests_collision_shapes_and_before_any_suffocating_cell() {
         // 1.16 and 1.16.1 LocalPlayer.blocked(): any cell of the column isSuffocating, whatever its
-        // shape (1.16 ClientPlayerEntity.java:452-464); 1.16.2 suffocatesAt: a suffocating shape
-        // meets the column (1.16.5 ClientPlayerEntity.java:435-439)
+        // shape (1.16 LocalPlayer.java:450-462); 1.16.2 suffocatesAt: a suffocating shape
+        // meets the column (1.16.5 LocalPlayer.java:433-437)
         let mut world = WorldSnapshot::new();
         for y in 0..2 {
             for z in -1..=1 {
@@ -10516,8 +10927,8 @@ mod tests {
     #[test]
     fn the_water_block_and_the_bubble_column_keep_their_speed_factor() {
         // Entity.getBlockSpeedFactor reads the block below only when the feet are in neither
-        // Blocks.WATER nor Blocks.BUBBLE_COLUMN (1.15 Entity.java:676-684, 1.16.5 :736-744, 1.19.2
-        // :745-753, 1.21.11 :996-1004, 26.3 :1131-1139); a waterlogged block or a water plant (speed
+        // Blocks.WATER nor Blocks.BUBBLE_COLUMN (1.15 Entity.java:681-689, 1.16.5 :739-747, 1.19.2
+        // :745-753, 1.21.11 :1026-1034, 26.3 :1131-1139); a waterlogged block or a water plant (speed
         // factor 1.0, its fluid water) does read it
         let soul_sand = BlockState {
             shape: Some(BlockShape {
@@ -10594,7 +11005,7 @@ mod tests {
     #[test]
     fn a_flying_player_is_not_on_a_climbable_from_1_21_4() {
         // Player.onClimbable: abilities.flying ? false : super.onClimbable() (1.21.4
-        // PlayerEntity.java:2219-2221, 1.21.11 Player.java:2038-2040, 26.3 :1876-1878); 1.21.3 has
+        // Player.java:2053-2058, 1.21.11 Player.java:1960-1962, 26.3 :1876-1878); 1.21.3 has
         // no override
         let world = ladder_world();
         let flying = SimulationState {
@@ -10640,8 +11051,8 @@ mod tests {
     #[test]
     fn a_fall_through_a_cobweb_sticks_from_1_21_2() {
         // From 1.21.2 Entity.checkInsideBlocks calls WebBlock.entityInside for every block the
-        // tick's move sweeps (1.21.4 Entity.java:1072-1100, boxTraverseBlocks; 1.21.11
-        // Entity.java:859-913 and BlockGetter.java:161-195, WebBlock.java:26-34); before, only for
+        // tick's move sweeps (1.21.4 Entity.java:1096-1124, boxTraverseBlocks; 1.21.11
+        // Entity.java:897-951 and BlockGetter.java:161-195, WebBlock.java:24-34); before, only for
         // the blocks the box ends in (1.21.1)
         let mut world = WorldSnapshot::new();
         world.set_block(
@@ -10800,8 +11211,8 @@ mod tests {
     #[test]
     fn flight_undoes_the_sneak_slowdown_from_1_9_to_1_14() {
         // LocalPlayer.aiStep divides a flying player's sneak-slowed impulses by 0.3D in 1.9 - 1.14
-        // (1.9.4 ClientPlayerEntity.java:712-715, 1.13.2 :796-799, 1.14 :717-721); 1.8.9 only
-        // moves it down (ClientPlayerEntity.java:596-603)
+        // (1.9.4 LocalPlayer.java:710-713, 1.13.2 :791-794, 1.14.4 :682-687); 1.8.9 only
+        // moves it down (1.8.8 LocalPlayer.java:594-601)
         let speed = |release: MinecraftVersion, sneaking: bool| {
             let mut state = SimulationState {
                 is_player: true,
@@ -10873,7 +11284,7 @@ mod tests {
     #[test]
     fn a_climbable_block_stops_a_glide_from_1_21_5() {
         // LivingEntity.travelFallFlying: on a climbable block travelInAir, then stopFallFlying
-        // (1.21.5 LivingEntity.java:2299-2302, 1.21.11 :2439-2442); 1.21.4 glides on
+        // (1.21.5 LivingEntity.java:2273-2276, 1.21.11 :2412-2415); 1.21.4 glides on
         // (LivingEntity.java:2205-2206)
         for version in ["1.21.5", "1.21.11", "26.3"] {
             let stopped = glide_through(version, BlockEffect::Climbable);
@@ -10918,7 +11329,7 @@ mod tests {
     #[test]
     fn auto_jump_jumps_onto_the_entities_the_player_collides_with() {
         // LocalPlayer.updateAutoJump scans Level.getCollisions, which holds the boxes of a boat or
-        // a shulker (1.10.2 ClientPlayerEntity.java:874, 1.21.11 LocalPlayer.java:1018,
+        // a shulker (1.10.2 LocalPlayer.java:871, 1.21.11 LocalPlayer.java:1018,
         // CollisionGetter.java:85-89)
         let mut world = floor_with_step(0.0);
         world.set_block((0, 1, 2), BlockState::default());
@@ -10940,8 +11351,8 @@ mod tests {
 
     #[test]
     fn auto_jump_meets_the_entities_before_the_blocks_from_1_18() {
-        // Level.getCollisions: blocks then entities before 1.18 (1.16.5 CollisionView.java:58-59,
-        // 1.17 :57-58), entities then blocks from 1.18 (1.18 CollisionView.java:67-70); the first
+        // Level.getCollisions: blocks then entities before 1.18 (1.16.5 CollisionGetter.java:58-59,
+        // 1.17 :57-58), entities then blocks from 1.18 (1.18 CollisionGetter.java:67-70); the first
         // box a line crosses is the step, here a box too high to jump in a block high step
         let mut world = floor_with_step(1.0);
         world.set_entity_colliders(vec![EntityCollider {
@@ -10960,9 +11371,9 @@ mod tests {
 
     #[test]
     fn flight_takes_sneak_and_jump_as_two_steps_before_1_14() {
-        // LocalPlayer.aiStep: motionY -= flySpeed * 3.0F, then += it, before 1.14 (1.8.9
-        // ClientPlayerEntity.java:596-603, 1.13.2 :797-805); from 1.14 one netted impulse (1.14
-        // ClientPlayerEntity.java:719-731), none with both held
+        // LocalPlayer.aiStep: motionY -= flySpeed * 3.0F, then += it, before 1.14 (1.8.8
+        // LocalPlayer.java:594-601, 1.13.2 :792-800); from 1.14 one netted impulse (1.14.4
+        // LocalPlayer.java:684-698), none with both held
         let world = WorldSnapshot::new();
         let flying_y = |both: bool, release| {
             let mut state = SimulationState {
@@ -10994,8 +11405,8 @@ mod tests {
 
     #[test]
     fn auto_jump_starts_from_the_position_from_1_15() {
-        // LocalPlayer.updateAutoJump: from position() in 1.15 (1.15 ClientPlayerEntity.java:860), from
-        // the box's minY in 1.14 (1.14 ClientPlayerEntity.java:851-852, 1.13.2 :887-888); a box kept
+        // LocalPlayer.updateAutoJump: from position() in 1.15 (1.15 LocalPlayer.java:860), from
+        // the box's minY in 1.14 (1.14.4 LocalPlayer.java:817-819, 1.13.2 :881-882); a box kept
         // 0.45 below the position puts a block high step 1.45 above the feet, too high to jump
         let world = floor_with_step(1.0);
         let queued = |release| {
@@ -11023,8 +11434,8 @@ mod tests {
     #[test]
     fn auto_jump_takes_the_merged_full_cubes_last_in_1_13_and_1_14_0() {
         // getCollisionShapes keeps the full cubes for one bitset shape after the walk, split into
-        // merged boxes (1.13.2 RenderBlockView.java:113-153, VoxelSet.java:203-256; 1.14
-        // ViewableWorld.java:145-195); the walk takes each block from 1.14.4 (LevelReader.java:130-145)
+        // merged boxes (1.13.2 LevelReader.java:113-155, DiscreteVoxelShape.java:200-253; 1.14.4
+        // LevelReader.java:179-201); the walk takes each block from 1.14.4 (LevelReader.java:130-145)
         // and before 1.13. The step of two cubes along the way is one box whose center is over the
         // farther cube, free above, where the nearer cube's is under a block: a jump only in 1.13.2
         let mut world = floor_with_step(1.0);
@@ -11044,9 +11455,82 @@ mod tests {
     }
 
     #[test]
+    fn auto_jump_takes_the_first_box_of_the_1_12_walk_x_then_z_then_y() {
+        // D-195: before 1.13 Level.getCollisionBoxes walks x outermost, then z, then y (1.12.2
+        // Level.method_13689; 1.10.2 Level.java:1055-1092), and the first box the lines cross
+        // decides (1.12.2 LocalPlayer.java:904-928). Walking along +x+z, a cube at x 2, z 1 with a
+        // cube on it and a free cube at x 1, z 2: 1.12 takes the free one first and jumps, the
+        // z-outermost walk of 1.14.4 (LevelReader.java:130-145) the covered one and does not
+        let full = BlockState {
+            id: 1,
+            shape: Some(BlockShape::full_block()),
+            ..BlockState::default()
+        };
+        let mut world = WorldSnapshot::new();
+        world.set_block((2, 1, 1), full);
+        world.set_block((2, 2, 1), full);
+        world.set_block((1, 1, 2), full);
+        let queued = |release| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 1.0, 0.5),
+                input: Vec3::new(0.0, 0.0, 1.0),
+                on_ground: true,
+                is_player: true,
+                auto_jump: true,
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            crate::simulation::update_auto_jump(&mut state, &world, Vec3::new(0.2, 0.0, 0.2), 0.3, 1.0, release);
+            state.auto_jump_time
+        };
+        for release in [MinecraftVersion::new(1, 10, 2), MinecraftVersion::new(1, 11, 2), MinecraftVersion::new(1, 12, 2)] {
+            assert_eq!(queued(release), 1, "{release:?}");
+        }
+        assert_eq!(queued(MinecraftVersion::new(1, 14, 4)), 0);
+    }
+
+    #[test]
+    fn the_1_12_auto_jump_probes_a_brewing_stand_by_its_bounding_box() {
+        // D-196: before 1.13 the probe above the step reads getCollisionBoundingBox, one box: a
+        // brewing stand's is its 0.125 base (getShape; 1.12.2 BrewingStandBlock.java:36, 89), not
+        // its rod's 0.875 collision box, so a step under one is low enough to jump in 1.12.2 and
+        // too high in 1.13.2, whose probe takes the collision shape
+        let mut world = floor_with_step(1.0);
+        let shape = |max_y: f64, min_xz: f64, max_xz: f64| BlockShape {
+            bounds: Aabb::new(Vec3::new(min_xz, 0.0, min_xz), Vec3::new(max_xz, max_y, max_xz)),
+            ..BlockShape::full_block()
+        };
+        let stand = BlockState {
+            id: 2,
+            tags: crate::world::LEGACY_PROBE_OUTLINE,
+            ..BlockState::default()
+        };
+        world.set_block_shapes_with_outline(
+            (0, 2, 2),
+            stand,
+            vec![shape(0.875, 0.4375, 0.5625), shape(0.125, 0.0, 1.0)],
+            vec![shape(0.125, 0.0, 1.0)],
+        );
+        let queued = |release| {
+            let mut state = walking_to_step(true);
+            tick_release(&mut state, &world, release);
+            state.auto_jump_time
+        };
+        assert_eq!(queued(MinecraftVersion::new(1, 12, 2)), 1);
+        assert_eq!(queued(MinecraftVersion::new(1, 13, 2)), 0);
+        // and the lily pad's is none (BushBlock.getCollisionShape), its 0.09375 box ignored
+        let mut lily = floor_with_step(1.0);
+        lily.set_block((0, 2, 2), BlockState { id: 3, tags: crate::world::LEGACY_PROBE_NONE, shape: Some(shape(1.0, 0.0, 1.0)), ..BlockState::default() });
+        let mut state = walking_to_step(true);
+        tick_release(&mut state, &lily, MinecraftVersion::new(1, 12, 2));
+        assert_eq!(state.auto_jump_time, 1);
+    }
+
+    #[test]
     fn the_merged_full_cubes_follow_the_partial_boxes() {
-        // 1.13.2 RenderBlockView.java:150-152: the bitset shape is concatenated after the walk; its
-        // boxes run along z, then grow along x and y (VoxelSet.java:203-256)
+        // 1.13.2 LevelReader.java:151-154: the bitset shape is concatenated after the walk; its
+        // boxes run along z, then grow along x and y (DiscreteVoxelShape.java:200-253)
         let mut world = WorldSnapshot::new();
         let full = BlockState {
             id: 1,
@@ -11083,8 +11567,8 @@ mod tests {
     #[test]
     fn negative_byte_effect_amplifiers_stay_active_before_1_20_5() {
         // the effect packet reads the amplifier as a signed byte and MobEffectInstance keeps it
-        // before 1.20.5 (1.20.4 EntityStatusEffectS2CPacket.java:49, StatusEffectInstance.java:73;
-        // 1.8.9 EntityStatusEffectS2CPacket.java:60), so `/effect ... 255` is amplifier -1
+        // before 1.20.5 (1.20.4 ClientboundUpdateMobEffectPacket.java:50, MobEffectInstance.java:76;
+        // 1.8.8 ClientboundUpdateMobEffectPacket.java:59), so `/effect ... 255` is amplifier -1
         let air = |version: &str, levitation_amplifier: Option<i32>| {
             let mut state = SimulationState {
                 is_player: true,
@@ -11107,7 +11591,7 @@ mod tests {
             state
         };
         // travel's Levitation: motionY += (0.05 * (amplifier + 1) - motionY) * 0.2, a hover at -1
-        // (1.20.4 LivingEntity.java:2157; 1.9.4 EntityLivingBase.java travel)
+        // (1.20.4 LivingEntity.java:2157; 1.9.4 LivingEntity.java:1417-1418)
         for version in ["1.9.4", "1.12.2", "1.16.5", "1.20.4"] {
             let state = air(version, Some(-1));
             assert_eq!(state.velocity.y, 0.0, "{version}");
@@ -11116,7 +11600,7 @@ mod tests {
         }
 
         // jumpFromGround adds 0.1F * (amplifier + 1): nothing at -1, less at -2 (1.20.4
-        // LivingEntity.java:2017, 1.8.9 EntityLivingBase.java jump)
+        // LivingEntity.java:2017, 1.8.8 LivingEntity.java:1110-1113)
         let jump =
             |version: &str, jump_boost_amplifier: Option<i32>, jump_strength: Option<f64>| {
                 let mut state = SimulationState {
@@ -11139,7 +11623,7 @@ mod tests {
                     PhysicsConfig::default(),
                 )
                 .unwrap();
-                state.velocity.y
+            state.velocity.y
             };
         for version in ["1.8.8", "1.12.2", "1.16.5", "1.20.4"] {
             assert_eq!(
@@ -11155,7 +11639,7 @@ mod tests {
             );
         }
 
-        // computeFallDamage's jump boost is (float)(amplifier + 1) (1.20.4 LivingEntity.java:1561)
+        // computeFallDamage's jump boost is (float)(amplifier + 1) (1.20.4 LivingEntity.java:1569)
         assert_eq!(
             landing_damage(4.25, 3.0, 1.0, Some(-1), LandingDamageRounding::Ceil),
             landing_damage(4.25, 3.0, 1.0, None, LandingDamageRounding::Ceil)
@@ -11211,7 +11695,7 @@ mod tests {
         // from 1.21.2 travelInAir calls getEffectiveGravity after
         // handleRelativeFrictionAndCalculateMovement's move (1.21.2 LivingEntity.java:2194-2197,
         // 2213-2229; 26.3 :2337-2340, 2382-2397); 1.21 travel tests the delta before the move
-        // (1.21 LivingEntity.java:2095-2101). A jump into a ceiling leaves 0 after the move.
+        // (1.21 LivingEntity.java:2115-2121). A jump into a ceiling leaves 0 after the move.
         let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 22, 0),
@@ -11277,11 +11761,11 @@ mod tests {
 
     #[test]
     fn fire_clears_the_freeze_ticks_once_the_fire_ticks_reach_0_before_1_21_5() {
-        // AbstractFireBlock.onEntityCollision adds a fire tick and sets eight seconds of fire when
-        // they reach 0 (1.17 AbstractFireBlock.java:121-129; 1.21.3 :127-139 adds them only below
-        // 0); a player starts at -getFireImmuneTicks = -20 (1.17 PlayerEntity.java:434-436,
+        // BaseFireBlock.entityInside adds a fire tick and sets eight seconds of fire when
+        // they reach 0 (1.17 BaseFireBlock.java:124-132; 1.21.3 :121-133 adds them only below
+        // 0); a player starts at -getFireImmuneTicks = -20 (1.17 Player.java:433-435,
         // Entity.java:176). The burning Entity.baseTick of the next tick clears the freeze ticks
-        // (1.17 Entity.java:419-439, 1.21.4 :460-479); until then aiStep takes two off a tick
+        // (1.17 Entity.java:419-439, 1.21.4 :486-506); until then aiStep takes two off a tick
         let world = fire_world(BlockEffect::Fire);
         for release in [
             MinecraftVersion::new(1, 17, 0),
@@ -11313,9 +11797,9 @@ mod tests {
     #[test]
     fn fire_ignition_clears_the_freeze_ticks_at_once_from_1_21_5_and_clear_freeze_from_1_21_9() {
         // BaseFireBlock.fireIgnite's igniteForSeconds(8) clears them (1.21.5
-        // BaseFireBlock.java:136-147, Entity.java:565-571) once the player's ticks reach 0; from
+        // BaseFireBlock.java:123-134, Entity.java:598-604) once the player's ticks reach 0; from
         // 1.21.9 the fire's CLEAR_FREEZE clears them on the first contact (1.21.9
-        // BaseFireBlock.java:131-136, InsideBlockEffectType.java)
+        // BaseFireBlock.java:118-123, InsideBlockEffectType.java)
         let world = fire_world(BlockEffect::SoulFire);
         let cold = SimulationState {
             remaining_fire_ticks: Some(-20),
@@ -11344,10 +11828,10 @@ mod tests {
     #[test]
     fn rain_puts_a_fire_free_players_ticks_to_0_before_1_21_9() {
         // Entity.clearFire is setRemainingFireTicks(0) up to 1.21.8 (1.21.5 Entity.java:581-583,
-        // 1.21.8 :608-610) and min(0, ticks) from 1.21.9 (1.21.9 Entity.java:615-617); the rain's
-        // clearFire runs after the inside effects (1.21.5 Entity.java:809-811). In 1.21.5 a
+        // 1.21.8 :641-643) and min(0, ticks) from 1.21.9 (1.21.9 Entity.java:648-650); the rain's
+        // clearFire runs after the inside effects (1.21.5 Entity.java:849-851). In 1.21.5 a
         // player that was not burning keeps the 0 (the reset is for one that burned: :817-819);
-        // from 1.21.6 the 0 counts as raised (1.21.6 Entity.java:849-853), so the ticks go 0,
+        // from 1.21.6 the 0 counts as raised (1.21.6 Entity.java:886-890), so the ticks go 0,
         // -20, 0 while the rain lasts
         let empty = WorldSnapshot::new();
         let rained_on = SimulationState {
@@ -11370,7 +11854,7 @@ mod tests {
         }
         // so the next fire contact of 1.21.5-1.21.8 reaches 0 at once: BaseFireBlock.fireIgnite
         // adds a player's tick and igniteForSeconds(8) clears the freeze ticks (1.21.5
-        // BaseFireBlock.java:136-147, Entity.java:565-571), not twenty contacts later
+        // BaseFireBlock.java:123-134, Entity.java:598-604), not twenty contacts later
         let fire = fire_world(BlockEffect::Fire);
         for release in [MinecraftVersion::new(1, 21, 5), MinecraftVersion::new(1, 21, 8)] {
             let mut state = rained_on;
@@ -11386,7 +11870,7 @@ mod tests {
     #[test]
     fn freeze_ticks_over_the_limit_fall_by_two() {
         // LivingEntity.aiStep clamps only the count up, min(required, i + 1); the count down is
-        // max(0, i - 2) (1.17 LivingEntity.java:2546-2552, 1.21.5 :2778-2779)
+        // max(0, i - 2) (1.17 LivingEntity.java:2546-2552, 1.21.5 :2767-2768)
         for release in [MinecraftVersion::new(1, 20, 4), MinecraftVersion::new(1, 21, 5)] {
             let mut state = SimulationState {
                 ticks_frozen: 300,
@@ -11407,9 +11891,9 @@ mod tests {
     #[test]
     fn fire_ticks_reset_after_leaving_fire_as_the_release_tests_it() {
         // Entity.applyEffectsFromBlocks puts the ticks back to -getFireImmuneTicks: in 1.21.5 only
-        // for an entity that burned before and no longer does (1.21.5 Entity.java:817-819), from
+        // for an entity that burned before and no longer does (1.21.5 Entity.java:857-859), from
         // 1.21.6 for any entity not burning whose ticks no ignition raised (1.21.6
-        // Entity.java:850-853, 26.3 :937-940); before 1.21.5 with no fire or lava in the box
+        // Entity.java:887-890, 26.3 :937-940); before 1.21.5 with no fire or lava in the box
         // (1.17 Entity.java:633-638)
         let fire = fire_world(BlockEffect::Fire);
         let empty = WorldSnapshot::new();
@@ -11434,7 +11918,7 @@ mod tests {
 
     #[test]
     fn a_dead_entity_keeps_its_fire_count_from_1_21_2_to_1_21_4() {
-        // 1.21.3 Entity.java:769 asks isAlive before it resets the count; 1.21.1 does not ask
+        // 1.21.3 Entity.java:795 asks isAlive before it resets the count; 1.21.1 does not ask
         let empty = WorldSnapshot::new();
         for (release, after) in [
             (MinecraftVersion::new(1, 21, 1), -20),
@@ -11453,8 +11937,8 @@ mod tests {
 
     #[test]
     fn a_burning_entity_keeps_its_freeze_ticks_cleared_until_put_out_before_1_21_5() {
-        // the burning baseTick clears them every tick (1.17 Entity.java:435-438); water puts the
-        // fire out first (Entity.checkWaterState, 1.17 Entity.java:1065-1076), powder snow after
+        // the burning baseTick clears them every tick (1.17 Entity.java:437-440); water puts the
+        // fire out first (Entity.updateInWaterStateAndDoWaterCurrentPushing, 1.17 Entity.java:1059-1070), powder snow after
         // the move (1.17 Entity.java:645-647), and the freezing then counts again
         let release = MinecraftVersion::new(1, 20, 4);
         let burning = SimulationState {
@@ -11499,8 +11983,8 @@ mod tests {
     #[test]
     fn rain_and_powder_snow_put_the_fire_out_from_1_21_5() {
         // the rain's clearFire after the inside effects and powder snow's EXTINGUISH (1.21.5
-        // Entity.java:809-811, PowderSnowBlock.java:79-93); no burning baseTick clears the
-        // freeze ticks from 1.21.5 (1.21.5 Entity.java:470-484)
+        // Entity.java:849-851, PowderSnowBlock.java:79-93); no burning baseTick clears the
+        // freeze ticks from 1.21.5 (1.21.5 Entity.java:498-512)
         let release = MinecraftVersion::new(1, 21, 11);
         let burning = SimulationState {
             position: Vec3::new(0.5, 0.0, 0.5),
@@ -11531,9 +12015,9 @@ mod tests {
     #[test]
     fn lava_sets_the_fire_ticks_with_fire_protection_or_burning_time() {
         // setOnFireFromLava's fifteen seconds in the base tick before 1.21.5 (1.17
-        // Entity.java:441-443, 483-490), less 15% a Fire Protection level before 1.21 (1.17
+        // Entity.java:443-445, 485-492), less 15% a Fire Protection level before 1.21 (1.17
         // ProtectionEnchantment.java:59-66), times BURNING_TIME from 1.21 (1.21
-        // LivingEntity.java:3524-3526); the next base tick counts one off
+        // LivingEntity.java:3555-3557); the next base tick counts one off
         let lava = fluid_block_world(FluidState::Lava);
         let in_lava = SimulationState {
             position: Vec3::new(0.5, 0.2, 0.5),
@@ -11559,7 +12043,7 @@ mod tests {
         tick_release(&mut attribute, &lava, MinecraftVersion::new(1, 21, 1));
         assert_eq!(attribute.remaining_fire_ticks, Some(150));
         // a fire-immune entity neither ignites nor takes fire contact damage (1.17
-        // Entity.java:484, AbstractFireBlock.java:122)
+        // Entity.java:486, BaseFireBlock.java:125)
         let mut immune = SimulationState {
             fire_immune: true,
             ticks_frozen: 50,
@@ -11587,10 +12071,10 @@ mod tests {
     #[test]
     fn a_lava_cauldron_clears_the_freeze_ticks_as_the_release_applies_it() {
         // before 1.21.5 setOnFireFromLava with the entity in its lava (1.17
-        // LavaCauldronBlock.java:24-28, AbstractCauldronBlock.java:52-54), whose burning base
+        // LavaCauldronBlock.java:26-30, AbstractCauldronBlock.java:52-54), whose burning base
         // tick clears them next tick; 1.21.5 - 1.21.8 lavaIgnite at once (1.21.5
-        // LavaCauldronBlock.java:35-40); from 1.21.9 CLEAR_FREEZE through its filled inside shape
-        // (1.21.9 LavaCauldronBlock.java:42-51)
+        // LavaCauldronBlock.java:31-36); from 1.21.9 CLEAR_FREEZE through its filled inside shape
+        // (1.21.9 LavaCauldronBlock.java:38-46)
         let world = cauldron_world(BlockEffect::LavaCauldron);
         let inside = SimulationState {
             position: Vec3::new(0.5, 0.25, 0.5),
@@ -11627,11 +12111,68 @@ mod tests {
     }
 
     #[test]
+    fn a_cauldrons_filled_inside_shape_holds_from_1_21_6() {
+        // 1.21.5 lavaIgnite only for an entity whose box tops the floor's 0.25 and whose feet are
+        // under the content (AbstractCauldronBlock.java:49-51, LavaCauldronBlock.java:31-36);
+        // from 1.21.6 LAVA_IGNITE for a box meeting the cauldron with its content (1.21.6
+        // LavaCauldronBlock.java:37-44, 51), its floor too
+        let world = cauldron_world(BlockEffect::LavaCauldron);
+        let low = SimulationState {
+            position: Vec3::new(0.5, 0.0, 0.5),
+            half_width: 0.3,
+            height: 0.2,
+            no_gravity: true,
+            ..SimulationState::default()
+        };
+        let lit = |release: MinecraftVersion| {
+            let mut state = low;
+            tick_release(&mut state, &world, release);
+            state.remaining_fire_ticks.unwrap_or(0) > 0
+        };
+        assert!(!lit(MinecraftVersion::new(1, 21, 5)));
+        for release in [
+            MinecraftVersion::new(1, 21, 6),
+            MinecraftVersion::new(1, 21, 8),
+            MinecraftVersion::new(1, 21, 9),
+        ] {
+            assert!(lit(release), "{release:?}");
+        }
+    }
+
+    #[test]
+    fn a_client_applies_block_effects_only_to_what_it_controls_from_1_21_2() {
+        // !level.isClientSide() || isControlledByLocalInstance() (1.21.2 LivingEntity.java:2817),
+        // isLocalInstanceAuthoritative() from 1.21.5 (1.21.5 :2755, 26.3 :3064)
+        let world = cauldron_world(BlockEffect::LavaCauldron);
+        let inside = SimulationState {
+            position: Vec3::new(0.5, 0.25, 0.5),
+            half_width: 0.3,
+            height: 1.8,
+            no_gravity: true,
+            client_side: true,
+            ..SimulationState::default()
+        };
+        let lit = |controlled: bool, release: MinecraftVersion| {
+            let mut state = SimulationState { controlled_by_local_instance: controlled, ..inside };
+            tick_release(&mut state, &world, release);
+            state.remaining_fire_ticks.unwrap_or(0) > 0
+        };
+        for release in [
+            MinecraftVersion::new(1, 21, 2),
+            MinecraftVersion::new(1, 21, 5),
+            MinecraftVersion::new(26, 3, 0),
+        ] {
+            assert!(lit(true, release), "{release:?}");
+            assert!(!lit(false, release), "{release:?}");
+        }
+    }
+
+    #[test]
     fn a_water_cauldron_puts_a_burning_entity_out() {
-        // LeveledCauldronBlock.onEntityCollision extinguishes a burning entity in its water
-        // (1.17 LeveledCauldronBlock.java:49-56); 1.21.5 - 1.21.8 clearFire at once (1.21.5
+        // LayeredCauldronBlock.entityInside extinguishes a burning entity in its water
+        // (1.17 LayeredCauldronBlock.java:51-58); 1.21.5 - 1.21.8 clearFire at once (1.21.5
         // LayeredCauldronBlock.java:64-71); EXTINGUISH from 1.21.9 (1.21.9
-        // LayeredCauldronBlock.java:82-93)
+        // LayeredCauldronBlock.java:67-79)
         let world = cauldron_world(BlockEffect::LayeredCauldron(3));
         for release in [
             MinecraftVersion::new(1, 20, 4),
@@ -11658,7 +12199,7 @@ mod tests {
         // honey block the falling box slides down beside resets the fall (HoneyBlock.entityInside,
         // doSlideMovement, 1.21.11 HoneyBlock.java:61-70, 106-115), so the powder snow below gives
         // the full block for its inside shape rather than FALLING_COLLISION_SHAPE (1.21.11
-        // PowderSnowBlock.java:108-123) and the entity sticks
+        // PowderSnowBlock.java:92-106) and the entity sticks
         let mut world = powder_snow_world();
         let without_honey = world.clone();
         world.set_block(
@@ -11703,7 +12244,7 @@ mod tests {
     #[test]
     fn the_powder_snow_inside_test_takes_the_release_collided_along_vector_inset() {
         // AABB.collidedAlongVector grows the boxes by exactly half the size in 1.21.5 - 1.21.8
-        // and by half less 1e-7 from 1.21.9 (1.21.5 AABB.java:392, 1.21.9 :396): a centre that
+        // and by half less 1e-7 from 1.21.9 (1.21.5 AABB.java:392, 1.21.9 :368): a centre that
         // ends 5e-8 inside the grown FALLING_COLLISION_SHAPE counts only before 1.21.9
         let world = powder_snow_world();
         let top = java_float(0.9) + 0.9 - 5.0e-8;
@@ -11730,7 +12271,7 @@ mod tests {
     #[test]
     fn only_the_server_takes_periodic_freeze_damage() {
         // LivingEntity.aiStep hurts a fully frozen entity on the server alone (1.17
-        // LivingEntity.java:2557, 1.21.11 :2989-2996, 26.3 :3074-3087)
+        // LivingEntity.java:2554, 1.21.11 :2981-2988, 26.3 :3074-3087)
         let world = fire_world(BlockEffect::PowderSnow);
         for release in [
             MinecraftVersion::new(1, 17, 0),
@@ -11813,6 +12354,8 @@ mod tests {
                                 ticks_frozen,
                                 tick_count: 39,
                                 client_side,
+                                // (the local player: its client applies the block effects)
+                                controlled_by_local_instance: client_side,
                                 powder_snow_immune,
                                 in_powder_snow: true,
                                 ..standing_in_fire(true)
@@ -11854,6 +12397,7 @@ mod tests {
         ] {
             let mut state = SimulationState {
                 client_side: true,
+                controlled_by_local_instance: true,
                 ticks_frozen: 139,
                 tick_count: 39,
                 ..standing_in_fire(true)
@@ -11872,7 +12416,7 @@ mod tests {
 
     #[test]
     fn a_wet_client_the_server_says_burns_goes_back_to_the_immune_ticks() {
-        // Entity.isOnFire reads the shared flag on a client (1.20.4 Entity.java:2121-2124), so the
+        // Entity.isOnFire reads the shared flag on a client (1.20.4 Entity.java:2127-2130), so the
         // wet test after the move sees it with the ticks cleared (1.20.4 :724-726)
         let mut world = WorldSnapshot::new();
         world.set_block(
@@ -11911,7 +12455,7 @@ mod tests {
         let run = |client_side, on_fire_flag| {
             run_at(MinecraftVersion::new(1, 20, 4), client_side, on_fire_flag)
         };
-        // through 1.10.2 the test reads the ticks alone (1.10.2 Entity.java:824, 1.11.2 :883)
+        // through 1.10.2 the test reads the ticks alone (1.10.2 Entity.java:822, 1.11.2 :875)
         assert_eq!(run_at(MinecraftVersion::new(1, 10, 2), true, true), Some(0));
         assert_eq!(run_at(MinecraftVersion::new(1, 11, 2), true, true), Some(-20));
         assert_eq!(run(true, true), Some(-20));
@@ -11923,7 +12467,7 @@ mod tests {
     #[test]
     fn a_dry_client_keeps_its_fire_ticks_from_1_21_6() {
         // the reset to -getFireImmuneTicks: any side in 1.21.5 for an entity that just went out
-        // (Entity.java:817-819), the server's alone from 1.21.6 (Entity.java:851-853)
+        // (Entity.java:857-859), the server's alone from 1.21.6 (Entity.java:888-890)
         let air = WorldSnapshot::new();
         for (client_side, ticks) in [(false, -20), (true, 0)] {
             let mut state = SimulationState {
@@ -11938,8 +12482,8 @@ mod tests {
 
     #[test]
     fn the_post_move_fire_reset_follows_the_side_and_the_release_for_each_counter() {
-        // M23/M25. 1.21.6 Entity.java:851 and 26.3 :1028-1030: the server alone, for anything not
-        // burning whose ticks no ignition raised. 1.21.5 :817-819: either side, only for an entity
+        // M23/M25. 1.21.6 Entity.java:888 and 26.3 :1028-1030: the server alone, for anything not
+        // burning whose ticks no ignition raised. 1.21.5 :857-859: either side, only for an entity
         // that burned before the move. The client's base tick clears positive ticks first and
         // the server's takes one off.
         let air = WorldSnapshot::new();
@@ -11996,7 +12540,7 @@ mod tests {
     fn ignition_and_extinguishing_in_one_tick_keep_the_was_ignited_test() {
         // Entity.applyEffectsFromBlocks reads the ticks before checkInsideBlocks: an ignition that
         // raised them stops the reset even when the same step puts the fire out (1.21.6
-        // Entity.java:837-853, 26.3 :1015-1030). A step applies FIRE_IGNITE before EXTINGUISH.
+        // Entity.java:874-890, 26.3 :1015-1030). A step applies FIRE_IGNITE before EXTINGUISH.
         let world = WorldSnapshot::new();
         let step = InsideEffectStep {
             fire_ignite: true,
@@ -12040,7 +12584,7 @@ mod tests {
 
     #[test]
     fn the_generic_fire_delay_carries_through_extinguishing_and_the_next_contact() {
-        // M25: 1 to 0 at 1.21.6 (1.21.5 Entity.java:3230-3232, 1.21.6 :3403-3405), the player's
+        // M25: 1 to 0 at 1.21.6 (1.21.5 Entity.java:3276-3278, 1.21.6 :3464-3466), the player's
         // override stays 20 and an invulnerable player's ticks stay at most 1.
         let air = WorldSnapshot::new();
         let fire = fire_world(BlockEffect::Fire);
@@ -12081,7 +12625,7 @@ mod tests {
     #[test]
     fn a_later_fire_ignition_adds_ticks_for_a_server_player_alone() {
         // BaseFireBlock.fireIgnite: negative ticks +1 for all, else ServerPlayer nextInt(1, 3)
-        // (1.21.5 BaseFireBlock.java:136-150, 26.3 :122-136); the eight seconds are 160. The
+        // (1.21.5 BaseFireBlock.java:123-137, 26.3 :122-136); the eight seconds are 160. The
         // block's touch follows a base tick that takes the 160 to 159.
         let world = fire_world(BlockEffect::Fire);
         let release = MinecraftVersion::new(1, 21, 4);
@@ -12125,7 +12669,7 @@ mod tests {
     #[test]
     fn each_server_player_ignition_reads_its_own_draw_in_order() {
         // BaseFireBlock.fireIgnite calls nextInt(1, 3) once per eligible ignition (1.21.5
-        // BaseFireBlock.java:136-150, 26.3 :122-136), so no fixed value gives 203 from 200 and
+        // BaseFireBlock.java:123-137, 26.3 :122-136), so no fixed value gives 203 from 200 and
         // 1, 2. A step applies FIRE_IGNITE once, however many fire blocks it touches.
         let world = WorldSnapshot::new();
         let release = MinecraftVersion::new(26, 3, 0);
@@ -12240,9 +12784,9 @@ mod tests {
 
     #[test]
     fn a_fresh_entitys_fire_ticks_and_the_generic_reset_follow_the_release() {
-        // -getFireImmuneTicks up to 1.21.5 (Entity.java:212), the field's 0 from 1.21.6 (:233); the
-        // generic reset value goes from 1 to 0 at 1.21.6 (1.21.5 Entity.java:3230-3232, 1.21.6
-        // :3403-3405), a player's stays 20
+        // -getFireImmuneTicks up to 1.21.5 (Entity.java:212), the field's 0 from 1.21.6 (:234); the
+        // generic reset value goes from 1 to 0 at 1.21.6 (1.21.5 Entity.java:3276-3278, 1.21.6
+        // :3464-3466), a player's stays 20
         let air = WorldSnapshot::new();
         let fire = fire_world(BlockEffect::Fire);
         for (release, is_player, reset) in [
@@ -12267,6 +12811,7 @@ mod tests {
         // one touch ignites a local player from the field's 0
         let mut local = SimulationState {
             client_side: true,
+            controlled_by_local_instance: true,
             ..standing_in_fire(true)
         };
         tick_release(&mut local, &fire, MinecraftVersion::new(1, 21, 9));
@@ -12319,7 +12864,7 @@ mod tests {
 
     #[test]
     fn an_immobile_entity_keeps_its_motion_and_gravity() {
-        // only the input goes: travel still runs (1.20.4 LivingEntity.java:2552-2555)
+        // only the input goes: travel still runs (1.20.4 LivingEntity.java:2563-2566)
         let mut state = SimulationState {
             position: Vec3::new(0.5, 20.0, 0.5),
             velocity: Vec3::new(0.2, 0.0, 0.0),
@@ -12389,7 +12934,7 @@ mod tests {
 
     #[test]
     fn immobile_controls_add_nothing_to_the_motion_an_external_push_left() {
-        // the input goes and nothing else (1.8.9 LivingEntity.java:1438-1443, 1.20.4 :2552-2555,
+        // the input goes and nothing else (1.8.8 LivingEntity.java:1427-1432, 1.20.4 :2563-2566,
         // 26.3 :3000-3003): an immobile trace is the trace of the same player with no keys down,
         // here over forward, diagonal and jump, with a sprint held, from rest and from a knockback
         // (LivingEntity.knockback only writes the delta movement)
@@ -12573,7 +13118,7 @@ mod tests {
     #[test]
     fn a_pushed_sleeper_arms_the_auto_jump_its_keys_ask_for() {
         // canAutoJump's isMoving and updateAutoJump read LocalPlayer.input, which an immobile tick
-        // leaves alone (1.20.4 ClientPlayerEntity.java:871, 878-879, 996-1006; 26.3
+        // leaves alone (1.20.4 LocalPlayer.java:884, 891-892, 1006-1016; 26.3
         // LocalPlayer.java:995-1003, 1109-1114): pushed at a block with a key down the jump is armed,
         // aiStep clears it while immobile, and a tick awake takes it
         let mut world = immobile_floor();
@@ -12643,9 +13188,9 @@ mod tests {
     #[test]
     fn a_passenger_tick_is_a_ride_tick_not_ordinary_travel() {
         // Entity.rideTick zeroes the motion, ticks, and the vehicle's positionRider puts the rider
-        // back; LivingEntity.rideTick resets the fall distance (1.8.9 Entity.java:1321-1330,
-        // LivingEntity.java:1519-1524; 1.12.2 Entity.java:1639-1649, LivingEntity.java:1943-1948;
-        // 1.20.4 Entity.java:1843-1847; 26.3 Entity.java:2465-2470, LivingEntity.java:3233-3236)
+        // back; LivingEntity.rideTick resets the fall distance (1.8.8 Entity.java:1316-1325,
+        // LivingEntity.java:1508-1513; 1.12.2 Entity.java:1629-1639, LivingEntity.java:1939-1944;
+        // 1.20.4 Entity.java:1850-1854; 26.3 Entity.java:2465-2470, LivingEntity.java:3233-3236)
         let world = immobile_floor();
         for release in RIDE_RELEASES {
             let mut state = rider(Vec3::new(0.7, 0.9, -0.4));
@@ -12689,7 +13234,7 @@ mod tests {
     #[test]
     fn a_passenger_keeps_the_ground_only_before_1_21_4() {
         // Player.tick: isSpectator() alone to 1.21.3, || isPassenger from 1.21.4 (1.21.3
-        // PlayerEntity.java:256, 1.21.4 :259-260, 26.3 Player.java:219-221): a rider on the ground
+        // Player.java:231, 1.21.4 :234-235, 26.3 Player.java:219-221): a rider on the ground
         // can jump in its own tick before it, not after
         let world = immobile_floor();
         let run = |release: MinecraftVersion| {
@@ -12710,8 +13255,8 @@ mod tests {
 
     #[test]
     fn a_flying_passenger_takes_the_plain_travel() {
-        // Player.travel's flight is !isPassenger (1.8.9 PlayerEntity.java:1303, 1.12.2 :1419, 1.20.4
-        // :1488, 26.3 Player.java:1294-1296): the jump key's impulse is LocalPlayer.aiStep's, then
+        // Player.travel's flight is !isPassenger (1.8.8 Player.java:1296, 1.12.2 :1406, 1.20.4
+        // :1452, 26.3 Player.java:1294-1296): the jump key's impulse is LocalPlayer.aiStep's, then
         // gravity and drag as ever, and no 0.6
         let air = immobile_floor();
         for release in RIDE_RELEASES {
@@ -12802,7 +13347,7 @@ mod tests {
                 let world = WorldSnapshot::new();
                 crate::versioned::dispatch(version, &mut state, &world, PhysicsConfig::default())
                     .unwrap();
-                state.velocity.y
+            state.velocity.y
             };
             let raw = glide(-0.1, 0.2);
             assert!((raw - 0.0784).abs() < 1.0e-7, "{version}: {raw}");
@@ -12959,6 +13504,9 @@ mod tests {
                     PhysicsConfig::default(),
                     release,
                     |state, world| {
+                        crate::versioned::release_riptide(version, state, world, PhysicsConfig::default())
+                    },
+                    |state, world| {
                         crate::versioned::dispatch(version, state, world, PhysicsConfig::default())
                     },
                 )
@@ -12980,8 +13528,8 @@ mod tests {
     #[test]
     fn a_contracted_lava_box_is_reordered_before_1_14() {
         // Entity.isInLava's expand(-0.1F, -0.4F, -0.1F) makes a Box, whose constructor sorts the
-        // corners (1.13.2 Box.java:42-48, Entity.java:1144-1145): an elytra-sized 0.6 high box at
-        // y 64.7 spans 64.9..65.1 and reaches the lava in 64 (1.9.4 PlayerEntity.java:366-367)
+        // corners (1.13.2 AABB.java:38-44, Entity.java:1143-1144): an elytra-sized 0.6 high box at
+        // y 64.7 spans 64.9..65.1 and reaches the lava in 64 (1.9.4 Player.java:367-368)
         let mut world = WorldSnapshot::new();
         world.set_block(
             (0, 64, 0),
@@ -13044,6 +13592,7 @@ mod tests {
         // the block's own word beats its boxes: leaves have an empty support shape
         let leaves = water_under(BlockState {
             bottom_face_sturdy: Some(false),
+            explosion_resistance: None,
             ..stone
         });
         assert!(!eyes(&leaves, 0.972, new));
@@ -13146,6 +13695,7 @@ mod tests {
                 source_of(fluid),
                 BlockState {
                     bottom_face_sturdy: Some(false),
+                    explosion_resistance: None,
                     ..solid_ceiling()
                 },
             );
@@ -13286,6 +13836,7 @@ mod tests {
                 source_of(fluid),
                 BlockState {
                     bottom_face_sturdy: Some(true),
+                    explosion_resistance: None,
                     ..BlockState::default()
                 },
             );
@@ -13637,7 +14188,7 @@ mod tests {
     fn a_long_fractional_descent_counts_each_move_in_the_precision_of_the_release() {
         // Java's intermediates, written out here rather than through accumulated_fall_distance:
         // 1.18.1 Entity.java:1019 `(float)((double)fd - dy)`, 1.19 :1005 `fd -= (float)dy`,
-        // 1.21.5 :1286 and 26.3 :1598 `fd -= (double)(float)dy`
+        // 1.21.5 :1323 and 26.3 :1598 `fd -= (double)(float)dy`
         let world = WorldSnapshot::new();
         let families: [(&str, fn(f64, f64) -> f64); 5] = [
             ("1.16.5", |fd, dy| f64::from((fd - dy) as f32)),
@@ -13690,7 +14241,7 @@ mod tests {
         // goes by the movement it asked for), and the movement it made goes up, so the 1.21.5
         // checkFallDamage adds nothing before the landing (26.3 Entity.java:1597-1599) and the
         // distance stays 4.97: floor 1 where the 0.05 of the way down would have made it 2;
-        // ceil 2 before 1.21.5 either way (1.20.4 LivingEntity.java:1564)
+        // ceil 2 before 1.21.5 either way (1.20.4 LivingEntity.java:1572)
         let mut world = WorldSnapshot::new();
         for x in -1..3 {
             world.set_block(
@@ -13721,7 +14272,7 @@ mod tests {
             };
             step(version, &mut state, &world);
             assert_eq!(state.position.y, 1.5, "{version}");
-            assert!(state.on_ground, "{version}");
+            assert!(state.on_ground, "{version} {:?} {:?} {}", state.position, state.velocity, state.collided_vertically);
             assert_eq!(state.fall_damage, damage, "{version}");
             assert_eq!(state.fall_distance, 0.0, "{version}");
         }
@@ -13766,7 +14317,7 @@ mod tests {
     fn the_modern_epsilon_decides_a_fall_ending_on_a_whole_point() {
         use crate::simulation::attribute_landing_damage;
         // calculateFallPower `fallDistance + 1.0E-6 - safe`, then Mth.floor (1.21.5
-        // LivingEntity.java:1672-1682, 26.3 :1783-1790): just under a point counts as the point
+        // LivingEntity.java:1643-1653, 26.3 :1783-1790): just under a point counts as the point
         // within the epsilon, and no further
         let modern = MinecraftVersion::new(26, 3, 0);
         let floor = LandingDamageRounding::Floor;
@@ -13790,7 +14341,7 @@ mod tests {
         // the attribute multiplies after the block's, in double
         assert_eq!(attribute_landing_damage(5.0, 3.0, 0.2, 2.5, floor, modern), 1.0);
         assert_eq!(attribute_landing_damage(5.0, 3.0, 1.0, 0.0, floor, modern), 0.0);
-        // 1.20.5 - 1.21.4: ceil on a float, so any excess is a point (1.20.5 LivingEntity.java:1602-1610)
+        // 1.20.5 - 1.21.4: ceil on a float, so any excess is a point (1.20.5 LivingEntity.java:1593-1601)
         let attribute = MinecraftVersion::new(1, 21, 4);
         let ceil = LandingDamageRounding::Ceil;
         let just_over = f64::from(f32::from_bits(3.0_f32.to_bits() + 1));
@@ -13824,7 +14375,7 @@ mod tests {
                 ..faller(1.5)
             };
             step(version, &mut state, &world);
-            assert!(state.on_ground, "{version}");
+            assert!(state.on_ground, "{version} {:?} {:?} {}", state.position, state.velocity, state.collided_vertically);
             assert!(state.fall_damage > 0.0, "{version}");
             assert!(state.velocity.y > 0.0, "{version}: the bed bounces it");
             step(version, &mut state, &world);
@@ -13888,7 +14439,7 @@ mod tests {
     #[test]
     fn the_jump_counts_down_before_it_tests_the_delay() {
         // LivingEntity.aiStep: `if (noJumpDelay > 0) --noJumpDelay` first, the test `== 0` later in
-        // the same tick (1.8.9 LivingEntity.java:1405-1406, :1456; 1.20.4 :2513-2514, :2576;
+        // the same tick (1.8.8 LivingEntity.java:1394-1395, :1445; 1.20.4 :2513-2514, :2576;
         // 26.3 :2959-2960, :3024)
         for version in ["1.8.8", "1.20.4", "26.3"] {
             for (delay, launches, left) in [(0, true, 10), (1, true, 10), (2, false, 1), (10, false, 9)] {
@@ -13929,7 +14480,7 @@ mod tests {
 
     #[test]
     fn releasing_the_key_clears_the_delay_and_a_repress_jumps_at_once() {
-        // `else { noJumpDelay = 0 }` (1.8.9 LivingEntity.java:1461, 1.20.4 :2587, 26.3 :3035)
+        // `else { noJumpDelay = 0 }` (1.8.8 LivingEntity.java:1450, 1.20.4 :2587, 26.3 :3035)
         for version in ["1.8.8", "1.20.4", "26.3"] {
             let (world, mut state) = on_the_floor(SimulationState {
                 jump_ticks: 7,
@@ -14020,8 +14571,8 @@ mod tests {
 
     #[test]
     fn a_jump_leaves_the_fall_distance_to_the_landing() {
-        // Nothing in LivingEntity.jumpFromGround touches fallDistance (1.8.9 LivingEntity.java:1109,
-        // 1.20.4 :2009, 26.3 :2303): a state seeded on the ground with one still has it after the launch
+        // Nothing in LivingEntity.jumpFromGround touches fallDistance (1.8.8 LivingEntity.java:1110,
+        // 1.20.4 :2020, 26.3 :2303): a state seeded on the ground with one still has it after the launch
         for version in ["1.8.8", "1.20.4", "26.3"] {
             let (world, mut state) = on_the_floor(SimulationState {
                 fall_distance: 2.0,
@@ -14053,7 +14604,7 @@ mod tests {
                     ..faller(300.0)
                 };
                 step(version, &mut state, &world);
-                state.velocity.y
+            state.velocity.y
             };
             let lifted = (-0.25 + (0.05 + 0.25) * 0.2) * drag;
             assert_eq!(run(true, true, false, None, -0.25), lifted, "{version}");
@@ -14067,7 +14618,7 @@ mod tests {
             assert_eq!(run(false, false, true, Some(-0.02), -0.25), (-0.25 + 0.02) * drag, "{version}");
             assert_eq!(run(false, false, true, Some(0.0), -0.25), -0.25 * drag, "{version}");
             assert_eq!(run(false, false, false, Some(0.5), -0.25), (-0.25 - 0.5) * drag, "{version}");
-            // RangedAttribute clamps to -1..1 (1.21.11 Attributes.java:46, RangedAttribute.java:35-37)
+            // RangedAttribute clamps to -1..1 (1.21.11 Attributes.java:26-66, RangedAttribute.java:30-32)
             assert_eq!(run(false, false, false, Some(2.0), -0.25), (-0.25 - 1.0) * drag, "{version}");
             assert_eq!(run(false, false, false, Some(-2.0), -0.25), (-0.25 + 1.0) * drag, "{version}");
         }
@@ -14075,7 +14626,7 @@ mod tests {
 
     #[test]
     fn slow_falling_chooses_by_the_sign_and_counts_zero_as_falling() {
-        // `<= 0.0`: 1.21 LivingEntity.java:2098, 26.3 :2338-2339. The motion stays above 0.003, or
+        // `<= 0.0`: 1.21 LivingEntity.java:2118, 26.3 :2338-2339. The motion stays above 0.003, or
         // aiStep zeroes it first (26.3 :2992).
         let world = WorldSnapshot::new();
         for version in ["1.20.4", "1.21.1", "1.21.2", "26.3"] {
@@ -14153,7 +14704,7 @@ mod tests {
     #[test]
     fn a_shrinking_border_collides_at_the_snapshot_of_each_tick() {
         // Entity.collide offers the border by the edges of the moment (26.3 Entity.java:1262-1263,
-        // WorldBorder.java:121-123, from 1.21.11 the extent's previousSize, :346-357): the snapshot
+        // WorldBorder.java:121-123, from 1.21.11 the extent's previousSize, :340-346): the snapshot
         // a caller gives is that tick's, and an edge that has passed the player stops nothing
         let mut world = WorldSnapshot::new();
         for version in ["1.16.5", "1.21.11", "26.3"] {
@@ -14241,6 +14792,9 @@ mod tests {
             PhysicsConfig::default(),
             release,
             |state, world| {
+                crate::versioned::release_riptide(version, state, world, PhysicsConfig::default())
+            },
+            |state, world| {
                 crate::versioned::dispatch(version, state, world, PhysicsConfig::default())
             },
         )
@@ -14285,7 +14839,7 @@ mod tests {
         let mut attribute = speed_attribute(None);
         tick_with_frost("1.20.4", &world, frozen_player(1.1, 300), &mut attribute);
         assert_eq!(attribute.frost, Some(f64::from(-0.05_f32)));
-        // not a client's from 1.21.5 (1.21.5 LivingEntity.java:2775), and no frost before 1.17
+        // not a client's from 1.21.5 (1.21.5 LivingEntity.java:2763), and no frost before 1.17
         for version in ["1.16.5", "1.21.5", "26.3"] {
             let mut attribute = speed_attribute(None);
             let value = tick_with_frost(version, &world, frozen_player(1.1, 1), &mut attribute);
@@ -14297,7 +14851,7 @@ mod tests {
     #[test]
     fn the_frost_modifier_goes_when_the_landing_block_is_air_or_nothing_is_frozen() {
         // addPowderSnowSlowIfNeeded asks for a landing block that is not air and frozen ticks
-        // (1.17 LivingEntity.java:514-527, 1.21.4 :518-531); removeFrost has taken the old one
+        // (1.17 LivingEntity.java:508-521, 1.21.4 :499-513); removeFrost has taken the old one
         let held = f64::from(-0.05_f32 * (20.0_f32 / 140.0));
         let mut stone_world = WorldSnapshot::new();
         stone_world.set_block((0, 0, 0), stone());
@@ -14329,7 +14883,7 @@ mod tests {
 
     #[test]
     fn the_frost_value_folds_every_modifier_as_the_attribute_does() {
-        // the frost adds to the base before the multipliers (1.17 EntityAttributeInstance.java:132-150)
+        // the frost adds to the base before the multipliers (1.17 AttributeInstance.java:130-148)
         use crate::simulation::{AttributeModifier, AttributeOperation};
         let mut world = WorldSnapshot::new();
         world.set_block((0, 0, 0), stone());
@@ -14440,8 +14994,8 @@ mod tests {
         }
     }
 
-    /// Entity.move records the move split by the collided movement before 1.21.9 (1.21.8 Entity.java:702, its `true`
-    /// reads lv2) and by the requested one from it (1.21.9 Entity.java:715, its arg2), where the two can order axes apart.
+    /// Entity.move records the move split by the collided movement before 1.21.9 (1.21.8 Entity.java:737, its `true`
+    /// reads lv2) and by the requested one from it (1.21.9 Entity.java:750, its arg2), where the two can order axes apart.
     #[test]
     fn the_recorded_move_splits_by_the_requested_axes_from_1_21_9() {
         let state = SimulationState { position: Vec3::new(0.3, 1.0, 0.0), ..SimulationState::default() };
@@ -14454,5 +15008,159 @@ mod tests {
         assert_eq!(order(MinecraftVersion::new(26, 3, 0)), Some(requested));
         assert_eq!(order(MinecraftVersion::new(1, 21, 5)), Some(moved));
         assert_eq!(order(MinecraftVersion::new(1, 21, 4)), None);
+    }
+
+    fn slime() -> BlockState {
+        BlockState {
+            shape: Some(BlockShape {
+                effect: BlockEffect::Slime,
+                ..BlockShape::full_block()
+            }),
+            ..BlockState::default()
+        }
+    }
+
+    #[test]
+    fn a_flying_player_steps_on_slime_only_from_1_15() {
+        // stepOn sits inside canClimb() before 1.15, !flying for a player (1.8.9 Entity.java:668,
+        // 677, Player.java:1578-1580; 1.12.2 Entity.java:830, 839, Player.java:1649-1651; 1.14
+        // Entity.java:602, 610); 1.15 asks onGround alone (1.15 Entity.java:589-591) (D-165)
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), slime());
+        let stepped = |release: MinecraftVersion, flying: bool| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 1.0, 0.5),
+                velocity: Vec3::new(0.2, 0.0, -0.1),
+                half_width: 0.3,
+                height: 1.8,
+                on_ground: true,
+                is_player: true,
+                flying,
+                ..SimulationState::default()
+            };
+            crate::simulation::apply_block_effects(&mut state, &world, Some((0, 0, 0)), release, &[]);
+            state.velocity
+        };
+        let kept = Vec3::new(0.2, 0.0, -0.1);
+        let damped = Vec3::new(0.2 * 0.4, 0.0, -0.1 * 0.4);
+        for release in [
+            MinecraftVersion::new(1, 8, 8),
+            MinecraftVersion::new(1, 12, 2),
+            MinecraftVersion::new(1, 14, 4),
+        ] {
+            assert_eq!(stepped(release, true), kept, "{release:?}");
+            assert_eq!(stepped(release, false), damped, "{release:?}");
+        }
+        for release in [MinecraftVersion::new(1, 15, 0), MinecraftVersion::new(1, 21, 11)] {
+            assert_eq!(stepped(release, true), damped, "{release:?}");
+        }
+    }
+
+    #[test]
+    fn a_ceiling_hit_over_slime_keeps_the_fall_distance() {
+        // the slime block's fall callback runs on any vertical collision and leaves a rising motion
+        // alone, but the fall ends in checkFallDamage only on the ground (1.8.9 Entity.java,
+        // 1.20.4 Entity.java:649-664, 1.21.5 SlimeBlock.java:33-41): a head hit keeps it (D-187)
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), slime());
+        world.set_block(
+            (0, 2, 0),
+            BlockState {
+                shape: Some(BlockShape {
+                    bounds: Aabb::new(Vec3::new(0.0, 0.85, 0.0), Vec3::new(1.0, 1.0, 1.0)),
+                    ..BlockShape::full_block()
+                }),
+                ..BlockState::default()
+            },
+        );
+        for release in [
+            MinecraftVersion::new(1, 8, 8),
+            MinecraftVersion::new(1, 12, 2),
+            MinecraftVersion::new(1, 20, 4),
+            MinecraftVersion::new(1, 21, 5),
+            MinecraftVersion::new(26, 1, 2),
+        ] {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 1.0, 0.5),
+                velocity: Vec3::new(0.0, 0.42, 0.0),
+                half_width: 0.3,
+                height: 1.8,
+                is_player: true,
+                controlled_by_local_instance: true,
+                fall_distance: 2.0,
+                ..SimulationState::default()
+            };
+            tick_release(&mut state, &world, release);
+            assert!(state.collided_vertically && !state.on_ground, "{release:?}");
+            assert_eq!(state.fall_distance, 2.0, "{release:?}");
+            assert!(state.velocity.y > 0.0, "{release:?}");
+        }
+    }
+
+    #[test]
+    fn the_water_snap_of_1_13_reads_the_motion_after_the_move() {
+        // 1.13 tests velocityY <= 0.0 after the move and the drag (1.13.2 LivingEntity.java:1674),
+        // 1.14 the motion before travel (1.14 LivingEntity.java:1935): a slow-falling player that
+        // sinks onto slime under water bounces up, which 1.13 does not snap to -0.003 (D-191); the
+        // jump of 1.13.2 LivingEntity.java:1909-1913, 1925-1930 comes after the cutoff
+        let mut world = WorldSnapshot::new();
+        world.set_block((0, 0, 0), slime());
+        for y in 1..=2 {
+            world.set_block(
+                (0, y, 0),
+                BlockState {
+                    fluid: FluidState::Water,
+                    fluid_source: true,
+                    ..BlockState::default()
+                },
+            );
+        }
+        let after = |version: &str| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 1.002, 0.5),
+                // the jump in water adds 0.04 after the cutoff of motions under 0.003: -0.0024
+                velocity: Vec3::new(0.0, -0.0424, 0.0),
+                half_width: 0.3,
+                height: 1.8,
+                is_player: true,
+                controlled_by_local_instance: true,
+                in_water: true,
+                jump_requested: true,
+                slow_falling: true,
+                ..SimulationState::default()
+            };
+            let rules = crate::versioned::rules_for_version(version).expect("a profile");
+            tick_with_rules(&mut state, &world, PhysicsConfig::default(), rules);
+            assert!(state.on_ground, "{version} {:?} {:?} {}", state.position, state.velocity, state.collided_vertically);
+            state.velocity.y
+        };
+        // bounced to about +0.0024, dragged to 0.00192, then less the slow fall's 0.01 / 16
+        let up = after("1.13.2");
+        assert!((up - (0.0024 * 0.8 - 0.01 / 16.0)).abs() < 1.0e-8, "{up}");
+        assert_eq!(after("1.14.4"), -0.003);
+    }
+
+    #[test]
+    fn a_no_gravity_body_sinks_in_lava_on_1_9_4_and_not_from_1_10() {
+        // 1.9.4 LivingEntity.travel takes 0.02 off in lava whatever NoGravity says (LivingEntity.java:1444);
+        // 1.10.2 tests isNoGravity first
+        let sink = |release: &str| {
+            let mut world = WorldSnapshot::new();
+            load_chunks_around_origin(&mut world);
+            for y in 0..3 {
+                world.set_block((0, y, 0), BlockState { fluid: FluidState::Lava, fluid_level: 8, fluid_source: true, ..BlockState::default() });
+            }
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 0.5, 0.5),
+                no_gravity: true,
+                half_width: 0.3,
+                height: 1.8,
+                ..SimulationState::default()
+            };
+            crate::versioned::dispatch(release, &mut state, &world, PhysicsConfig::default()).expect("a supported release");
+            state.velocity.y
+        };
+        assert!(sink("1.9.4") < 0.0, "{}", sink("1.9.4"));
+        assert_eq!(sink("1.10.2"), 0.0);
     }
 }

@@ -32,7 +32,8 @@ mirrors it: `SUPPORTED_VERSIONS` and `isSupportedVersion` (`src/versions.ts`), o
 Adapter engines require the supplied registry to declare the same exact release
 as the selected engine. Unverified overrides and inconsistent dependency aliases
 are rejected before native construction. See [the registry contract and migration
-notes](docs/registry-release-contract.md), including current data-alias limitations.
+notes](docs/registry-release-contract.md), including the six releases whose tables are their
+same-protocol release's.
 
 `generated/physics-breakpoints.json` (`pnpm report:physics-breakpoints`) lists what physics reads that differs
 between adjacent releases: the tracked vanilla methods, the client mappings of the classes physics reads, the
@@ -57,7 +58,8 @@ The peers are optional because nothing is loaded from them at run time: the adap
 until you install them; install both, or import from `dist/native`.
 
 The adapter takes the data of the registry you give it, so a release needs a `minecraft-data` that has it: the published
-package has no 26.2 or 26.3 yet, which the engines do.
+package has no 26.2 or 26.3 yet, which the engines do. The local `minecraft-data` (`scripts/source-pins.cjs`
+`MINECRAFT_DATA`) has an exact entry for each of the fifty releases.
 
 ### Targets
 

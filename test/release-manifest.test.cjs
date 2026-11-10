@@ -82,9 +82,9 @@ describe('source identity', () => {
     it('keeps each evidence class visible', () => {
         const byStatus = {};
         for (const version of versions) (byStatus[status(version).status] ??= []).push(version);
-        assert.deepEqual(byStatus.alias, ['1.8.8']);
-        assert.equal(byStatus.embedded.length, 49);
-        assert.deepEqual(Object.keys(byStatus).sort(), ['alias', 'embedded']);
+        // (every release embeds its own name: 1.8.8 is read from its own jar, no longer as 1.8.9's alias)
+        assert.equal(byStatus.embedded.length, 50);
+        assert.deepEqual(Object.keys(byStatus).sort(), ['embedded']);
     });
 
     it('does not take 20w45a for 1.16.4, whatever its hashes', () => {
@@ -93,8 +93,13 @@ describe('source identity', () => {
         assert.equal(PINNED_SOURCES['1.16.4'], undefined);
     });
 
-    it('has the alias say so, and no snapshot or candidate for final 26.1.2', () => {
-        assert.equal(status('1.8.8').sourceRelease, '1.8.9');
+    it('reads the legacy releases from their own jars, and no snapshot or candidate for final 26.1.2', () => {
+        for (const version of ['1.8.8', '1.9.4', '1.10.2', '1.11.2', '1.12.2', '1.13.2']) {
+            assert.equal(status(version).embedded, version);
+            assert.equal(status(version).mapping, 'recorder');
+            assert.equal(status(version).decompiler, 'vineflower 1.12.0');
+            assert.match(status(version).clientJar.remappedSha256, /^[0-9a-f]{64}$/);
+        }
         assert.equal(PINNED_SOURCES['26.1.2'], undefined);
     });
 

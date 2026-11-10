@@ -390,6 +390,10 @@ public final class OracleLiving {
         Hooks.gameTime = 100L;
         ProbeLevel level = Hooks.allocate(ProbeLevel.class);
         Hooks.clientSide(level, false);
+        if (args.length > 0 && args[0].equals("knockback")) {
+            knockback(level);
+            return;
+        }
         friction(level);
         jump(level);
         dimensions();
@@ -397,6 +401,52 @@ public final class OracleLiving {
         notFinite(level, args.length > 0 && args[0].equals("no-infinite"));
         jumpRejection(level);
         poses();
+    }
+
+    /**
+     * `knockback strength x z resistance ground vx vy vz = vx vy vz` of the jar's own LivingEntity.knockback, the release's
+     * signature found by its arguments, for native/fixtures/java-oracle-knockback.txt: `java ... OracleLiving knockback`. A
+     * release that rolls the resistance (to 1.15) is asked at 0 alone.
+     */
+    private static void knockback(ProbeLevel level) throws ReflectiveOperationException {
+        Method taken = null;
+        for (Method m : LivingEntity.class.getDeclaredMethods()) {
+            if (m.getName().equals("knockback") && m.getReturnType() == void.class && m.getParameterCount() >= 3 && m.getParameterCount() <= 6
+                && (taken == null || m.getParameterCount() > taken.getParameterCount())) taken = m;
+        }
+        taken.setAccessible(true);
+        double[] strengths = {0.4000000059604645, 0.5, 0.9, 0.0};
+        double[][] directions = {{1.0, 0.0}, {0.0, 1.0}, {-0.6, 0.8}, {0.31, -0.97}, {2.5, 1.25}, {1.0E-3, 1.0E-3}, {0.00317, 0.0}, {3.3E-3, 3.3E-3}, {3.2E-3, -3.0E-5}};
+        double[] resistances = {0.0, 0.25, 0.5, 0.6, 1.0, 1.25};
+        double[][] velocities = {{0.0, -0.0784000015258789, 0.0}, {0.2, 0.3, -0.1}, {1.0E-4, 0.79, 2.0}};
+        boolean rolls = taken.getParameterTypes()[0] != float.class && taken.getParameterTypes()[0] != double.class;
+        for (double strength : strengths) {
+            for (double[] direction : directions) {
+                for (double resistance : resistances) {
+                    if (rolls && resistance != 0.0) continue;
+                    for (double[] v : velocities) {
+                        for (int ground = 0; ground < 2; ground++) {
+                            Probe probe = fresh(level);
+                            Field onGround = net.minecraft.world.entity.Entity.class.getDeclaredField("onGround");
+                            onGround.setAccessible(true);
+                            onGround.setBoolean(probe, ground == 1);
+                            probe.setDeltaMovement(new Vec3(v[0], v[1], v[2]));
+                            probe.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.KNOCKBACK_RESISTANCE).setBaseValue(resistance);
+                            Class<?>[] types = taken.getParameterTypes();
+                            Object[] arguments = new Object[types.length];
+                            int at = rolls ? 1 : 0;
+                            arguments[at] = types[at] == float.class ? (Object) (float) strength : (Object) strength;
+                            arguments[at + 1] = direction[0];
+                            arguments[at + 2] = direction[1];
+                            for (int i = at + 3; i < types.length; i++) arguments[i] = types[i] == float.class ? (Object) 0.0F : types[i] == boolean.class ? (Object) false : null;
+                            taken.invoke(probe, arguments);
+                            Vec3 out = probe.getDeltaMovement();
+                            System.out.println("knockback " + strength + " " + direction[0] + " " + direction[1] + " " + resistance + " " + ground + " " + v[0] + " " + v[1] + " " + v[2] + " = " + out.x + " " + out.y + " " + out.z);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private OracleLiving() {}

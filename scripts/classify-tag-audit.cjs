@@ -5,11 +5,25 @@
 // (unresolved). `now` is whether the table in native/data equals the jar's default pack today.
 //
 // The audit lives outside the repository, so this runs by hand: node scripts/classify-tag-audit.cjs AUDIT_FILE
+// It is an input captured at a pin: AUDIT holds its sha256, and an audit file with other bytes is refused (after a review,
+// `--accept-audit <sha256>` takes it, and AUDIT is updated). Each jar is taken only at the client sha1 its release pins.
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { openZip } = require("./zip-read.cjs");
 const { clientJarRoot } = require("./source-pins.cjs");
+const { clientPin } = require("./java-oracle/classpath.cjs");
+
+/** The audit this classifies (E:/mc-physics-demo/audit/tag-differences.json on the host that made it), by its bytes. */
+const AUDIT = { file: "tag-differences.json", sha256: "35811f160fea22972e18b9f44b912bd51e68cfdb60db41c43fa8f4a09afd50d7" };
+const sha = (bytes, algorithm) => crypto.createHash(algorithm).update(bytes).digest("hex");
+
+/** What is wrong with an audit file's bytes against the pin: null when they are the pinned ones, or the accepted ones. */
+function auditProblem(bytes, accepted = null) {
+  const digest = sha(bytes, "sha256");
+  if (digest === AUDIT.sha256 || digest === accepted) return null;
+  return `the audit is ${digest}, pinned ${AUDIT.sha256}: review it, then pass --accept-audit ${digest} and update AUDIT`;
+}
 const { parseTagFile, TAG_FILE, mergePacks, resolveTags } = require("./generate-block-tags.cjs");
 
 const repositoryRoot = path.resolve(__dirname, "..");
@@ -18,7 +32,11 @@ const generated = (name) => JSON.parse(fs.readFileSync(path.join(repositoryRoot,
 
 /** The default pack's tags and each experimental pack's over it, fully resolved: the audit compared resolved sets. */
 function jarTags(version) {
-  const zip = openZip(path.join(clientJarRoot(), version, `minecraft-${version}-client.jar`));
+  const jar = path.join(clientJarRoot(), version, `minecraft-${version}-client.jar`);
+  const pinned = clientPin(version);
+  const actual = sha(fs.readFileSync(jar), "sha1");
+  if (!pinned || actual !== pinned) throw new Error(`${version}: ${jar} is ${actual}, pinned ${pinned ?? "nothing"}`);
+  const zip = openZip(jar);
   const base = new Map();
   const packs = new Map();
   for (const name of zip.names) {
@@ -47,6 +65,9 @@ function judge(name, id, { base, packs }, known) {
 function main() {
   const auditFile = process.argv[2];
   const bytes = fs.readFileSync(auditFile);
+  const accepted = process.argv.includes("--accept-audit") ? process.argv[process.argv.indexOf("--accept-audit") + 1] : null;
+  const problem = auditProblem(bytes, accepted);
+  if (problem) throw new Error(problem);
   const audit = JSON.parse(bytes.toString("utf8"));
   const registries = generated("block-registries.json").versions;
   const tags = generated("block-tags.json").releases;
@@ -100,4 +121,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { judge };
+module.exports = { judge, auditProblem, AUDIT };

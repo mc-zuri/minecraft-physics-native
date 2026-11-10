@@ -2,8 +2,8 @@
 // sources. Both releases' clients, remapped to one namespace (intermediary), are compared class by
 // class: first by bytes, then by disassembly with constant-pool numbers and code offsets removed, so
 // a renumbered pool is not a change. A class that still differs must have a reviewed reason here, or
-// the run fails. An alias holds only for the jars it names; scripts/verify-release-aliases.cjs
-// repeats the comparison where the jars and a JDK are at hand and checks the record everywhere.
+// the run fails. An alias holds only for the jars it names; --check (and test/release-aliases.test.cjs)
+// repeats the comparison where the jars and a JDK are at hand, and the test checks the record everywhere.
 // Pass --check to compare instead of writing.
 const fs = require("node:fs");
 const path = require("node:path");

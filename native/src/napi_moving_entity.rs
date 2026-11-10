@@ -18,7 +18,7 @@ use crate::dragon::{
     DragonFlightHistory, DragonFlightSample, DragonPart, DragonPushTarget, DragonState,
 };
 use crate::napi_api::{
-    check_move, validate_kept_box, validate_position, validate_size, vehicle_release, NativeAabb,
+    check_move, validate_kept_box, FieldCheck, FieldRule, validate_position, validate_size, vehicle_release, NativeAabb,
     NativeBlockPosition, NativeMovingPiston, NativeVec3, NativeWorld,
 };
 use crate::piston::{push_body_by_moving_pistons, MovingPiston};
@@ -72,6 +72,8 @@ pub struct NativeMovingEntityState {
     pub age: Option<i32>,
     pub pickup_delay: Option<i32>,
     pub item_empty: Option<bool>,
+    /// The item is fire immune (a netherite item or ancient debris): no burn draw in lava on 1.16.
+    pub fire_immune: Option<bool>,
     pub following_player: Option<i32>,
     pub following_time: Option<i32>,
     pub orb_ticks: Option<i32>,
@@ -162,17 +164,18 @@ fn entity_state(value: NativeMovingEntityState) -> Result<MovingEntityState> {
         age: value.age.unwrap_or(0),
         pickup_delay: value.pickup_delay.unwrap_or(0),
         item_empty: value.item_empty.unwrap_or(false),
+        fire_immune: value.fire_immune.unwrap_or(false),
         following_player: value.following_player,
         following_time: value.following_time.unwrap_or(0),
         orb_ticks: value.orb_ticks.unwrap_or(0),
         ..fresh
     };
-    let finite = [state.position, state.velocity, state.stuck_speed_multiplier]
-        .iter()
-        .all(|v| v.x.is_finite() && v.y.is_finite() && v.z.is_finite());
-    if !finite || !state.fall_distance.is_finite() {
-        return Err(Error::from_reason("moving entity state must be finite"));
-    }
+    FieldCheck::new("moving entity state")
+        .vector("position", state.position, FieldRule::Finite)
+        .vector("velocity", state.velocity, FieldRule::Finite)
+        .vector("stuckSpeedMultiplier", state.stuck_speed_multiplier, FieldRule::Finite)
+        .number("fallDistance", state.fall_distance, FieldRule::Finite)
+        .done()?;
     validate_position("moving entity", state.position)?;
     validate_kept_box("moving entity", state.bounding_box)?;
     for movement in &state.last_movements {
@@ -236,6 +239,7 @@ fn native_entity_state(state: MovingEntityState) -> NativeMovingEntityState {
         age: Some(state.age),
         pickup_delay: Some(state.pickup_delay),
         item_empty: Some(state.item_empty),
+        fire_immune: Some(state.fire_immune),
         following_player: state.following_player,
         following_time: Some(state.following_time),
         orb_ticks: Some(state.orb_ticks),
@@ -245,7 +249,8 @@ fn native_entity_state(state: MovingEntityState) -> NativeMovingEntityState {
 fn entity_inputs(value: Option<NativeMovingEntityInputs>) -> Result<MovingEntityInputs> {
     let value = value.unwrap_or_default();
     let random = value.random.unwrap_or_default();
-    if random.iter().any(|draw| !(0.0..1.0).contains(draw)) {
+    // a draw is a float: a double that narrows to 1.0 is no value nextFloat gives
+    if random.iter().any(|draw| !(0.0..1.0).contains(&f64::from(*draw as f32))) {
         return Err(Error::from_reason(
             "a random draw of nextFloat must be in [0, 1)",
         ));
@@ -430,11 +435,15 @@ pub fn simulate_versioned_entity_piston_push(
     })
 }
 
-/// A squid, fish, guardian, ghast, phantom, allay or vex where its AI left it.
+/// A mob whose travel is the engine's, where its AI left it.
 #[napi(object)]
 #[derive(Clone)]
 pub struct NativeMobTravelState {
-    /// The entity's registry name.
+    /// The entity's registry name: squid, glow_squid, cod, salmon, tropical_fish, pufferfish,
+    /// tadpole, guardian, elder_guardian, ghast, phantom, allay, vex, blaze, zombie, cow, bat, bee,
+    /// parrot, dolphin, turtle, axolotl, frog, drowned, spider, cave_spider, polar_bear, wither,
+    /// armor_stand, strider, skeleton_horse or sulfur_cube; "living" for any mob with no travel of
+    /// its own.
     pub kind: String,
     pub position: NativeVec3,
     /// The motion after its AI.
@@ -489,6 +498,12 @@ pub struct NativeMobTravelState {
     pub gravity: Option<f64>,
     /// Attributes.WATER_MOVEMENT_EFFICIENCY, from 1.21.
     pub water_movement_efficiency: Option<f64>,
+    /// Attributes.AIR_DRAG_MODIFIER, from 26.2; absent is 1.
+    pub air_drag_modifier: Option<f64>,
+    /// LivingEntity.shouldDiscardFriction (a goat's or frog's long jump, a breeze's jump), from 1.17.
+    pub discard_friction: Option<bool>,
+    /// Mob.isEffectiveAi, false for a NoAI mob, whose travel then does nothing; true when absent.
+    pub effective_ai: Option<bool>,
 }
 
 /// One LivingEntity.travel of the mob. Its AI, before and after, is the caller's.
@@ -543,7 +558,19 @@ pub fn simulate_versioned_mob_travel(
         dolphins_grace: state.dolphins_grace.unwrap_or(false),
         gravity: state.gravity,
         water_movement_efficiency: state.water_movement_efficiency.unwrap_or(0.0),
+        air_drag_modifier: state.air_drag_modifier,
+        discard_friction: state.discard_friction.unwrap_or(false),
     };
+    // LivingEntity.travel runs only for a mob with its AI or one its rider steers here: a NoAI mob nobody rides
+    // moves not at all (1.8.8 EntityLivingBase.moveEntityWithHeading's isServerWorld, EntityLiving.java isAIDisabled;
+    // 1.16.5 LivingEntity.java:1959-1960; from 1.19.4 isControlledByLocalInstance, 1.19.4 LivingEntity.java:1992-1993,
+    // which is isEffectiveAi for a mob with no player steering it). In 1.9 and 1.10 the other term, canPassengerSteer, is
+    // Entity's own, true on the server for a mob nobody rides (1.9.4 Entity.java:2253-2256, LivingEntity.java:1323-1324),
+    // so a NoAI mob travels there; 1.11 MobEntity asks canBeControlledByRider as well (1.11.2 MobEntity.java:1087-1089).
+    let travels_anyway = release.at_least(1, 9, 0) && !release.at_least(1, 11, 0);
+    if state.effective_ai == Some(false) && !travels_anyway {
+        return Ok(state);
+    }
     tick_mob_travel(&mut mob, world.snapshot(), release);
     check_move("simulateVersionedMobTravel", mob.move_out_of_range)?;
     Ok(NativeMobTravelState {

@@ -3,12 +3,12 @@
 // what the tick made of them is compared with the tick's own view. The client only interpolates to what it is sent: that
 // is compared by itself, on the client's cart (vehicle.minecart), where the recording has it, and never reads the world.
 
-import type { NativeMinecartItem, NativeMinecartOther, NativeMinecartRider, NativeMinecartRules, NativeMinecartStack, NativeMinecartState, NativePhysicsBinding, NativeWorld } from '../../dist/native.js';
+import type { NativeBlockPosition, NativeMinecartContainer, NativeMinecartGateway, NativeMinecartItem, NativeMinecartOther, NativeMinecartRider, NativeMinecartRules, NativeMinecartStack, NativeMinecartState, NativePhysicsBinding, NativeWorld } from '../../dist/native.js';
 import type { ExpandedRow, Recording, ServerView, Snapshot } from '../schema/recording.ts';
 import { versionAtLeast } from '../scenarios/dsl/names.ts';
 import type { Divergence } from './compare.ts';
 import { packetBytes } from './load.ts';
-import { readClientbound } from './packets.ts';
+import { decodeClientbound, readClientbound } from './packets.ts';
 
 type Vec = readonly [number, number, number];
 const vec = (v: Vec) => ({ x: v[0], y: v[1], z: v[2] });
@@ -29,6 +29,10 @@ interface RecordedEntity {
     readonly root?: number;
     /** An item entity's stack. */
     readonly itemStack?: NativeMinecartStack;
+    /** The scoreboard team it is on: its name and collision rule, and its friendly fire where that is off. */
+    readonly team?: { readonly name: string; readonly collisionRule: string; readonly allowFriendlyFire?: boolean };
+    /** Entity.boardingCooldown from 1.9, while it runs. */
+    readonly boardingCooldown?: number;
     readonly minecart?: {
         readonly flipped: boolean;
         readonly onRails?: boolean;
@@ -48,12 +52,30 @@ interface RecordedEntity {
         readonly damage?: number;
         readonly fuse?: number;
         readonly randomSeed?: number;
+        /** A TNT cart's blast power from 1.21.2, where it is not 4 and 1. */
+        readonly explosionPowerBase?: number;
+        readonly explosionSpeedFactor?: number;
+        /** From 1.21.5, the hurt that lit a TNT cart was a creative player's. */
+        readonly creativeIgnition?: boolean;
+        /** Entity.invulnerable, where it is set. */
+        readonly invulnerable?: boolean;
         readonly enabled?: boolean;
         readonly inventory?: readonly (NativeMinecartStack | null)[];
         readonly lastActivated?: number;
         readonly insidePortal?: boolean;
         readonly portalTime?: number;
         readonly portalCooldown?: number;
+        /** From 1.21, the portal block of Entity.portalProcess and where it went in. */
+        readonly portal?: string;
+        readonly portalEntry?: Vec;
+        /** A hopper cart's: the container over its hopper, its slots open from below. */
+        readonly container?: RecordedContainer;
+        /** The containers over the cells about that one, a block each way, where its next tick can take it. */
+        readonly containers?: readonly RecordedContainer[];
+        /** A spawner cart's BaseSpawner. */
+        readonly spawner?: { readonly delay: number; readonly minDelay: number; readonly maxDelay: number; readonly range: number };
+        /** The end gateways about a cart, which no client sees into. */
+        readonly gateways?: readonly RecordedGateway[];
         readonly rider?: {
             readonly id: number;
             readonly player: boolean;
@@ -66,8 +88,12 @@ interface RecordedEntity {
     };
 }
 
+interface RecordedContainer { readonly pos: Vec; readonly slots: readonly (NativeMinecartStack | null)[] }
+interface RecordedGateway { readonly pos: Vec; readonly exit?: Vec; readonly cooldown: number; readonly age: number }
+
 const CARTS = new Set(['minecart', 'chest_minecart', 'hopper_minecart', 'furnace_minecart', 'tnt_minecart', 'spawner_minecart', 'command_block_minecart', 'commandblock_minecart']);
-const NOT_PUSHABLE = new Set(['item', 'experience_orb', 'arrow', 'painting', 'item_frame', 'leash_knot', 'falling_block', 'tnt', 'fireball', 'small_fireball']);
+// (an armor stand and a bat are not isPushable: 1.8.8 ArmorStand.java:277, Bat.java:54)
+const NOT_PUSHABLE = new Set(['armor_stand', 'bat', 'item', 'experience_orb', 'arrow', 'painting', 'item_frame', 'leash_knot', 'falling_block', 'tnt', 'fireball', 'small_fireball']);
 const NOT_LIVING = new Set(['item', 'experience_orb', 'arrow', 'painting', 'item_frame', 'leash_knot', 'falling_block', 'tnt', 'boat', 'oak_boat']);
 
 const entitiesOf = (view: ServerView | undefined) => (view?.entities ?? []) as unknown as readonly RecordedEntity[];
@@ -82,7 +108,12 @@ export function minecartRules(recording: Recording, version: string): NativeMine
     const improvements = features.includes('minecart_improvements');
     const commands = (recording.header.setup as unknown as { commands?: readonly string[] }).commands ?? [];
     // (the overworld's bottom, where every case runs: 1.18 took it to -64)
-    const level = { minY: versionAtLeast(version, '1.18') ? -64 : 0, tntExplodes: !commands.some(c => /gamerule\s+tnt_?explodes\s+false/i.test(c)), netherExit: NETHER_EXIT(version) };
+    const level = {
+        minY: versionAtLeast(version, '1.18') ? -64 : 0,
+        tntExplodes: !commands.some(c => /gamerule\s+tnt_?explodes\s+false/i.test(c)),
+        spawnerBlocksEnabled: !commands.some(c => /gamerule\s+spawner_?blocks_?enabled\s+false/i.test(c)),
+        netherExit: NETHER_EXIT(version),
+    };
     if (!improvements) return { improvements, ...level };
     const rule = commands.map(c => /gamerule\s+\S*minecart\S*\s+(\d+)/i.exec(c)?.[1]).find(v => v !== undefined);
     return { improvements, maxMinecartSpeed: rule === undefined ? 8 : Number(rule), ...level };
@@ -143,23 +174,109 @@ function seed(version: string, e: RecordedEntity, next: RecordedEntity | undefin
         hurtTime: m.hurtTime ?? 0, hurtDir: m.hurtDir ?? 1, damage: m.damage ?? 0,
         lastActivated: m.lastActivated ?? 0,
         insidePortal: m.insidePortal ?? false, portalTime: m.portalTime ?? 0, portalCooldown: m.portalCooldown ?? 0,
-        ...(m.insidePortal || (m.portalTime ?? 0) > 0 ? { portal: 'nether' } : {}),
+        // (from 1.21 the recording says which portal; before it only a nether portal keeps a count across ticks)
+        ...(m.portal ? { portal: m.portal } : m.insidePortal || (m.portalTime ?? 0) > 0 ? { portal: 'nether' } : {}),
+        ...(m.portal === 'gateway' && m.portalEntry ? { portalEntry: vec(m.portalEntry) } : {}),
+        ...(m.spawner ? { spawnDelay: m.spawner.delay, minSpawnDelay: m.spawner.minDelay, maxSpawnDelay: m.spawner.maxDelay, requiredPlayerRange: m.spawner.range } : {}),
         ...(versionAtLeast(version, '1.17') ? {} : { boundingBox: aabb(e.box) }),
         ...(rider ? { rider } : {}),
+        ...(e.team ? { team: e.team } : {}),
         ...(e.type === 'furnace_minecart' ? furnaceOf(e, next, before) : {}),
         ...(e.type === 'chest_minecart' || e.type === 'hopper_minecart' ? { comparatorSignal: m.comparatorSignal ?? 0, hasLootTable: m.hasLootTable ?? false } : {}),
         ...(e.type === 'tnt_minecart' ? { fuse: m.fuse ?? -1, randomSeed: m.randomSeed ?? 0 } : {}),
+        ...(e.type === 'tnt_minecart' && m.explosionPowerBase !== undefined ? { explosionPowerBase: m.explosionPowerBase } : {}),
+        ...(e.type === 'tnt_minecart' && m.explosionSpeedFactor !== undefined ? { explosionSpeedFactor: m.explosionSpeedFactor } : {}),
+        ...(e.type === 'tnt_minecart' && m.creativeIgnition ? { creativeIgnition: true } : {}),
+        ...(m.invulnerable ? { invulnerable: true } : {}),
         ...(e.type === 'hopper_minecart' ? { enabled: m.enabled ?? true, inventory: [...(m.inventory ?? [])] } : {}),
     };
 }
 
-/** The item entities a hopper cart can take, in the view's order. */
-function itemsOf(view: ServerView | undefined): NativeMinecartItem[] {
-    return entitiesOf(view).flatMap(e => (e.itemStack ? [{ boundingBox: aabb(e.box), stack: e.itemStack }] : []));
+/** The item entities a hopper cart can take and a TNT cart's blast hurts, in the view's order, with their ids. */
+function itemEntitiesOf(view: ServerView | undefined): { readonly id: number; readonly item: NativeMinecartItem }[] {
+    return entitiesOf(view).flatMap(e => (e.itemStack ? [{ id: e.id, item: { boundingBox: aabb(e.box), stack: e.itemStack, position: vec(e.pos), velocity: vec(e.vel) } }] : []));
 }
 
-/** How a tick's blast appears in the packets after it: a float power. */
-export interface CartExplosion { readonly tick: number; readonly power: number; readonly position: Vec }
+function itemsOf(view: ServerView | undefined): NativeMinecartItem[] {
+    return itemEntitiesOf(view).map(entry => entry.item);
+}
+
+/** The engine has no empty stack in a container: a slot of none of anything. */
+const EMPTY_SLOT: NativeMinecartStack = { item: '', count: 0, maxStack: 64 };
+const posKey = (p: Vec | { x: number; y: number; z: number }) => (Array.isArray(p) ? p.join(',') : `${(p as { x: number }).x},${(p as { y: number }).y},${(p as { z: number }).z}`);
+
+/** The containers over and about the view's hopper carts, each once, as a hopper's suckInItems finds them. */
+function containersOf(view: ServerView | undefined): NativeMinecartContainer[] {
+    const out = new Map<string, NativeMinecartContainer>();
+    for (const e of cartsOf(view)) {
+        for (const c of [e.minecart?.container, ...(e.minecart?.containers ?? [])]) {
+            if (c && !out.has(posKey(c.pos))) out.set(posKey(c.pos), { x: c.pos[0], y: c.pos[1], z: c.pos[2], slots: c.slots.map(s => s ?? EMPTY_SLOT) });
+        }
+    }
+    return [...out.values()];
+}
+
+/**
+ * The containers a tick's hopper carts take from: those over them in the view before it, and one the view after it has
+ * over a cart that the view before did not, as the hopper takes after its move (26.3 MinecartHopper.tick, super.tick
+ * then tryConsumeItems; 1.8.9 HopperMinecartEntity.java tick): a cart that rolled under it, or a chest a command set at
+ * the tick's start. The view records the container over the cart at the tick's end, so that one is given as it was
+ * before: with what the cart gained back in its first slot, where that slot still holds it and so gave it (a hopper
+ * takes from the first slot that holds anything). Where the slot it came from is not told, it is left out.
+ */
+function containersFor(before: ServerView | undefined, after: ServerView | undefined): NativeMinecartContainer[] {
+    const out = containersOf(before);
+    const known = new Set(out.map(c => posKey(c)));
+    const previous = new Map(cartsOf(before).map(e => [e.id, e]));
+    for (const e of cartsOf(after)) {
+        const c = e.minecart?.container;
+        if (!c || known.has(posKey(c.pos))) continue;
+        const slots = c.slots.map(s => s ?? EMPTY_SLOT);
+        const gained = gainOf(previous.get(e.id)?.minecart?.inventory, e.minecart?.inventory);
+        if (gained === null) continue;
+        if (gained) {
+            if (!(slots[0] && slots[0].count > 0 && slots[0].item === gained.item)) continue;
+            slots[0] = { ...slots[0], count: slots[0].count + gained.count };
+        }
+        known.add(posKey(c.pos));
+        out.push({ x: c.pos[0], y: c.pos[1], z: c.pos[2], slots });
+    }
+    return out;
+}
+
+/** What a hopper cart's slots gained over a tick: nothing (undefined), one kind of item, or null for anything else. */
+function gainOf(before: readonly (NativeMinecartStack | null)[] | undefined, after: readonly (NativeMinecartStack | null)[] | undefined): { item: string; count: number } | undefined | null {
+    const totals = new Map<string, number>();
+    for (const s of before ?? []) if (s && s.count > 0) totals.set(s.item, (totals.get(s.item) ?? 0) - s.count);
+    for (const s of after ?? []) if (s && s.count > 0) totals.set(s.item, (totals.get(s.item) ?? 0) + s.count);
+    const changed = [...totals].filter(([, count]) => count !== 0);
+    if (changed.length === 0) return undefined;
+    if (changed.length > 1 || changed[0]![1] < 0) return null;
+    return { item: changed[0]![0], count: changed[0]![1] };
+}
+
+/** The end gateways about the view's carts, each once. */
+function gatewaysOf(view: ServerView | undefined): NativeMinecartGateway[] {
+    const out = new Map<string, NativeMinecartGateway>();
+    for (const g of cartsOf(view).flatMap(e => e.minecart?.gateways ?? [])) {
+        if (out.has(posKey(g.pos))) continue;
+        const at = (p: Vec) => ({ x: p[0], y: p[1], z: p[2] });
+        out.set(posKey(g.pos), { position: at(g.pos), ...(g.exit ? { exit: at(g.exit) } : {}), cooldown: g.cooldown, age: g.age });
+    }
+    return [...out.values()];
+}
+
+/**
+ * How a tick's blast appears in the packets after it: a float power, and the blocks its rays reach (air included) under
+ * every draw of the level's random (certain) and under some (possible).
+ */
+export interface CartExplosion {
+    readonly tick: number;
+    readonly power: number;
+    readonly position: Vec;
+    readonly certain?: readonly NativeBlockPosition[];
+    readonly possible?: readonly NativeBlockPosition[];
+}
 
 const isBoat = (e: RecordedEntity) => e.type.endsWith('boat') || e.type.endsWith('raft');
 
@@ -174,14 +291,50 @@ interface OtherTicks {
     readonly carrying: ReadonlySet<number>;
 }
 
+/** ClientboundSetPlayerTeamPacket's methods by their numbers, and Team.CollisionRule by its id and its names. */
+const TEAM_MODES = ['create', 'remove', 'change', 'join', 'leave'];
+const TEAM_RULES = ['always', 'never', 'pushOtherTeams', 'pushOwnTeam'];
+
+/**
+ * The view before a tick with the teams as the tick has them: a command run at the tick's start (the removal of a team at a
+ * case's end, a change of its rule) comes in that tick's packets, ahead of the entities, and the view before it has the
+ * teams as they were (PlayerTeam's packet is sent as the scoreboard changes, ServerScoreboard.onTeamRemoved and onTeamChanged).
+ */
+function teamsAsTicked(version: string, view: ServerView | undefined, row: ExpandedRow): ServerView | undefined {
+    const removed = new Set<string>();
+    const rules = new Map<string, string>();
+    for (const packet of row.s2c) {
+        if (packet.name !== 'ClientboundSetPlayerTeamPacket' && packet.name !== 'S3EPacketTeams') continue;
+        const { params } = decodeClientbound(version, packetBytes(packet.b));
+        const team = String(params.team);
+        const mode = typeof params.mode === 'string' ? TEAM_MODES.indexOf(params.mode) : Number(params.mode);
+        if (mode === 1) removed.add(team);
+        if (mode === 2 && params.collisionRule !== undefined) {
+            const rule = params.collisionRule;
+            const name = typeof rule === 'number' ? TEAM_RULES[rule] ?? 'always' : String(rule).replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+            rules.set(team, TEAM_RULES.includes(name) ? name : 'always');
+        }
+    }
+    if (!view || (removed.size === 0 && rules.size === 0)) return view;
+    const entities = entitiesOf(view).map(e => {
+        if (!e.team) return e;
+        if (removed.has(e.team.name)) return { ...e, team: undefined };
+        const rule = rules.get(e.team.name);
+        return rule ? { ...e, team: { ...e.team, collisionRule: rule } } : e;
+    });
+    return { ...view, entities } as unknown as ServerView;
+}
+
 /** What a cart meets that is not a cart: its box and what it does to a cart (the same names in every release). */
 function otherOf(e: RecordedEntity, riders: ReadonlyMap<number, number>, ticks: OtherTicks): NativeMinecartOther {
     const rides = riders.get(e.id);
     const end = ticks.after.get(e.id);
     const clientMoved = e.id === ticks.playerVehicle;
     const from = clientMoved ? (end ?? e) : e;
-    // (the rider of a cart goes where the cart's tick puts it)
-    const own = rides === undefined && !clientMoved ? end : undefined;
+    // (the rider of a cart goes where the cart's tick puts it; one the tick throws off, an activator rail's, stands where the
+    // server's dismount put it, the view after's, when its own tick comes: LivingEntity.dismountVehicle, which no engine models)
+    const thrownOff = rides !== undefined && end !== undefined && (end.root === undefined || end.root === end.id);
+    const own = (rides === undefined || thrownOff) && !clientMoved ? end : undefined;
     return {
         position: vec(from.pos), boundingBox: aabb(from.box), velocity: vec(e.vel),
         pushable: !NOT_PUSHABLE.has(e.type),
@@ -192,6 +345,10 @@ function otherOf(e: RecordedEntity, riders: ReadonlyMap<number, number>, ticks: 
         passenger: rides !== undefined,
         hasPassengers: ticks.carrying.has(e.id),
         boat: isBoat(e),
+        armorStand: e.type === 'armor_stand',
+        bat: e.type === 'bat',
+        ...(e.team ? { team: e.team } : {}),
+        ...(e.boardingCooldown ? { boardingCooldown: e.boardingCooldown } : {}),
         ...(rides === undefined ? { ticksAfter: ticks.cartsAhead(e.root ?? e.id) } : { rides }),
         ...(own ? { tickPosition: vec(own.pos), tickBoundingBox: aabb(own.box) } : {}),
     };
@@ -215,6 +372,17 @@ export function setVelocities(recording: Recording): ReadonlyMap<number, Readonl
     return out;
 }
 
+/**
+ * The velocity a player's server tick travels by: LivingEntity.aiStep drops what is negligible first. Below 0.005 on each
+ * axis before 1.9 (1.8.8 LivingEntity.java:1414-1424), 0.003 from it (1.9.4 LivingEntity.java:1686-1696, 1.21.4 :2690-2700),
+ * and from 1.21.5 a player's horizontal length below 0.003 (1.21.5 LivingEntity.java:2668-2681, 26.3 :2977-2989).
+ */
+export function withoutNegligible(version: string, [x, y, z]: Vec): Vec {
+    if (versionAtLeast(version, '1.21.5')) return x * x + z * z < 9.0e-6 ? [0, y, 0] : [x, y, z];
+    const least = versionAtLeast(version, '1.9') ? 0.003 : 0.005;
+    return [Math.abs(x) < least ? 0 : x, y, Math.abs(z) < least ? 0 : z];
+}
+
 const same = (a: number, b: number) => a === b || (a === 0 && b === 0);
 const sameVec = (a: Vec, b: { x: number; y: number; z: number }) => same(a[0], b.x) && same(a[1], b.y) && same(a[2], b.z);
 
@@ -223,6 +391,8 @@ export interface CartComparison {
     readonly divergences: readonly Divergence[];
     /** The blasts the engine's tick made. */
     readonly explosions?: readonly CartExplosion[];
+    /** The item entities after the carts' tick, by id: where a blast left their velocity, before their own tick. */
+    readonly items?: ReadonlyMap<number, NativeMinecartItem>;
 }
 
 /** A player's hit on an entity: its id, the damage Player.attack gives it and whether the attacker is in creative mode. */
@@ -261,7 +431,8 @@ export function cartHits(row: Pick<ExpandedRow, 'c2s' | 'pre'>): CartHit[] {
  * carts of this row's. A cart nothing moved is a tick all the same: the rail still has to hold it. `keys` are the ones the
  * client held on the previous row, whose packets this tick read.
  */
-export function compareCartTick(native: NativePhysicsBinding, version: string, world: NativeWorld, rules: NativeMinecartRules, before: ServerView | undefined, row: ExpandedRow, player: number, summons: readonly string[], set: ReadonlyMap<string, Vec> | undefined, keys?: readonly string[], pistons?: (state: NativeMinecartState, cart: { readonly box: readonly number[] }) => NativeMinecartState, hits?: readonly CartHit[]): CartComparison {
+export function compareCartTick(native: NativePhysicsBinding, version: string, world: NativeWorld, rules: NativeMinecartRules, viewBefore: ServerView | undefined, row: ExpandedRow, player: number, summons: readonly string[], set: ReadonlyMap<string, Vec> | undefined, keys?: readonly string[], pistons?: (state: NativeMinecartState, cart: { readonly box: readonly number[] }) => NativeMinecartState, hits?: readonly CartHit[]): CartComparison {
+    const before = teamsAsTicked(version, viewBefore, row);
     const view = row.srv;
     const after = new Map(cartsOf(view).map(e => [e.id, e]));
     // a sneaking player gets off in Player.rideTick, right after the cart's tick (ServerLevel.tickPassenger), so the cart moves
@@ -285,20 +456,32 @@ export function compareCartTick(native: NativePhysicsBinding, version: string, w
     const thrownOff = riders.get(player);
     const steppedOff = thrownOff !== undefined && sneaks && after.has(previous[thrownOff]!.id) && after.get(previous[thrownOff]!.id)!.minecart?.rider?.id !== player;
     if (thrownOff === undefined || after.get(previous[thrownOff]!.id)?.minecart?.rider?.id !== player) {
-        const [x, y, z] = view.pos;
+        // (before 1.9 the player ticks in the handling of its move packet, before it goes where the packet says: it pushes
+        // from where the packet before put it, the view before this tick. 1.8.8 ServerGamePacketListenerImpl.java:290-291
+        // doTick, then absMoveTo; from 1.9 in the connection's tick, after the level, from where the packets put it, 1.9.4
+        // ServerGamePacketListenerImpl.java:163-166)
+        const at = versionAtLeast(version, '1.9') || !before ? view : before;
+        const [x, y, z] = at.pos;
         const half = Math.fround(0.6) / 2;
         const box = (px: number, pz: number) => aabb([px - half, y, pz - half, px + half, y + Math.fround(1.8), pz + half]);
-        // (its server tick from 1.9 travels by its velocity and pushes from there, and the connection then snaps it back: the
+        // (its server tick travels by its velocity and pushes from there, and the connection then snaps it back: the
         // view has it back. What stops that travel, a wall, is not modelled. From 1.21.2 a teleport takes the velocity too, so
         // the tick whose packets hold one travels nowhere and pushes from the view: requestTeleport to setPosition with a zero
         // delta, 1.21.4 ServerPlayNetworkHandler.java:1070-1082, 1.21.5 ServerGamePacketListenerImpl.java:1154-1168)
         const teleported = versionAtLeast(version, '1.21.2') && row.s2c.some(p => p.name === 'ClientboundPlayerPositionPacket');
-        const [vx, , vz] = teleported ? [0, 0, 0] : before?.vel ?? [0, 0, 0];
-        const travels = versionAtLeast(version, '1.9') && (vx !== 0 || vz !== 0);
+        const [vx, , vz] = withoutNegligible(version, teleported ? [0, 0, 0] : before?.vel ?? [0, 0, 0]);
+        const travels = vx !== 0 || vz !== 0;
+        // (where the travel leaves it: before 1.17 Entity.move takes the position from the middle of the moved box, always
+        // before 1.14 (1.13.2 Entity.java:772, 875-879) and from 1.14 where it moved (1.14.4 Entity.java:492-495, 1.16.5 :630-633);
+        // from 1.17 it adds the movement (1.17 Entity.java:558-560))
+        const fromBox = !versionAtLeast(version, '1.17') && (travels || !versionAtLeast(version, '1.14'));
+        const moved = (c: number, v: number) => (fromBox ? (c - half + v + (c + half + v)) / 2 : c + v);
         others.push({
-            position: vec(view.pos), boundingBox: box(x, z), velocity: vec(view.vel),
+            position: vec(at.pos), boundingBox: box(x, z), velocity: vec(view.vel),
             pushable: true, player: true, living: true,
-            ...(travels ? { tickPosition: vec([x + vx, y, z + vz]), tickBoundingBox: box(x + vx, z + vz) } : {}),
+            ...(travels || fromBox
+                ? { tickPosition: vec([moved(x, vx), y, moved(z, vz)]), tickBoundingBox: aabb([x - half + vx, y, z - half + vz, x + half + vx, y + Math.fround(1.8), z + half + vz]) }
+                : {}),
             ...(thrownOff === undefined || steppedOff ? {} : { passenger: true, rides: thrownOff, getsOff: true }),
         });
     }
@@ -312,9 +495,22 @@ export function compareCartTick(native: NativePhysicsBinding, version: string, w
         // (the packets of the client's last tick are handled ahead of the level's: the hit stands when the cart's tick begins)
         return (hits ?? []).filter(hit => hit.entity === e.id).reduce((state, hit) => native.simulateVersionedMinecartHurt(version, world, state, { kind: 'plain', amount: hit.amount, creative: hit.creative }, rules).state, moving);
     });
-    const scene = native.simulateVersionedMinecartScene(version, world, carts, others, rules, itemsOf(before));
+    const scene = native.simulateVersionedMinecartScene(version, world, carts, others, rules, itemsOf(before), containersFor(before, view), gatewaysOf(before));
     const divergences: Divergence[] = [];
     const where = { tick: row.t, at: 'srv.minecart', source: 'native' as const };
+    // what the tick left of the containers and gateways, against the view after it, where it still has them
+    const slots = (list: readonly (NativeMinecartStack | null | undefined)[]) => JSON.stringify(list.map(s => (s && s.count > 0 ? [s.item, s.count] : null)));
+    const containersAfter = new Map(containersOf(view).map(c => [posKey(c), c]));
+    for (const got of scene.containers ?? []) {
+        const want = containersAfter.get(posKey(got));
+        if (want && slots(want.slots) !== slots(got.slots)) divergences.push({ ...where, field: `container@${posKey(got)}.slots`, expected: slots(want.slots), actual: slots(got.slots) });
+    }
+    const gatewaysAfter = new Map(gatewaysOf(view).map(g => [posKey(g.position), g]));
+    for (const got of scene.gateways ?? []) {
+        const want = gatewaysAfter.get(posKey(got.position));
+        if (got.undecided) divergences.push({ ...where, field: `gateway@${posKey(got.position)}.undecided`, expected: false, actual: true });
+        else if (want && want.cooldown !== got.cooldown) divergences.push({ ...where, field: `gateway@${posKey(got.position)}.cooldown`, expected: want.cooldown, actual: got.cooldown });
+    }
     scene.carts.forEach((tick, index) => {
         const id = previous[index]!.id;
         const want = after.get(id);
@@ -345,45 +541,131 @@ export function compareCartTick(native: NativePhysicsBinding, version: string, w
         if (m.lastActivated !== undefined && m.lastActivated !== got.lastActivated) wrong('lastActivated', m.lastActivated, got.lastActivated);
         if (m.portalTime !== undefined && m.portalTime !== got.portalTime) wrong('portalTime', m.portalTime, got.portalTime);
         if (m.portalCooldown !== undefined && m.portalCooldown !== got.portalCooldown) wrong('portalCooldown', m.portalCooldown, got.portalCooldown);
+        // (a spawner that tried to spawn has the delay the level's random gave it, or none: the server's)
+        if (m.spawner && !tick.spawner && m.spawner.delay !== got.spawnDelay) wrong('spawnDelay', m.spawner.delay, got.spawnDelay);
         if (m.comparatorSignal !== undefined && got.comparatorSignal !== undefined && m.comparatorSignal !== got.comparatorSignal) wrong('comparatorSignal', m.comparatorSignal, got.comparatorSignal);
         if (m.inventory) {
             const stacks = (slots: readonly (NativeMinecartStack | null | undefined)[]) => JSON.stringify(slots.map(s => (s ? [s.item, s.count] : null)));
             if (stacks(m.inventory) !== stacks(got.inventory ?? [])) wrong('inventory', stacks(m.inventory), stacks(got.inventory ?? []));
         }
-        // (a tick that throws the rider off, or that an interaction starts, is not a change a cart's tick makes alone)
+        // a mob the cart's own tick picks up (its push, by the team rules from 1.9) rides it in the view after; a tick that throws
+        // the rider off, or that an interaction starts, is not a change a cart's tick makes alone
+        if (!previous[index]!.minecart?.rider) {
+            const picked = Boolean(m.rider && !m.rider.player);
+            const gotPicked = Boolean(got.rider && !got.rider.player);
+            if (picked !== gotPicked) wrong('pickedUp', picked, gotPicked);
+        }
     });
-    const explosions = scene.carts.flatMap(tick => tick.explosions.map(blast => ({ tick: row.t, power: blast.power, position: [blast.position.x, blast.position.y, blast.position.z] as const })));
-    return { compared: scene.carts.length, divergences, explosions };
+    const explosions = scene.carts.flatMap(tick => tick.explosions.map(blast => ({
+        tick: row.t, power: blast.power, position: [blast.position.x, blast.position.y, blast.position.z] as const, certain: blast.certain, possible: blast.possible,
+    })));
+    // an item a blast burnt up is gone from the view after it, and one it left is still there (where it went is its own tick's)
+    if (explosions.length > 0) {
+        const kept = new Set(entitiesOf(view).map(e => e.id));
+        itemEntitiesOf(before).forEach(({ id }, index) => {
+            const got = scene.items[index];
+            if (!got || (got.stack.count <= 0 && !got.removed)) return;
+            const gone = !kept.has(id);
+            if (gone !== Boolean(got.removed)) divergences.push({ ...where, field: 'item#' + id + '.removed', expected: gone, actual: got.removed ?? false });
+        });
+    }
+    const items = new Map(itemEntitiesOf(before).flatMap(({ id }, index) => (scene.items[index] ? [[id, scene.items[index]!] as const] : [])));
+    return { compared: scene.carts.length, divergences, explosions, items };
 }
 
 /** The boxes the server's carts of a view reach in a tick (each NativeWorldSync call wants one box). */
 export function cartReach(view: ServerView | undefined): { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number } | undefined {
     const carts = cartsOf(view);
     if (carts.length === 0) return undefined;
+    // (a gateway sends a cart to its exit within its tick, and from 1.21 the cart moves on from there in the same tick: 26.3
+    // AbstractMinecart.tick handles the portal before behavior.tick, EndGatewayBlock.getPortalDestination)
+    const at = (c: RecordedEntity, [x, y, z]: Vec) => {
+        const [cx, cy, cz] = [(c.box[0]! + c.box[3]!) / 2, c.box[1]!, (c.box[2]! + c.box[5]!) / 2];
+        const [dx, dy, dz] = [x + 0.5 - cx, y - cy, z + 0.5 - cz];
+        return { box: [c.box[0]! + dx, c.box[1]! + dy, c.box[2]! + dz, c.box[3]! + dx, c.box[4]! + dy, c.box[5]! + dz], vel: c.vel };
+    };
+    const boxes = [...carts, ...carts.flatMap(c => (c.minecart?.gateways ?? []).flatMap(g => (g.exit ? [at(c, g.exit)] : [])))];
     const axis = (i: number) => {
-        const low = Math.min(...carts.map(c => c.box[i]! - Math.abs(c.vel[i]!)));
-        const high = Math.max(...carts.map(c => c.box[i + 3]! + Math.abs(c.vel[i]!)));
+        const low = Math.min(...boxes.map(c => c.box[i]! - Math.abs(c.vel[i]!)));
+        const high = Math.max(...boxes.map(c => c.box[i + 3]! + Math.abs(c.vel[i]!)));
         return [low, high] as const;
     };
     const [minX, maxX] = axis(0);
     const [minY, maxY] = axis(1);
     const [minZ, maxZ] = axis(2);
-    return { minX: minX - 2, minY: minY - 2, minZ: minZ - 2, maxX: maxX + 2, maxY: maxY + 2, maxZ: maxZ + 2 };
+    // (a TNT cart's rays reach a blast's radius by 1.3 over 0.225 steps of 0.3: 21 blocks at the power of 11.5 a cart at 5
+    // blocks a tick has, and its world is the blocks they meet)
+    const margin = carts.some(c => c.type === 'tnt_minecart') ? 21 : 2;
+    return { minX: minX - margin, minY: minY - margin, minZ: minZ - margin, maxX: maxX + margin, maxY: maxY + margin, maxZ: maxZ + margin };
 }
 
 /**
  * The blasts the engine's tick made, against the explosion packets that tick sent: a recording's own
- * word for each blast's power (its radius; where the release's packet has none, its count alone).
+ * word for each blast's power (its radius; where the release's packet has none, its count alone), and
+ * the blocks it broke. Before 1.21.2 the packet lists them all, air included, as offsets from the
+ * centre's block ((int) of the centre before 1.14, 1.13.2 ClientboundExplodePacket.java:100; Mth.floor
+ * from it, 1.14.4 :71): every block the weakest rays reach is there, and none the strongest could not.
+ * From 1.21.2 the packet has none, and the blocks come in the server's next tick (`next`): what it made
+ * air is no block the strongest rays miss, but for what the neighbour updates take from a block it broke
+ * on, one block to the next (a rail that cannot survive where it is, BaseRailBlock.neighborChanged, pops
+ * when the rail beside it goes), and every block the weakest reach that was no air (`stateAt`, the world
+ * before the blast) is among them.
  */
-export function compareBlasts(version: string, blasts: readonly CartExplosion[], row: ExpandedRow): Divergence[] {
+export function compareBlasts(version: string, blasts: readonly CartExplosion[], row: ExpandedRow, next?: ExpandedRow, stateAt?: (x: number, y: number, z: number) => string | undefined): Divergence[] {
     if (blasts.length === 0) return [];
     const heard = row.s2c.filter(p => /Explo/.test(p.name)).map(p => readClientbound(version, packetBytes(p.b)).params);
     const where = { tick: row.t, at: 'srv.minecart', source: 'native' as const };
     if (heard.length < blasts.length) return [{ ...where, field: 'explosion', expected: blasts.length, actual: heard.length }];
-    return blasts.flatMap((blast, index) => {
+    const key = (p: NativeBlockPosition) => `${p.x},${p.y},${p.z}`;
+    const out: Divergence[] = [];
+    const listed = !versionAtLeast(version, '1.21.2');
+    blasts.forEach((blast, index) => {
         const radius = heard[index]!.radius as number | undefined;
-        return radius === undefined || Math.fround(radius) === blast.power ? [] : [{ ...where, field: 'explosion.power', expected: radius, actual: blast.power }];
+        if (radius !== undefined && Math.fround(radius) !== blast.power) out.push({ ...where, field: 'explosion.power', expected: radius, actual: blast.power });
+        if (!blast.certain || !blast.possible || !listed) return;
+        const base = blast.position.map(c => (versionAtLeast(version, '1.14') ? Math.floor(c) : Math.trunc(c)));
+        const offsets = (heard[index]!.affectedBlockOffsets ?? []) as readonly { x: number; y: number; z: number }[];
+        const blown = new Set(offsets.map(o => key({ x: base[0]! + o.x, y: base[1]! + o.y, z: base[2]! + o.z })));
+        out.push(...blockSets(where, blast, blown));
     });
+    if (!listed && next && stateAt) {
+        const made = new Set([...(row.blocks ?? []), ...(next.blocks ?? [])].filter(([, , , state]) => isAir(state)).map(([x, y, z]) => key({ x, y, z })));
+        const all = blasts.filter(blast => blast.certain && blast.possible);
+        const possible = new Set(all.flatMap(blast => blast.possible!.map(key)));
+        // (what the rays broke, and each made air beside one of those, on to the next)
+        const reached = new Set([...made].filter(at => possible.has(at)));
+        const queue = [...reached];
+        while (queue.length > 0) {
+            const [x, y, z] = queue.pop()!.split(',').map(Number) as [number, number, number];
+            for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as const) {
+                const at = key({ x: x + dx, y: y + dy, z: z + dz });
+                if (made.has(at) && !reached.has(at)) {
+                    reached.add(at);
+                    queue.push(at);
+                }
+            }
+        }
+        const extra = [...made].filter(at => !reached.has(at));
+        if (extra.length > 0) out.push({ ...where, field: 'explosion.blocks.beyond', expected: [], actual: extra.slice(0, 8) });
+        const solid = all.flatMap(blast => blast.certain!).filter(p => !isAir(stateAt(p.x, p.y, p.z) ?? 'air'));
+        const missed = solid.map(key).filter(at => !made.has(at));
+        if (missed.length > 0) out.push({ ...where, field: 'explosion.blocks.missed', expected: missed.slice(0, 8), actual: [] });
+    }
+    return out;
+}
+
+const isAir = (state: string) => /^(minecraft:)?(air|cave_air|void_air)(\[|$)/.test(state);
+
+/** A blast's listed blocks against what its weakest and strongest rays reach. */
+function blockSets(where: Omit<Divergence, 'field' | 'expected' | 'actual'>, blast: CartExplosion, blown: ReadonlySet<string>): Divergence[] {
+    const key = (p: NativeBlockPosition) => `${p.x},${p.y},${p.z}`;
+    const possible = new Set(blast.possible!.map(key));
+    const missed = blast.certain!.map(key).filter(at => !blown.has(at));
+    const beyond = [...blown].filter(at => !possible.has(at));
+    return [
+        ...(missed.length > 0 ? [{ ...where, field: 'explosion.blocks.missed', expected: missed.slice(0, 8), actual: [] } as Divergence] : []),
+        ...(beyond.length > 0 ? [{ ...where, field: 'explosion.blocks.beyond', expected: [], actual: beyond.slice(0, 8) } as Divergence] : []),
+    ];
 }
 
 /** The recorded client cart: what its interpolation is seeded from and compared with. */

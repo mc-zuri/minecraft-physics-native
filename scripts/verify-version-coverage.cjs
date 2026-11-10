@@ -261,8 +261,8 @@ for (const version of versions) {
 
 const verified = versions.length - cached.size;
 console.log(`Verified ${verified} of ${versions.length} source-backed releases from 1.14 through 26.x.`);
-// the releases before them, read from their Yarn-named trees: each recorded file at its recorded hash
-const legacyRoot = process.env.MC_DECOMPILED_ROOT ?? path.join(repositoryRoot, "..", "..", "pr", "mc-decompiled");
+// the releases before them, read from their own decompiled jars (MC_LEGACY_SOURCES): each recorded file at its recorded hash
+const legacyRoot = require("./source-roots.cjs").legacySourcesRoot();
 const legacy = JSON.parse(fs.readFileSync(path.join(generatedRoot, "legacy-release-data.json"), "utf8")).releases;
 let legacyVerified = 0;
 for (const [version, release] of Object.entries(legacy)) {

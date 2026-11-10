@@ -17,7 +17,7 @@ const zlib = require("node:zlib");
 const repositoryRoot = path.resolve(__dirname, "..");
 
 /** The Java a generator runs: its answers are the table's, so a change to it is a change to the generator. */
-const ORACLES = ["java-oracle/ShapeDump.java", "java-oracle/EntityDump.java", "java-oracle/LiveEntityDump.java", "java-oracle/LegacyShapeDump.java"];
+const ORACLES = ["java-oracle/ShapeDump.java", "java-oracle/EntityDump.java", "java-oracle/LiveEntityDump.java", "java-oracle/LegacyEntityDump.java", "java-oracle/LegacyShapeDump.java"];
 
 /** Each generated file and the generator that writes it. */
 const OUTPUTS = {
@@ -32,6 +32,8 @@ const OUTPUTS = {
   "legacy-release-data.json": "generate-legacy-release-manifest.cjs",
   "minecraft-versions.json": "generate-version-manifest.cjs",
   "movement-constants.json": "generate-movement-constants.cjs",
+  "movement-literal-types.json": "movement-literal-types.cjs",
+  "movement-sites.json": "generate-movement-sites.cjs",
   "physics-methods.json": "extract-physics-methods.cjs",
   "primitive-map.json": "generate-primitive-map.cjs",
   "projectile-capabilities.json": "generate-projectile-capabilities.cjs",
@@ -189,7 +191,8 @@ function main() {
   if (first === "--check") {
     const found = staleness(root, process.env.MC_GENERATOR_ROOT ?? __dirname);
     for (const line of found) console.error(line);
-    if (found.length > 0) process.exit(1);
+    // (no process.exit after a write to a pipe: on Windows that sometimes never returns, with all of it written)
+    if (found.length > 0) process.exitCode = 1;
     return;
   }
   if (first) {

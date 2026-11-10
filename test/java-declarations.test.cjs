@@ -5,7 +5,7 @@
 
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
-const { methodDeclarations, methodsNamed } = require('../scripts/java-declarations.cjs');
+const { methodDeclarations, methodsNamed, memberDeclarations } = require('../scripts/java-declarations.cjs');
 const { extractMethod } = require('../scripts/generate-version-manifest.cjs');
 const manifest = require('../generated/minecraft-versions.json');
 const audit = require('../generated/physics-methods.json');
@@ -103,6 +103,27 @@ describe('method declarations', () => {
     it('is not moved by a brace in a string, char or comment', () => {
         const quiet = source.replace('"} move("', '"plain"').replace("'{'", "'x'");
         assert.equal(methodsNamed(quiet, 'move')[0].source.split('\n').length, methodsNamed(source, 'move')[0].source.split('\n').length);
+    });
+});
+
+describe('member declarations', () => {
+    // B007: a gate whose change is a constant, a field's initializer, an enum constant or a constructor
+    it('finds the fields, enum constants and constructors, not locals, methods or what an initializer holds', () => {
+        const names = memberDeclarations(source).map(member => `${member.kind} ${member.declaringClass}#${member.name}`);
+        assert.deepEqual(names, [
+            'field Entity#FIELD', 'field Entity#table', 'constructor Entity#Entity',
+            'constant Entity.Kind#A', 'constant Entity.Kind#B', 'constructor Entity.Kind#Kind', 'constructor Entity.Kind#Kind',
+        ]);
+    });
+
+    it('keeps each declaration\'s whole text, its initializer and a constant\'s body too', () => {
+        const members = memberDeclarations(source);
+        const named = name => members.find(member => member.name === name);
+        assert.equal(named('table').source, 'private final int[] table = {1, 2};');
+        assert.equal(named('table').line, 9);
+        assert.ok(named('FIELD').source.endsWith('};'));
+        assert.ok(named('B').source.startsWith('B(1) {') && named('B').source.endsWith('}'));
+        assert.ok(named('Entity').source.includes('this.move(MoverType.SELF, null);'));
     });
 });
 

@@ -4,16 +4,15 @@
 // cannot widen or shift unreviewed.
 //
 // Each function gets a status, computed and never set by hand:
-//   source-compared  every boundary of the function is one where the source audit of the release
-//                    finds a method or class change (generated/physics-breakpoints.json)
-//   unverified       at least one boundary has no such finding at its first registered release
+//   source-compared  at every boundary of the function, a vanilla method it stands for differs between
+//                    the two releases around it (generated/gate-sources.json, scripts/compare-gate-sources.cjs)
+//   unverified       at least one boundary has no such finding
 // A boundary's trace coverage is a separate question, answered by generated/conformance-evidence.json.
 // `unverified` is the incomplete marker: it claims nothing.
 //   node scripts/shared-gates.cjs            writes generated/shared-gates.json
 //   node scripts/shared-gates.cjs --check    fails on a difference
 const fs = require("node:fs");
 const path = require("node:path");
-const { canonicalReleases } = require("./release-inventory.cjs");
 const { compareReleases } = require("./registered-releases.cjs");
 
 const root = path.resolve(__dirname, "..");
@@ -25,12 +24,18 @@ const sourceRoot = path.join(root, "native", "src");
  * brace that closes it: a helper can sit early in a file, with real code after it.
  */
 function codeLines(text) {
+  const kept = codeLineNumbers(text);
+  return text.replace(/\r\n/g, "\n").split("\n").filter((_, index) => kept.has(index));
+}
+
+/** The indices of those lines. */
+function codeLineNumbers(text) {
   const lines = text.replace(/\r\n/g, "\n").split("\n");
-  const kept = [];
+  const kept = new Set();
   for (let index = 0; index < lines.length; index += 1) {
     const attribute = /^(\s*)#\[cfg\(test\)\]/.exec(lines[index]);
     if (!attribute) {
-      kept.push(lines[index]);
+      kept.add(index);
       continue;
     }
     let at = index + 1;
@@ -60,21 +65,20 @@ function gatesOf(text) {
   return functions;
 }
 
-function sourceBoundaries(report) {
-  return new Set(report.breakpoints.filter((entry) => entry.categories.includes("source")).map((entry) => entry.current));
+/** Each gate generated/gate-sources.json found a difference for, as `file#function@boundary`. */
+function comparedGates(report) {
+  return new Set(report.gates.filter(({ found }) => found?.length > 0).map(({ file, function: name, boundary }) => `${file}#${name}@${boundary}`));
 }
 
 /** Every gated function of the native sources. */
-function sharedGates(registered = canonicalReleases(), audited = sourceBoundaries(JSON.parse(fs.readFileSync(path.join(root, "generated", "physics-breakpoints.json"), "utf8")))) {
+function sharedGates(compared = comparedGates(JSON.parse(fs.readFileSync(path.join(root, "generated", "gate-sources.json"), "utf8")))) {
   const files = fs.readdirSync(sourceRoot).filter((name) => name.endsWith(".rs") && !/tests\.rs$/.test(name)).sort();
   const entries = [];
   for (const file of files) {
     for (const [name, boundaries] of gatesOf(fs.readFileSync(path.join(sourceRoot, file), "utf8"))) {
       const sorted = [...boundaries].sort(compareReleases);
-      // a gate at 1.14 first takes effect at the first registered release of that line, 1.14.4
-      const effective = (boundary) => registered.find((release) => compareReleases(release, boundary) >= 0);
-      const compared = sorted.every((boundary) => audited.has(effective(boundary)));
-      entries.push({ file, function: name, boundaries: sorted, status: compared ? "source-compared" : "unverified" });
+      const missing = sorted.filter((boundary) => !compared.has(`${file}#${name}@${boundary}`));
+      entries.push({ file, function: name, boundaries: sorted, status: missing.length === 0 ? "source-compared" : "unverified", ...(missing.length > 0 ? { missing } : {}) });
     }
   }
   return entries;
@@ -94,4 +98,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { codeLines, document, gatesOf, sharedGates };
+module.exports = { codeLineNumbers, codeLines, document, gatesOf, sharedGates };

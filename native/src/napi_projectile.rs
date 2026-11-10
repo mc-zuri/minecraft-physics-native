@@ -14,7 +14,6 @@ use crate::napi_api::{
 };
 use crate::projectile::{
     tick_arrow_with_targets, tick_projectile_with_targets, tick_trident_with_targets,
-    ProjectileKind,
 };
 use crate::projectile_hits::{
     target_hitbox, ProjectileHitReport, ProjectileHitState, ProjectileOwner, ProjectileTarget,
@@ -45,7 +44,7 @@ pub struct NativeProjectileTarget {
     pub spectator: Option<bool>,
     /// A player the owning player may not harm.
     pub friendly: Option<bool>,
-    /// 1.8: PlayerAbilities.invulnerable.
+    /// 1.8: Abilities.invulnerable.
     pub invulnerable_player: Option<bool>,
     /// What Entity.hurt answers; true when absent.
     pub hurt: Option<bool>,
@@ -80,6 +79,9 @@ pub struct NativeProjectileOwner {
     pub spectator: Option<bool>,
     /// Entity.isRemoved: a fireball is gone with it.
     pub removed: Option<bool>,
+    /// ServerPlayer.wonGame: in the end credits, which an ender pearl waits out from 1.21.9.
+    /// Absent: false.
+    pub won_game: Option<bool>,
 }
 
 /// What a projectile keeps between ticks beside its motion.
@@ -152,6 +154,8 @@ pub struct NativeProjectileHitState {
     pub bullet_delta: Option<NativeVec3>,
     /// The server has no chunk here: a fireball is gone.
     pub chunk_unloaded: Option<bool>,
+    /// Entity.isOutsideWorldBorder as 1.13's collision query of the box leaves it; pass back the one returned.
+    pub outside_border: Option<bool>,
     /// A shulker bullet is gone on peaceful.
     pub peaceful: Option<bool>,
     /// enderPearlsVanishOnDeath is off.
@@ -263,6 +267,7 @@ fn owner(value: Option<NativeProjectileOwner>) -> Option<ProjectileOwner> {
         player: value.player,
         spectator: value.spectator.unwrap_or(false),
         removed: value.removed.unwrap_or(false),
+        won_game: value.won_game.unwrap_or(false),
     })
 }
 
@@ -296,6 +301,7 @@ fn hit_state(value: Option<NativeProjectileHitState>) -> ProjectileHitState {
         stop_fishing: value.stop_fishing.unwrap_or(defaults.stop_fishing),
         bullet_delta: value.bullet_delta.map(Vec3::from),
         chunk_unloaded: value.chunk_unloaded.unwrap_or(defaults.chunk_unloaded),
+        outside_border: value.outside_border.unwrap_or(defaults.outside_border),
         peaceful: value.peaceful.unwrap_or(defaults.peaceful),
         pearl_outlives_owner: value
             .pearl_outlives_owner
@@ -355,6 +361,7 @@ fn native_hit_state(value: ProjectileHitState) -> NativeProjectileHitState {
         stop_fishing: Some(value.stop_fishing),
         bullet_delta: value.bullet_delta.map(NativeVec3::from),
         chunk_unloaded: Some(value.chunk_unloaded),
+        outside_border: Some(value.outside_border),
         peaceful: Some(value.peaceful),
         pearl_outlives_owner: Some(value.pearl_outlives_owner),
     }
@@ -430,6 +437,7 @@ pub fn simulate_versioned_trident_hit_tick(
 ) -> Result<NativeTridentHitTick> {
     let release = vehicle_release(&version, "trident")?;
     // the trident is 1.13's (EntityType "trident", 1.13.2 TridentEntity)
+    // (1.12.2 EntityType.java:233-361; 1.13.2 EntityType.java:246)
     if !release.at_least(1, 13, 0) {
         return Err(Error::from_reason(format!(
             "trident simulation is not supported before 1.13: {version}"

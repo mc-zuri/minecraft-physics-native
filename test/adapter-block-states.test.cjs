@@ -21,20 +21,16 @@ const at = (values, index) => (Array.isArray(values) ? values[index] : values);
 const stateCount = entry => entry.properties.reduce((product, [, values]) => product * values.length, 1);
 const STEPS = { n: [0, -1], s: [0, 1], w: [-1, 0], e: [1, 0] };
 const DIRECTIONS = ['d', 'u', 'n', 's', 'w', 'e'];
-const { releaseCheck } = require('../dist/mineflayer/blocks.js');
-const { aliases } = require('../src/mineflayer/data-aliases.json');
 const FENCE_LIKE = 16;
 const WALL_OR_GATE = 32;
 
-// a release of each era a rule of the adapter changes in, and those whose minecraft-data is another release's
-// and those whose data is another's: 1.19.1, 1.21.2, 1.21.7 and 1.21.10 run on an alias. 26.1.1 and 26.1.2 have neither
-// a registry nor an alias, so no mapper is made for them: their tables are checked in test/block-shapes.test.cjs.
-const RELEASES = ['1.14.4', '1.15.2', '1.16', '1.16.1', '1.16.5', '1.17.1', '1.18', '1.18.1', '1.18.2', '1.19.1', '1.19.4', '1.20.1', '1.20.3', '1.21.1', '1.21.2', '1.21.4', '1.21.7', '1.21.10', '1.21.11', '26.2', '26.3'];
+// every release with a table: 1.19.1, 1.21.2, 1.21.7, 1.21.10, 26.1.1 and 26.1.2 on another release's minecraft-data.
+const RELEASES = Object.keys(report).filter(version => report[version].status === 'exact');
 
 function mapperOf(version) {
-    const registry = require('prismarine-registry')(aliases[version]?.data ?? version);
+    const registry = require('prismarine-registry')(version);
     const Block = require('prismarine-block')(registry);
-    const mapper = new adapter.BlockMapper(aliases[version] ? releaseCheck(version) : registry.version, registry, (name, tag) => native.generatedBlockHasTag(version, name, tag),
+    const mapper = new adapter.BlockMapper(registry.version, registry, (name, tag) => native.generatedBlockHasTag(version, name, tag),
         name => native.generatedMethodShapeBoxes(version, name, 'outline'), (name, index, kind) => native.generatedStateShape(version, name, kind, index));
     return { mapper, Block };
 }
@@ -306,4 +302,51 @@ describe('every release\'s friction, against generated/block-friction.json', () 
             }
         });
     }
+});
+
+describe('the getCollisionBoundingBox the 1.10 - 1.12 auto-jump probes (D-196)', () => {
+    // 1.12.2 Block.getCollisionShape returns getShape, which fences, the brewing stand, the end portal frame and the end
+    // portal keep, overriding only appendCollisionBoxes; BushBlock's is none, the lily pad's too (native/src/world.rs
+    // LEGACY_PROBE_OUTLINE, LEGACY_PROBE_NONE)
+    const tagsOf = (version, name) => {
+        const { mapper, Block } = mapperOf(version);
+        const block = new Block(require('prismarine-registry')(version).blocksByName[name].id, 0, 0);
+        const described = mapper.describe(block);
+        return mapper.updatesAt((x, y, z) => (x === 0 && y === 0 && z === 0 ? described : null), 0, 0, 0).map(update => update.tags ?? 0);
+    };
+    it('marks the outline blocks and the lily pad before 1.13 only', () => {
+        for (const version of ['1.10.2', '1.12.2']) {
+            for (const name of ['fence', 'nether_brick_fence', 'brewing_stand', 'end_portal_frame', 'end_portal']) {
+                assert.ok(tagsOf(version, name).every(tags => (tags & 64) !== 0), `${version} ${name}`);
+            }
+            assert.ok(tagsOf(version, 'waterlily').every(tags => (tags & 128) !== 0), `${version} waterlily`);
+            for (const name of ['cobblestone_wall', 'fence_gate', 'stone', 'cactus', 'snow_layer']) {
+                assert.ok(tagsOf(version, name).every(tags => (tags & 192) === 0), `${version} ${name}`);
+            }
+            assert.ok(tagsOf(version, 'fence').every(tags => (tags & 16) !== 0), `${version} fence stays fence-like`);
+        }
+        for (const name of ['oak_fence', 'brewing_stand', 'lily_pad']) assert.ok(tagsOf('1.13.2', name).every(tags => (tags & 192) === 0), name);
+    });
+
+    // World.isBlockFullCube before 1.13 (native/src/world.rs LEGACY_FULL_CUBE): the jar's answer for a state alone, a
+    // stair's, a cauldron's and a hopper's whole-cell getBoundingBox included; soul sand's own box is 14/16 high
+    const fullOf = (version, name, at = (x, y, z, described) => (x === 0 && y === 0 && z === 0 ? described : null)) => {
+        const { mapper, Block } = mapperOf(version);
+        const described = mapper.describe(new Block(require('prismarine-registry')(version).blocksByName[name].id, 0, 0));
+        return mapper.updatesAt((x, y, z) => at(x, y, z, described), 0, 0, 0).every(update => ((update.tags ?? 0) & 256) !== 0);
+    };
+    it('marks a full cube of World.isBlockFullCube before 1.13 only', () => {
+        for (const version of ['1.8.8', '1.12.2']) {
+            for (const name of ['stone', 'oak_stairs', 'cauldron', 'hopper']) assert.ok(fullOf(version, name), `${version} ${name}`);
+            for (const name of ['soul_sand', 'cactus', 'stone_slab', 'fence']) assert.ok(!fullOf(version, name), `${version} ${name}`);
+        }
+        // a fence joined on all four sides fills its cell's getBoundingBox, one on two does not
+        const { mapper, Block } = mapperOf('1.12.2');
+        const fence = mapper.describe(new Block(require('prismarine-registry')('1.12.2').blocksByName.fence.id, 0, 0));
+        const around = (cells) => mapper.updatesAt((x, y, z) => (x === 0 && y === 0 && z === 0) || cells.some(([a, c]) => a === x && y === 0 && c === z) ? fence : null, 0, 0, 0)
+            .every(update => ((update.tags ?? 0) & 256) !== 0);
+        assert.ok(around([[1, 0], [-1, 0], [0, 1], [0, -1]]));
+        assert.ok(!around([[1, 0], [-1, 0]]));
+        assert.ok(!fullOf('1.13.2', 'oak_stairs'));
+    });
 });

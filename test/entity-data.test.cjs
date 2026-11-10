@@ -291,9 +291,10 @@ describe('the order Entity.move runs block callbacks in', () => {
     const audit = generated('physics-methods.json').releases;
     const orderOf = version => moveOrder(moveOf(audit[version]).source);
     /** Each release's order, as the first release that has it: a new one fails here. */
+    // (1.8.8 lands as later releases do, Block.onLanded under Mojang's name updateEntityAfterFallOn: the yarn trees this
+    // was read from before named it otherwise until 1.13.2, which read as a step added there)
     const ERAS = [
-        ['1.8.8', ['fallDamage', 'stepOn', 'inside']],
-        ['1.13.2', ['fallDamage', 'afterFallOn', 'stepOn', 'inside']],
+        ['1.8.8', ['fallDamage', 'afterFallOn', 'stepOn', 'inside']],
         ['1.14.4', ['collide', 'fallDamage', 'afterFallOn', 'stepOn', 'inside']],
         ['1.15', ['collide', 'fallDamage', 'afterFallOn', 'stepOn', 'inside', 'speedFactor']],
         ['1.21.2', ['collide', 'fallDamage', 'afterFallOn', 'speedFactor']],
@@ -413,7 +414,7 @@ describe('what only a built entity knows (B041)', () => {
 const CONSUMED = {
     movementSpeed: 'movement_speed', sneakingSpeed: 'sneaking_speed', playerSneakingSpeed: 'sneaking_speed', safeFallDistance: 'safe_fall_distance', scale: 'scale',
     gravity: 'gravity', stepHeight: 'step_height', jumpStrength: 'jump_strength', movementEfficiency: 'movement_efficiency', waterMovementEfficiency: 'water_movement_efficiency',
-    burningTime: 'burning_time', fallDamageMultiplier: 'fall_damage_multiplier', airDragModifier: 'air_drag_modifier', frictionModifier: 'friction_modifier', bounciness: 'bounciness',
+    knockbackResistance: 'knockback_resistance', burningTime: 'burning_time', fallDamageMultiplier: 'fall_damage_multiplier', airDragModifier: 'air_drag_modifier', frictionModifier: 'friction_modifier', bounciness: 'bounciness',
 };
 
 describe('attributes, from what the adapter reads to the inventory (B044)', () => {
@@ -491,5 +492,140 @@ describe('enchantments and equipment (B044)', () => {
         assert.match(effects, /e_speed_and_slowness/);
         assert.match(effects, /e_speed_runs_out_walk/);
         assert.match(effects, /e_levitation_runs_out/);
+    });
+});
+
+/** Entity.positionRider itself, with a zombie on a vehicle at the origin: LiveEntityDump.riderCases, LegacyEntityDump. */
+describe('where a rider sits, turned and scaled (B041)', () => {
+    const all = Object.keys(releases);
+    const boatOf = version => releases[version].live.oak_boat ?? releases[version].live.boat;
+    const seat = (entity, slot, yaw, size = 1) => entity?.riderCases?.find(([s, y, z]) => s === slot && y === yaw && z === size)?.slice(3);
+    const { LoadNativePhysics } = require('..');
+    const native = LoadNativePhysics();
+    const boatState = yaw => ({ position: { x: 0, y: 0, z: 0 }, velocity: { x: 0, y: 0, z: 0 }, yaw, forward: false, left: false, right: false, inWater: true });
+
+    it('covers every registered release, each with its own jar', () => {
+        assert.equal(all.length, 50);
+        for (const version of all) {
+            assert.match(releases[version].status, /^(exact|legacy)$/, version);
+            assert.match(releases[version].client, /^[0-9a-f]{40}$/, version);
+            assert.ok(boatOf(version)?.riderCases?.length, `${version} has a boat's seats`);
+        }
+    });
+
+    it('sizes the legacy releases by their own entities, and names what would not build', () => {
+        const size = (version, id) => releases[version].live[id].size.map(f32);
+        assert.deepEqual(size('1.8.8', 'boat'), [f32(1.5), f32(0.6)]);
+        assert.deepEqual(size('1.9.4', 'boat'), [f32(1.375), f32(0.5625)]);
+        assert.deepEqual(size('1.13.2', 'boat'), [f32(1.375), f32(0.5625)]);
+        for (const version of all.filter(name => releases[name].status === 'legacy')) {
+            assert.ok(Object.keys(releases[version].live).length >= 55, version);
+            for (const reason of Object.values(releases[version].noLive)) assert.match(reason, /^[A-Za-z]+$/, version);
+        }
+    });
+
+    it('keeps 1.8\'s seat at the boat\'s nose, in double arithmetic', () => {
+        for (const yaw of [0, 37.5, 90]) {
+            const radians = yaw * Math.PI / 180;
+            const [x, , z] = seat(releases['1.8.8'].live.boat, 0, yaw);
+            assert.equal(x, Math.cos(radians) * 0.4, `x at ${yaw}`);
+            assert.equal(z, Math.sin(radians) * 0.4, `z at ${yaw}`);
+        }
+    });
+
+    it('has the engine\'s boat seat at the jar\'s, at each yaw and with one or two aboard', () => {
+        for (const version of all) {
+            for (const yaw of [37.5, 90]) {
+                const alone = version === '1.8.8' ? 0 : -1;
+                for (const [slot, passengers] of version === '1.8.8' ? [[alone, 1]] : [[alone, 1], [0, 2]]) {
+                    const point = seat(boatOf(version), slot, yaw);
+                    const { position } = native.boatPassengerPlacement(version, boatState(yaw * Math.PI / 180), 0, false, false, passengers);
+                    assert.equal(position.x, point[0] + 0, `${version} x, yaw ${yaw}, ${passengers} aboard`);
+                    assert.equal(position.z, point[2] + 0, `${version} z, yaw ${yaw}, ${passengers} aboard`);
+                }
+            }
+        }
+    });
+
+    it('turns a seat off the middle with its vehicle, and leaves one on it where it is', () => {
+        for (const version of all.filter(name => compareReleases(name, '1.9.4') >= 0)) {
+            const boat = boatOf(version);
+            const [x0, , z0] = seat(boat, 1, 0);
+            const [x, , z] = seat(boat, 1, 90);
+            assert.ok(Math.abs(Math.hypot(x, z) - Math.hypot(x0, z0)) < 1e-6, version);
+            assert.ok(Math.abs(x) > 0.59, `${version}: the back seat swings to the side`);
+            assert.deepEqual(seat(boat, -1, 0).map(f32), seat(boat, -1, 90).map(f32), `${version}: alone is on the axis`);
+        }
+    });
+
+    it('holds each rider apart: a boat\'s two, a happy ghast\'s four', () => {
+        for (const version of all.filter(name => compareReleases(name, '1.9.4') >= 0)) {
+            assert.notDeepEqual(seat(boatOf(version), 0, 0), seat(boatOf(version), 1, 0), version);
+        }
+        const ghast = releases['26.3'].live.happy_ghast;
+        assert.equal(new Set([0, 1, 2, 3].map(slot => String(seat(ghast, slot, 37.5)))).size, 4);
+        for (const version of all.filter(name => releases[name].live.camel?.riderCases)) {
+            const camel = releases[version].live.camel;
+            assert.notDeepEqual(seat(camel, 0, 0), seat(camel, 1, 0), version);
+        }
+    });
+
+    it('scales a table with the scale attribute, from 1.20.5', () => {
+        const scaled = all.filter(version => compareReleases(version, '1.20.5') >= 0);
+        for (const version of scaled) {
+            const horse = releases[version].live.horse;
+            const [, one] = seat(horse, 0, 0);
+            const [, two] = seat(horse, 0, 0, 2);
+            assert.ok(Math.abs((two - one) - horse.attachments[0][1]) < 1e-6, `${version}: twice the size adds one more seat height`);
+        }
+        for (const version of all.filter(name => compareReleases(name, '1.20.5') < 0)) {
+            assert.equal(seat(releases[version].live.horse, 0, 0, 2), undefined, `${version} has no scale attribute`);
+        }
+    });
+
+    it('reproduces each table at a turn, where a table is the whole answer', () => {
+        const { live } = releases['26.3'];
+        for (const id of ['horse', 'donkey', 'ravager']) {
+            const [slot] = live[id].attachments;
+            const [x0, y0, z0] = seat(live[id], 0, 0);
+            const [x, y, z] = seat(live[id], 0, 90);
+            assert.equal(y, y0, id);
+            // Vec3.yRot of the rider's point at 90 degrees: z goes to x
+            assert.ok(Math.abs(x - (z0 - slot[2] + slot[2])) < 1e-6 || Math.abs(x + z0) < 1e-6, `${id} x`);
+            assert.ok(Math.abs(z) < 1e-6 || Math.abs(z - x0) < 1e-6, `${id} z`);
+        }
+    });
+
+    it('a baby rides its own scale', () => {
+        const { pig } = releases['1.21.1'].live;
+        const adult = seat(pig, 0, 37.5);
+        const baby = seat(pig, 0, 37.5, 'baby');
+        assert.ok(baby[1] < adult[1]);
+    });
+
+    it('names the vehicles a blank level cannot build, each with a table from 1.20.5', () => {
+        for (const version of all.filter(name => compareReleases(name, '1.21.11') >= 0)) {
+            const { live, noLive } = releases[version];
+            for (const id of ['pig', 'minecart']) {
+                assert.ok(noLive[id], `${version} ${id}: seats no rider here, and says so`);
+                assert.ok(live[id].attachments?.length, `${version} ${id} keeps its table`);
+            }
+        }
+    });
+});
+
+describe('a legacy size is the constructor\'s (B041)', () => {
+    it('leaves an entity sized later at Entity\'s own default, which the docs name', () => {
+        for (const version of ['1.8.8', '1.12.2', '1.13.2']) {
+            assert.deepEqual(releases[version].live.slime.size.map(f32), [f32(0.6), f32(1.8)], version);
+        }
+    });
+});
+
+describe('a camel seats two in every release that has one (B041)', () => {
+    it('has its riders from its own method, whose seat follows its animation', () => {
+        const camels = Object.keys(releases).filter(version => releases[version].live?.camel);
+        assert.ok(camels.length >= 26);
+        for (const version of camels) assert.ok(releases[version].live.camel.riderCases?.length, version);
     });
 });

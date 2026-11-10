@@ -27,12 +27,8 @@ describe('release admission', () => {
         }
     });
 
-    it('tells the alias from the exact releases', () => {
-        assert.equal(all['1.8.8'].source.status, 'alias');
-        const blocked = ['1.9.4', '1.10.2', '1.11.2', '1.12.2', '1.13.2'];
-        for (const [version, status] of Object.entries(all)) {
-            if (version !== '1.8.8') assert.equal(status.source.status, blocked.includes(version) ? 'blocked' : 'exact', version);
-        }
+    it('reads every release from its exact source, the legacy ones from their own decompiled jars', () => {
+        for (const [version, status] of Object.entries(all)) assert.equal(status.source.status, 'exact', version);
     });
 
     it('holds the modern tables to their client', () => {
@@ -57,11 +53,13 @@ describe('release admission', () => {
     });
 
     it('fails only the source dimension when an alias changes', () => {
+        // (no release is served as an alias now; 1.8.8's record as it was, on its evidence, still is one)
+        const record = { ...manifest['1.8.8'], source: { status: 'alias', embedded: '1.8.9', sourceRelease: '1.8.9', scope: aliases['1.8.8'].scope, evidence: evidenceHash(aliases['1.8.8']), mapping: 'yarn' } };
         const alias = { ...structuredClone(aliases['1.8.8']), byteIdentical: 1 };
         const inputs = { moduleSha256: sha256OfModule('1.8.8'), legacy: true };
-        assert.equal(admission('1.8.8', manifest['1.8.8'], { ...inputs, alias }).source.status, 'rejected');
+        assert.equal(admission('1.8.8', record, { ...inputs, alias }).source.status, 'rejected');
         const resealed = { ...alias, evidence: evidenceHash(alias) };
-        const status = admission('1.8.8', manifest['1.8.8'], { ...inputs, alias: resealed });
+        const status = admission('1.8.8', record, { ...inputs, alias: resealed });
         assert.match(status.source.reasons.join(), /changed since the manifest was joined/);
         assert.equal(status.data.status, 'complete');
     });
@@ -81,7 +79,7 @@ describe('release admission', () => {
         forged.releases['26.3'].admitted = true;
         assert.deepEqual(statusProblems(forged, all), ['src/release-status.json is stale for 26.3']);
         const hidden = structuredClone(shipped);
-        hidden.releases['1.12.2'].source = { status: 'exact', reasons: [] };
+        hidden.releases['1.12.2'].source = { status: 'blocked', reasons: ['a reason the evidence does not give'] };
         assert.deepEqual(statusProblems(hidden, all), ['src/release-status.json is stale for 1.12.2']);
         assert.deepEqual(Object.keys(statusDocument(all).releases), Object.keys(manifest));
     });

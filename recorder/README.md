@@ -194,7 +194,7 @@ minecraft-data has two 1.20.4 codec bugs these recordings show (both on packets 
 | Continuous replay (`replay/continuous.ts`), with the decisions still vanilla's | done |
 | The strict gate over a pinned corpus (`replay/conformance.ts`) | done; no `recorder/corpus` is pinned here, and the 23 cell pins of `generated/conformance-evidence.json` are stale |
 | Adapter layer (`replay/adapter.ts`, `--adapter --motion`: its own decisions, tick by tick; no phase sink) | done in part |
-| Bot layer (`replay/bot.ts`: mineflayer with a fake client, C2S name, order and bytes; movement only, hands not driven) | done in part |
+| Bot layer (`replay/bot.ts`: mineflayer with a fake client, C2S name, order and bytes; movement, the keys of the hands and the clicks on a container's screen driven through the fork; chat, signs, books and commands not driven) | done in part |
 | Vehicle phases (a row's `vph`: the ridden vehicle at the head and tail of its own move, held to the engine's move with `--phases`) | captured; the engine has no trace inside a vehicle's tick |
 | Catalog: the physics-data-generator catalog ported to the DSL, with what was added since (3,322 scenarios compiled for 1.20.4 and 407 outside it, at commit `0eaaa0d`) | done |
 | Minecarts in the native replay (`replay/minecart.ts`: the server's carts from `srv.entities`, their side effects, a blast's power against its packet, the client's interpolation apart) | done |

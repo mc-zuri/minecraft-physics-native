@@ -43,7 +43,7 @@ export interface ClientMinecart {
 
 /** The cart a release's spawn packet means. */
 const CART_NAMES = new Set(['minecart', 'chest_minecart', 'hopper_minecart', 'furnace_minecart', 'tnt_minecart', 'spawner_minecart', 'command_block_minecart', 'commandblock_minecart']);
-/** The object data of a cart before 1.14, in AbstractMinecart.Type's order (1.8.9, 1.13.2 AbstractMinecartEntity.java). */
+/** The object data of a cart before 1.14, in AbstractMinecart.Type's order (1.8.9, 1.13.2 AbstractMinecart.java). */
 const OBJECT_CARTS = ['minecart', 'chest_minecart', 'furnace_minecart', 'tnt_minecart', 'spawner_minecart', 'hopper_minecart', 'command_block_minecart'] as const;
 /** The object type of every cart before 1.14 (1.8.9 EntitySpawnS2CPacket, 1.13.2 the same). */
 const OBJECT_CART = 10;
@@ -169,7 +169,7 @@ export class MinecartTracker {
 
     /**
      * Entity.lerpTo of the old path. A new interpolation resets the motion to what the server last sent
-     * (1.20.4 AbstractMinecartEntity.updateTrackedPositionAndAngles, 26.3 OldMinecartBehavior.onInterpolationStart). The
+     * (1.20.4 AbstractMinecart.lerpTo, 26.3 OldMinecartBehavior.onInterpolationStart). The
      * improved path has no such thing: its handler is NO_OP and the entity goes there at once (26.3
      * InterpolationHandler.NO_OP, Entity.moveOrInterpolateTo).
      */
@@ -188,11 +188,11 @@ export class MinecartTracker {
     /** VecDeltaCodec.decode: an axis no delta touches keeps the double the server gave; the rest are in 4096ths. */
     private addDeltas(cart: ClientMinecart, { dX, dY, dZ }: Delta): void {
         if (this.lt('1.9')) {
-            // whole 32nds, added in the entity's ints (1.8.9 ClientPlayNetworkHandler.onEntityUpdate)
+            // whole 32nds, added in the entity's ints (1.8.8 ClientPacketListener.handleMoveEntity)
             cart.tracked = { x: (Math.round(cart.tracked.x * 32) + dX) / 32, y: (Math.round(cart.tracked.y * 32) + dY) / 32, z: (Math.round(cart.tracked.z * 32) + dZ) / 32 };
             return;
         }
-        // lfloor until 1.16.5's EntityS2CPacket.encodePacketCoordinate, Math.round from TrackedPosition (1.19) on; 1.14 keeps
+        // lfloor until 1.16.5's ClientboundMoveEntityPacket.packetToEntity, Math.round from TrackedPosition (1.19) on; 1.14 keeps
         // the long itself, which is the same as long as what was sent were 4096ths
         const encode = this.lt('1.17') ? Math.floor : Math.round;
         const axis = (base: number, delta: number) => (delta === 0 ? base : (encode(base * 4096) + delta) / 4096);
@@ -219,8 +219,8 @@ export class MinecartTracker {
     private looked(packet: { entityId: number; yaw: number; pitch: number; onGround?: boolean }): void {
         const cart = this.carts.get(packet.entityId);
         if (!cart) return;
-        // a turn alone: before 1.15 it lerps to the tracked place like any move (1.14 onEntityUpdate); to where it is, or
-        // from 1.20.2 where it is going (1.16.5, 1.21 onEntity)
+        // a turn alone: before 1.15 it lerps to the tracked place like any move (1.14.4 ClientPacketListener.handleMoveEntity); to where it is, or
+        // from 1.20.2 where it is going (1.16.5, 1.21 ClientPacketListener.handleMoveEntity)
         const target = this.lt('1.15') ? cart.tracked : (!this.lt('1.20.2') && cart.lerp && cart.lerp.steps > 0 ? cart.lerp.target : cart.position);
         this.lerpTo(cart, target, byteAngle(packet.yaw), byteAngle(packet.pitch));
         cart.onGround = packet.onGround ?? cart.onGround;
@@ -241,7 +241,7 @@ export class MinecartTracker {
         // floats from 1.21.2, a byte before; relative to its own where the flags say (PositionMoveRotation.calculateAbsolute)
         const yRot = flags ? (flags.yaw ? f32(cart.yRot + packet.yaw) : packet.yaw) : byteAngle(packet.yaw);
         const xRot = flags ? (flags.pitch ? f32(cart.xRot + packet.pitch) : packet.pitch) : byteAngle(packet.pitch);
-        // Up to 1.16.1 a teleport this near only turns it, at once from 1.9 (1.8.9 and 1.16 onEntityPosition)
+        // Up to 1.16.1 a teleport this near only turns it, at once from 1.9 (1.8.8 ClientPacketListener.java:452 and 1.16 ClientPacketListener.java:592)
         const near = this.lt('1.16.2') && Math.abs(cart.position.x - target.x) < 0.03125 && Math.abs(cart.position.y - target.y) < 0.015625 && Math.abs(cart.position.z - target.z) < 0.03125;
         if (near) this.lerpTo(cart, cart.position, yRot, xRot, this.lt('1.9') ? undefined : 2);
         else this.lerpTo(cart, target, yRot, xRot);

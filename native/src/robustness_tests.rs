@@ -67,6 +67,7 @@ pub(crate) fn block(x: i32, y: i32, z: i32) -> NativeBlockUpdate {
         suffocating: None,
         in_wall: None,
         bottom_face_sturdy: None,
+        explosion_resistance: None,
         remove: None,
     }
 }

@@ -48,7 +48,7 @@ const IMMOVABLE = /^(obsidian|crying_obsidian|respawn_anchor|reinforced_deepslat
 /** PushReaction.PUSH_ONLY, as far as a name tells it: a line may push these and no block drags them (GlazedTerracottaBlock from 1.12). */
 const PUSH_ONLY = /glazed_terracotta$/;
 const SLIME = new Set(['slime_block', 'slime']);
-/** What isPushable names itself before PushReaction asks (1.8.9 PistonBlock.java:251, 1.21.8 PistonBaseBlock.isPushable). */
+/** What isPushable names itself before PushReaction asks (1.8.8 PistonBaseBlock.java:253, 1.21.8 PistonBaseBlock.isPushable). */
 const NAMED = /^(obsidian|crying_obsidian|respawn_anchor|reinforced_deepslate)$/;
 
 interface Reactions { readonly destroy: ReadonlySet<string>; readonly block: ReadonlySet<string>; readonly push: ReadonlySet<string>; readonly entity: ReadonlySet<string> }
@@ -148,7 +148,7 @@ export class MovingBlockTracker {
         return !this.pushOnly(block) || sameCell(way, connection);
     }
 
-    /** PistonStructureResolver.isSticky: slime, and honey from 1.15 (1.14 PistonHandler.java, 1.15 :42). */
+    /** PistonStructureResolver.isSticky: slime, and honey from 1.15 (1.14.4 PistonStructureResolver.java, 1.15 :42). */
     private sticky(block: PrismarineBlock | null): boolean {
         return block !== null && (SLIME.has(block.name) || block.name === 'honey_block');
     }
@@ -252,7 +252,7 @@ export class MovingBlockTracker {
         const type = sticky ? 'sticky' : 'normal';
         const front = along(base, direction);
         if (event === 0) {
-            // moveBlocks(extending): before 1.11 the head is no source (1.10.2 PistonBlock.java:329, 1.11.2 :320)
+            // moveBlocks(extending): before 1.11 the head is no source (1.10.2 PistonBaseBlock.java:332, 1.11.2 :321)
             this.place(base, this.stateIdOf(this.state(like, name, { facing: named, extended: true }, facing | 8)));
             // (a server sends the event only after this resolved: a list refused here is a world that is out of step)
             this.moveLine(this.resolve(base, front, direction, true) ?? [], direction, facing, true);
@@ -267,7 +267,7 @@ export class MovingBlockTracker {
             this.entries.set(key(base), { pos: base, facing, extending: false, source: true, progress: 0, moved });
             const dragged = along(base, direction, 2);
             // a sticky piston ends the block it was still pushing there, and drags nothing: pistonPiece, on every release
-            // (26.3 PistonBaseBlock.java:173-186, 1.8.9 PistonBlock.java:153)
+            // (26.3 PistonBaseBlock.java:173-186, 1.8.8 PistonBaseBlock.java:155)
             const pushing = sticky ? this.entries.get(key(dragged)) : undefined;
             if (pushing?.extending && pushing.facing === facing) {
                 this.finish(dragged);
@@ -311,7 +311,9 @@ export class MovingBlockTracker {
     /** The block a block entity shows at its progress (recorder/replay/moving.ts shown; 26.3 PistonMovingBlockEntity.java:340-344). */
     private shown(entry: Entry, progress = entry.progress): PrismarineBlock {
         if (!entry.source || !this.atLeast('1.11')) return entry.moved;
-        const short = entry.extending !== (Math.fround(1 - progress) < 0.25);
+        // (1.13 to 1.15 compare with 4.0F, which every progress is under: 1.15.2 PistonMovingBlockEntity.java:351, 1.13.2 :344)
+        const limit = this.atLeast('1.13') && !this.atLeast('1.16') ? 4 : 0.25;
+        const short = entry.extending !== (Math.fround(1 - progress) < limit);
         return this.state(entry.moved, 'piston_head', { facing: FACINGS[entry.facing], short }, entry.facing);
     }
 

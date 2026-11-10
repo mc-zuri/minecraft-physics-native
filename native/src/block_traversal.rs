@@ -38,6 +38,8 @@ enum Axis {
 }
 
 impl Axis {
+    /// The vector's coordinate on the axis (vanilla: Vec3#get, as the axis steps of a recorded
+    /// move and BlockPos#betweenCornersInDirection read it).
     fn of(self, vector: Vec3) -> f64 {
         match self {
             Self::X => vector.x,
@@ -46,6 +48,8 @@ impl Axis {
         }
     }
 
+    /// The cell's coordinate on the axis (vanilla: Vec3i#get; BlockPos#betweenCornersInDirection
+    /// takes the axis' choose of the corners' differences).
     fn of_cell(self, (x, y, z): BlockPosition) -> i32 {
         match self {
             Self::X => x,
@@ -54,6 +58,8 @@ impl Axis {
         }
     }
 
+    /// The cell `distance` cells along the axis: one axis' term of the cursor
+    /// BlockPos#betweenCornersInDirection sets, its direction's step times its index.
     fn step(self, (x, y, z): BlockPosition, distance: i32) -> BlockPosition {
         match self {
             Self::X => (x + distance, y, z),
@@ -62,6 +68,8 @@ impl Axis {
         }
     }
 
+    /// The position moved `distance` along the axis (vanilla: Vec3#relative of the axis' positive
+    /// direction, each axis step of a recorded move from 1.21.5).
     fn relative(self, position: Vec3, distance: f64) -> Vec3 {
         match self {
             Self::X => Vec3::new(position.x + distance, position.y, position.z),
@@ -107,8 +115,8 @@ pub(crate) fn blocks_visited(
 /// blocks_visited with the test checkInsideBlocks makes of each block it reaches (the block's
 /// getEntityInsideCollisionShape or its fluid, swept along the step's move): a block that fails
 /// it gets no entityInside. Before 1.21.9 it counts as visited all the same (1.21.5
-/// Entity.java:1099, 1.21.8 :1161); from 1.21.9 only a block that passes does, and a later step
-/// may reach it again (1.21.9 Entity.java:1205, 1.21.11 :1228).
+/// Entity.java:1131, 1.21.8 :1161); from 1.21.9 only a block that passes does, and a later step
+/// may reach it again (1.21.9 Entity.java:1244, 1.21.11 :1269).
 pub(crate) fn blocks_visited_where(
     movements: &[Movement],
     final_box: Aabb,
@@ -130,6 +138,7 @@ pub(crate) fn blocks_visited_where(
     };
     let mut visited = HashSet::new();
     let mut blocks = Vec::new();
+    // (1.21.8 Entity.java:1212; 1.21.9 Entity.java:1244)
     let marks_failed = !release.at_least(1, 21, 9);
     let mut visit = |visit: Visit| {
         if visited.contains(&visit.position) {
@@ -143,6 +152,7 @@ pub(crate) fn blocks_visited_where(
             blocks.push((visit.position, visit.precise));
         }
     };
+    // (1.21.4 Entity.java:1105; 1.21.5 BlockGetter.java:164)
     if !release.at_least(1, 21, 5) {
         let inside = final_box.deflate(Vec3::new(CELL_INSET, CELL_INSET, CELL_INSET));
         for movement in movements {
@@ -158,6 +168,7 @@ pub(crate) fn blocks_visited_where(
         }
         return blocks;
     }
+    // (1.21.9 Entity.java:1248; 1.21.10 Entity.java:1252-1254)
     let precise_steps = release.at_least(1, 21, 10);
     for movement in movements {
         let delta = movement.to - movement.from;
@@ -176,6 +187,7 @@ pub(crate) fn blocks_visited_where(
             }
             _ => steps.push((movement.from, movement.to)),
         }
+        // (1.21.8 Entity.java:1187; 1.21.9 Entity.java:1244)
         if !release.at_least(1, 21, 9) {
             for (from, to) in steps {
                 for (position, step) in blocks_intersected_between(from, to, box_at(to), release) {
@@ -228,6 +240,8 @@ pub(crate) fn blocks_visited_where(
     blocks
 }
 
+/// AABB#intersects of a BlockPos: whether the box meets the cell, its far faces at the int sums
+/// `x + 1` (isPrecise of the inside-block check).
 fn intersects_cell(bounds: Aabb, (x, y, z): BlockPosition) -> bool {
     bounds.intersects(Aabb::new(
         Vec3::new(f64::from(x), f64::from(y), f64::from(z)),
@@ -253,6 +267,7 @@ fn between_closed(bounds: Aabb, release: MinecraftVersion) -> Vec<BlockPosition>
     blocks
 }
 
+/// BlockPos#containing: the cell holding the position, each coordinate floored.
 fn block_of(position: Vec3, release: MinecraftVersion) -> BlockPosition {
     (
         floor_i32_for(release, position.x),
@@ -279,8 +294,8 @@ pub(crate) fn box_traverse_blocks(
             blocks.push(position);
         }
     };
-    // the walk runs 1.0E-7 past each end on 1.21.2 and 1.21.3 (1.21.3 BlockView.java:181-183), and from
-    // the box's corner to where it left on 1.21.4 (1.21.4 :180-182)
+    // the walk runs 1.0E-7 past each end on 1.21.2 and 1.21.3 (1.21.3 BlockGetter.java:175-177), and from
+    // the box's corner to where it left on 1.21.4 (1.21.4 :171-173)
     let nudge = if release.at_least(1, 21, 4) {
         Vec3::ZERO
     } else {
@@ -306,7 +321,7 @@ pub(crate) fn box_traverse_blocks(
 
 /// BlockGetter.forEachBlockIntersectedBetween of 1.21.5 - 1.21.8, with each block's index: 0 for
 /// a short move, else the walk's step that reaches it, and one past the walk's last for the box
-/// after the move (1.21.5 BlockGetter.java:172-190, 226-246).
+/// after the move (1.21.5 BlockGetter.java:164-184, 220-240).
 pub(crate) fn blocks_intersected_between(
     from: Vec3,
     to: Vec3,
@@ -388,7 +403,9 @@ pub(crate) fn blocks_intersected_between_in_direction(
     );
     let from_corner = to_corner - travel;
     let mut iterations = 0;
-    let finished = walk_cells_while(from_corner, to_corner, None, release, |cell, hit, _| {
+    // the signs and steps are the travel's own, not to_corner - from_corner, which can round away
+    // from it (26.3 BlockGetter.java:197-213; 1.21.8 :193-200 subtracts)
+    let finished = walk_cells_while(from_corner, to_corner, travel, None, release, |cell, hit, _| {
         iterations += 1;
         if iterations >= budget {
             return false;
@@ -427,7 +444,7 @@ fn walk_cells(
     mut visit: impl FnMut(BlockPosition, Vec3, i32),
 ) -> i32 {
     let mut steps = 0;
-    walk_cells_while(from, to, max_steps, release, |cell, hit, step| {
+    walk_cells_while(from, to, to - from, max_steps, release, |cell, hit, step| {
         steps = step;
         visit(cell, hit, step);
         true
@@ -435,15 +452,16 @@ fn walk_cells(
     steps
 }
 
-/// `walk_cells` until `visit` says stop; whether the walk reached its end.
+/// `walk_cells` until `visit` says stop; whether the walk reached its end. `delta` gives the signs
+/// and steps: `to - from` up to 1.21.8, the move itself from 1.21.9.
 fn walk_cells_while(
     from: Vec3,
     to: Vec3,
+    delta: Vec3,
     max_steps: Option<i32>,
     release: MinecraftVersion,
     mut visit: impl FnMut(BlockPosition, Vec3, i32) -> bool,
 ) -> bool {
-    let delta = to - from;
     let mut cell = block_of(from, release);
     let sign = |value: f64| {
         if value == 0.0 {
@@ -504,8 +522,15 @@ fn walk_cells_while(
         let min = Vec3::new(f64::from(cell.0), f64::from(cell.1), f64::from(cell.2));
         let max = Vec3::new(min.x + 1.0, min.y + 1.0, min.z + 1.0);
         if let Some(hit) = clip(min, max, from, to) {
-            let inside =
-                |value: f64, low: f64| value.clamp(low + CELL_INSET, low + 1.0 - CELL_INSET);
+            // `Mth.clamp(hit.x, i + 1.0E-5F, i + 1.0 - 1.0E-5F)`: the low bound is an int plus a float, so
+            // a float, which far from the origin rounds to the cell's face itself; the high bound is a
+            // double (1.21.2 BlockGetter.java:232, 1.21.11 :248, 26.3 :265)
+            // (Mth.clamp is `d < e ? e : Math.min(d, f)`: a float low bound that rounds past the high one,
+            // from 2^24 out, wins, where f64::clamp would panic; 1.21.2 Mth.java:105-107)
+            let inside = |value: f64, low: f64| {
+                let (low, high) = (f64::from(low as f32 + 1.0e-5_f32), low + 1.0 - CELL_INSET);
+                if value < low { low } else { value.min(high) }
+            };
             let hit = Vec3::new(
                 inside(hit.x, min.x),
                 inside(hit.y, min.y),
@@ -640,6 +665,32 @@ mod tests {
             .into_iter()
             .map(|(position, _)| position)
             .collect()
+    }
+
+    #[test]
+    fn a_hit_is_held_off_a_cells_low_face_by_a_float_sum_far_from_the_origin() {
+        // 1001 + 1.0E-5F is 1001.0F: the float has no room for the inset there (26.3 BlockGetter.java:265)
+        let mut hits = Vec::new();
+        walk_cells(
+            Vec3::new(1000.5, 0.5, 0.5),
+            Vec3::new(1002.5, 0.5, 0.5),
+            None,
+            MinecraftVersion::new(1, 21, 11),
+            |cell, hit, _| hits.push((cell, hit.x)),
+        );
+        assert_eq!(hits.first(), Some(&((1001, 0, 0), 1001.0)));
+        // near the origin the inset is there, as a float widened
+        let mut near = Vec::new();
+        walk_cells(Vec3::new(0.5, 0.5, 0.5), Vec3::new(2.5, 0.5, 0.5), None, MinecraftVersion::new(1, 21, 11), |cell, hit, _| {
+            near.push((cell, hit.x));
+        });
+        assert_eq!(near.first(), Some(&((1, 0, 0), f64::from(1.0_f32 + 1.0e-5_f32))));
+        // past 2^24 the float of the cell can round up beyond the cell: the low bound wins, as Mth.clamp
+        let mut far = Vec::new();
+        walk_cells(Vec3::new(16_777_218.5, 0.5, 0.5), Vec3::new(16_777_220.5, 0.5, 0.5), None, MinecraftVersion::new(1, 21, 11), |cell, hit, _| {
+            far.push((cell, hit.x));
+        });
+        assert_eq!(far.first(), Some(&((16_777_219, 0, 0), 16_777_220.0)));
     }
 
     #[test]
@@ -779,6 +830,14 @@ mod tests {
     ];
 
     #[test]
+    fn the_work_counter_adds_what_a_traversal_counts() {
+        WORK.with(|work| work.set(0));
+        count_work(1);
+        count_work(3);
+        assert_eq!(WORK.with(Cell::get), 4);
+    }
+
+    #[test]
     fn the_work_of_a_long_move_does_not_grow_with_its_length() {
         // The visitor's false ends forEachBlockIntersectedBetween at the 16th iteration (26.3
         // Entity.java:1371-1374, BlockGetter.java:248-250): the walk's steps and candidates stop
@@ -815,9 +874,9 @@ mod tests {
 
     #[test]
     fn the_older_walk_keeps_its_own_limit_on_the_other_side_of_1_21_9() {
-        // `if (p++ > 16) break`, then the box after the move (1.21.8 BlockGetter.java:186-197,
+        // `if (p++ > 16) break`, then the box after the move (1.21.8 BlockGetter.java:178-188,
         // 234-236): the walk from the corner at the box's minimum reaches the cells 1 - 17, its first
-        // cell left out, and no budget ends the check (1.21.8 Entity.java:1123-1146)
+        // cell left out, and no budget ends the check (1.21.8 Entity.java:1152-1175)
         let long = moved((0.5, 64.0, 0.5), (100_000.5, 64.0, 0.5));
         let mut expected: Vec<_> = (1..=17).flat_map(|x| [(x, 64, 0), (x, 65, 0)]).collect();
         expected.extend([(100_000, 64, 0), (100_000, 65, 0)]);
@@ -922,7 +981,7 @@ mod tests {
     #[test]
     fn a_cell_reached_again_is_visited_once_unless_it_failed_from_1_21_9() {
         // One LongSet for the tick's moves (26.3 Entity.java:1320, 1347). It takes a block only once
-        // its test passes from 1.21.9 (1.21.9 Entity.java:1205), at once before (1.21.8 :1161)
+        // its test passes from 1.21.9 (1.21.9 Entity.java:1244), at once before (1.21.8 :1188)
         let there = moved((0.5, 64.0, 0.5), (4.5, 64.0, 0.5));
         let back = moved((4.5, 64.0, 0.5), (0.5, 64.0, 0.5));
         let cells = (0..=4).flat_map(|x| [(x, 64, 0), (x, 65, 0)]).collect::<Vec<_>>();

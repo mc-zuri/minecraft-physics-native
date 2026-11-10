@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { floatRadians, nearbyEntities, toNative } from '../seed.ts';
+import { entityKind, floatRadians, nearbyEntities, toNative } from '../seed.ts';
 import { replayNative } from '../engine.ts';
 import { toBoat, toHorse } from '../vehicle.ts';
 import { PLAYER_FIELDS } from '../../schema/fields.ts';
@@ -206,4 +206,15 @@ test('an entity with a NaN box meets nothing, and the one beside it still counts
     const seeded = nearbyEntities(start, { version: '1.9.4', pre: start, post: start, swiftSneak: 0 });
     assert.equal(seeded.length, 1);
     assert.deepEqual(seeded[0]!.boundingBox, { min: { x: 0, y: 0, z: 0 }, max: { x: 1, y: 1, z: 1 } });
+});
+
+test('a type minecraft-data gives no kind goes by a later release, not by being a mob', () => {
+    // (1.15 to 1.16.5: type mob, category UNKNOWN, for a rocket as for a bee)
+    const kind = (version: string, type: string) => entityKind(version, { type } as never);
+    for (const version of ['1.15', '1.16.5']) {
+        for (const type of ['firework_rocket', 'trident', 'experience_orb', 'eye_of_ender', 'end_crystal', 'fishing_bobber']) assert.equal(kind(version, type), 'inert', `${version} ${type}`);
+        assert.equal(kind(version, 'bee'), 'living', version);
+        assert.equal(kind(version, 'cow'), 'living', version);
+    }
+    assert.equal(kind('1.16.5', 'piglin'), 'living');
 });

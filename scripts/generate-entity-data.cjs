@@ -2,23 +2,26 @@
 // (scripts/java-oracle/EntityDump.java). An eye height is a value here from 1.20.5; before, it is a method of a live
 // entity, so scripts/java-oracle/LiveEntityDump.java builds the entities and asks them: `live`, with `noLive` naming
 // those a blank level cannot build and why, and `playerEyes` for the player, whose type has no factory. A release before
-// 1.14 is listed as unavailable.
-//   node scripts/generate-entity-data.cjs [--dumps DIR] [--check] [--cached]
+// 1.14 has only what scripts/java-oracle/LegacyEntityDump.java reads from a built entity: status "legacy", its `live`
+// with each entity's `size`. A release whose jar is not at hand is listed as unavailable.
+//   node scripts/generate-entity-data.cjs [--dumps DIR] [--check] [--cached] [--only 26.2,26.3]
 // With --cached a release whose jar is not at hand keeps its entry, which is what such a run says it is doing.
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const { classpath } = require("./java-oracle/classpath.cjs");
+const { completeClasspath: classpath } = require("./java-oracle/classpath.cjs");
 const { clientJarRoot } = require("./source-pins.cjs");
 const { openZip } = require("./zip-read.cjs");
 
 const repositoryRoot = path.resolve(__dirname, "..");
 const outputPath = path.join(repositoryRoot, "generated", "entity-data.json");
-const oracleSources = ["EntityDump", "LiveEntityDump"].map((name) => path.join(__dirname, "java-oracle", `${name}.java`));
+const oracleSources = ["EntityDump", "LiveEntityDump", "LegacyEntityDump"].map((name) => path.join(__dirname, "java-oracle", `${name}.java`));
 const ABSENT = "-";
 const number = (text) => (text === ABSENT ? null : Number(text));
-const UNAVAILABLE = "the oracle runs Mojang-named jars of 1.14 and up";
+const UNAVAILABLE = "no jar of this release with the recorder's names is at hand";
+/** Before 1.14 a mapped class can sit in another package than the Mojang class it reads: see OracleAttributesLegacy. */
+const LEGACY_JVM = ["-XX:+UnlockDiagnosticVMOptions", "-XX:-BytecodeVerificationRemote"];
 
 function dimensions(fields) {
   const [width, height, fixed, eyeHeight] = fields;
@@ -90,7 +93,7 @@ function parseLive(text, version) {
     const [kind, id, ...fields] = line.split("\t");
     if (kind === "live") {
       const [eye, crouching, seats, riding, maxPassengers] = fields;
-      live[id] = { eye: number(eye), eyeCrouching: number(crouching), passengersRidingOffset: number(seats), myRidingOffset: number(riding), maxPassengers: number(maxPassengers) };
+      live[id] = { ...live[id], eye: number(eye), eyeCrouching: number(crouching), passengersRidingOffset: number(seats), myRidingOffset: number(riding), maxPassengers: number(maxPassengers) };
     } else if (kind === "nolive") noLive[id] = fields[0];
     else if (kind === "playereye") playerEyes[id] = number(fields[0]);
     else if (kind === "attachment") {
@@ -98,6 +101,11 @@ function parseLive(text, version) {
       ((live[id] ??= {}).attachments ??= [])[Number(slot)] = [number(x), number(y), number(z)];
     } else if (kind === "riderpoint") (live[id] ??= {}).riderPoint = fields.map(number);
     else if (kind === "riderfn") (live[id] ??= {}).riderComputedBy = fields[0];
+    else if (kind === "size") (live[id] ??= {}).size = fields.map(number);
+    else if (kind === "ridercase") {
+      const [slot, yaw, size, x, y, z] = fields;
+      ((live[id] ??= {}).riderCases ??= []).push([Number(slot), Number(yaw), size === "baby" ? size : Number(size), number(x), number(y), number(z)]);
+    }
     else throw new Error(`${version}: unknown live line ${kind}`);
   }
   if (Object.keys(live).length === 0) throw new Error(`${version}: no entity could be built`);
@@ -114,7 +122,8 @@ function javaOf(major) {
 function dumpOf(version, classes, directory, oracle) {
   const { jars, java } = classpath(version);
   const output = path.join(directory, `${version}.${oracle}.tsv`);
-  const run = spawnSync(javaOf(Math.max(java, 21)), ["-Xmx1200m", "-cp", [classes, ...jars].join(path.delimiter), oracle, output], { encoding: "utf8", cwd: directory });
+  const flags = oracle === "LegacyEntityDump" ? LEGACY_JVM : [];
+  const run = spawnSync(javaOf(Math.max(java, 21)), [...flags, "-Xmx1200m", "-cp", [classes, ...jars].join(path.delimiter), oracle, output], { encoding: "utf8", cwd: directory });
   if (run.status !== 0) throw new Error(`The oracle failed on ${version}: ${(run.stderr ?? run.error?.message ?? "").slice(0, 2000)}`);
   return fs.readFileSync(output, "utf8");
 }
@@ -128,30 +137,37 @@ function jarAtHand(version) {
   }
 }
 
-function generate(dumps, cached) {
+function generate(dumps, cached, only = null) {
   const generated = (name) => JSON.parse(fs.readFileSync(path.join(repositoryRoot, "generated", name), "utf8"));
   const manifest = generated("release-manifest.json").releases;
   const versions = Array.isArray(manifest) ? manifest.map((entry) => entry.release) : Object.keys(manifest);
   const runtime = generated("runtime-registries.json").releases;
-  const kept = (version) => cached && !dumps && !jarAtHand(version);
-  const previous = cached && fs.existsSync(outputPath) ? JSON.parse(fs.readFileSync(outputPath, "utf8")).releases : {};
+  const kept = (version) => (only ? !only.includes(version) : cached && !dumps && !jarAtHand(version));
+  const previous = (cached || only) && fs.existsSync(outputPath) ? JSON.parse(fs.readFileSync(outputPath, "utf8")).releases : {};
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "mc-entities-"));
   try {
     let classes = null;
-    if (!dumps && versions.some((version) => runtime[version] && !kept(version))) {
+    if (!dumps && versions.some((version) => !kept(version))) {
       classes = path.join(work, "classes");
       const compile = spawnSync("javac", ["-nowarn", "--release", "21", "-d", classes, ...oracleSources], { encoding: "utf8" });
       if (compile.status !== 0) throw new Error(`The oracle does not compile: ${compile.stderr}`);
     }
     const releases = {};
     for (const version of versions) {
-      if (!runtime[version]) {
-        releases[version] = { status: "unavailable", reason: UNAVAILABLE };
+      if (kept(version)) {
+        if (!previous[version]) throw new Error(`${version} has no entry to keep: its jar is not at hand`);
+        releases[version] = previous[version];
         continue;
       }
-      if (kept(version)) {
-        if (previous[version]?.status !== "exact") throw new Error(`${version} has no entry to keep: its jar is not at hand`);
-        releases[version] = previous[version];
+      if (!runtime[version]) {
+        const legacyDump = dumps ? path.join(dumps, `${version}.LegacyEntityDump.tsv`) : null;
+        // (without --cached a legacy jar not at hand fails the run: a host lacking it must not publish "unavailable")
+        if (dumps ? !fs.existsSync(legacyDump) : cached && !jarAtHand(version)) {
+          releases[version] = { status: "unavailable", reason: UNAVAILABLE };
+          continue;
+        }
+        const text = dumps ? fs.readFileSync(legacyDump, "utf8") : dumpOf(version, classes, work, "LegacyEntityDump");
+        releases[version] = { status: "legacy", client: dumps ? null : classpath(version).client, ...parseLive(text, version) };
         continue;
       }
       const text = dumps ? fs.readFileSync(path.join(dumps, `${version}.EntityDump.tsv`), "utf8") : dumpOf(version, classes, work, "EntityDump");
@@ -169,7 +185,9 @@ function generate(dumps, cached) {
 
 function main() {
   const at = process.argv.indexOf("--dumps");
-  const output = `${JSON.stringify(generate(at < 0 ? null : process.argv[at + 1], process.argv.includes("--cached")))}\n`;
+  const onlyAt = process.argv.indexOf("--only");
+  const only = onlyAt < 0 ? null : process.argv[onlyAt + 1].split(",");
+  const output = `${JSON.stringify(generate(at < 0 ? null : process.argv[at + 1], process.argv.includes("--cached"), only))}\n`;
   if (process.argv.includes("--check")) {
     const present = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, "utf8").replaceAll("\r\n", "\n") : "";
     if (present !== output) throw new Error("generated/entity-data.json differs from a fresh generation");

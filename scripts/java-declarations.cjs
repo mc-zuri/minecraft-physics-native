@@ -115,4 +115,83 @@ function methodsNamed(source, name) {
   return methodDeclarations(source).filter((method) => method.name === name && !method.declaringClass.includes("."));
 }
 
-module.exports = { methodDeclarations, methodsNamed };
+/**
+ * The members of the classes of `source` that are no method: each field (its first declarator), enum constant and
+ * constructor, at any depth of named classes, as `{ declaringClass, name, kind, line, source }`. A local variable, a
+ * lambda's parameter and what an initializer holds are no member; a constructor is named after its class.
+ */
+function memberDeclarations(source) {
+  const code = javaCode(source);
+  const found = [];
+  const push = (declaringClass, name, kind, from, to) => {
+    const start = from + (code.slice(from, to).length - code.slice(from, to).trimStart().length);
+    found.push({ declaringClass, name, kind, line: source.slice(0, start).split("\n").length, source: source.slice(start, to).trim() });
+  };
+  const body = (open, close, className, isEnum) => {
+    let segment = open + 1;
+    let constants = isEnum;
+    const closeConstants = (to) => {
+      let from = segment;
+      for (const part of splitTopLevel(code.slice(segment, to))) {
+        const at = code.indexOf(part, from);
+        const name = /^(?:@[\w$.]+(?:\([^)]*\))?\s*)*([A-Za-z_$][\w$]*)/.exec(part);
+        if (name) push(className, name[1], "constant", at, at + part.length);
+        from = at + part.length;
+      }
+      constants = false;
+    };
+    for (let index = open + 1; index < close; index += 1) {
+      const current = code[index];
+      if (current === "(" || current === "[") {
+        index = matchingBracket(code, index);
+        if (index < 0) return;
+      } else if (current === ";") {
+        if (constants) closeConstants(index);
+        else {
+          const head = code.slice(segment, index).split("=")[0];
+          const name = /([A-Za-z_$][\w$]*)\s*(?:\[\s*\])*\s*$/.exec(head);
+          // a type before the name: a field, not an abstract or interface method (those end in `)`)
+          if (name && !/\)\s*(?:throws[^;]*)?$/.test(head) && /\S\s+[A-Za-z_$][\w$]*\s*(?:\[\s*\])*\s*$/.test(head)) {
+            push(className, name[1], "field", segment, index + 1);
+          }
+        }
+        segment = index + 1;
+      } else if (current === "{") {
+        const end = matchingBracket(code, index);
+        if (end < 0) return;
+        const text = code.slice(segment, index);
+        const nested = CLASS_HEADER.exec(text);
+        if (constants || text.includes("=")) {
+          // a constant's own body, or an initializer's anonymous class or array: part of what holds it
+        } else if (nested) {
+          body(index, end, `${className}.${nested[1]}`, /\benum\b/.test(text));
+          segment = end + 1;
+        } else {
+          const own = className.split(".").at(-1);
+          const header = /([A-Za-z_$][\w$]*)\s*\([^]*\)\s*(?:throws[^{]*)?$/.exec(text);
+          // a constructor: its class's name with no type before it, only modifiers
+          if (header && header[1] === own && /^(?:\s|@[\w$.]+|public|protected|private)*$/.test(text.slice(0, header.index))) {
+            push(className, own, "constructor", segment, end + 1);
+          }
+          segment = end + 1;
+        }
+        index = end;
+      }
+    }
+    if (constants) closeConstants(close);
+  };
+  let cursor = 0;
+  while (cursor < code.length) {
+    const open = code.indexOf("{", cursor);
+    if (open < 0) break;
+    const text = code.slice(cursor, open);
+    const header = CLASS_HEADER.exec(text);
+    const close = matchingBracket(code, open);
+    if (close < 0) break;
+    if (header) body(open, close, header[1], /\benum\b/.test(text));
+    cursor = close + 1;
+  }
+  return found;
+}
+
+module.exports = { methodDeclarations, methodsNamed, memberDeclarations };

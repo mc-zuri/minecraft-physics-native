@@ -22,10 +22,10 @@ const jarsAtHand = fs.existsSync(path.join(clientJarRoot(), '1.8.9')) && javap()
 describe('the 1.8.8 alias', () => {
     const alias = aliases['1.8.8'];
 
-    it('is the only alias, and every registered stand-in has one', () => {
-        const standIns = LEGACY_RELEASES.filter(release => release.source !== release.version).map(release => release.version);
-        assert.deepEqual(standIns, ['1.8.8']);
-        assert.deepEqual(Object.keys(aliases), standIns);
+    it('is the only alias on record, and no release is served from another any more', () => {
+        // (1.8.8 is read from its own decompiled jar; the alias stays as the proof that 1.8.9's code is 1.8.8's)
+        assert.deepEqual(LEGACY_RELEASES.filter(release => release.source !== release.version), []);
+        assert.deepEqual(Object.keys(aliases), ['1.8.8']);
         assert.equal(aliasDefect(alias), null);
     });
 
@@ -40,11 +40,10 @@ describe('the 1.8.8 alias', () => {
         for (const reason of Object.values(alias.differing)) assert.ok(reason.length > 0);
     });
 
-    it('is what the release manifest cites', () => {
-        assert.equal(manifest['1.8.8'].source.status, 'alias');
-        assert.equal(manifest['1.8.8'].source.sourceRelease, '1.8.9');
-        assert.equal(manifest['1.8.8'].source.evidence, alias.evidence);
-        assert.deepEqual(manifest['1.8.8'].source.scope, REQUIRED_SCOPE);
+    it('covers the scope a served alias needs, though the release manifest no longer cites it', () => {
+        assert.equal(manifest['1.8.8'].source.status, 'embedded');
+        assert.equal(manifest['1.8.8'].source.embedded, '1.8.8');
+        assert.deepEqual(alias.scope, REQUIRED_SCOPE);
     });
 
     it('repeats on the very jars', { skip: !jarsAtHand }, () => {

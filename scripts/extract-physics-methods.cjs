@@ -5,25 +5,22 @@
 //
 // A modern release's files come from its exact Mojang-named tree (scripts/source-roots.cjs), recorded
 // with their `origin` (the decompile they are) and `source`. A release without one fails the run;
-// --cached keeps its previous entry instead, marked `cached`. The releases before those trees
-// (1.8.8 - 1.13.2) are read from MC_DECOMPILED_ROOT like scripts/legacy-release-data.cjs (1.8.8 from
-// the 1.8.9 tree, generated/release-aliases.json). Under Yarn names a method is found by its Yarn or
-// intermediary name (`matchedName`); hashes of different origins are not compared
-// (scripts/report-physics-breakpoints.cjs). A file absent from a source that was read does not exist
-// in the release; `absentMethods` are a present file's targets it does not declare.
+// --cached keeps its previous entry instead, marked `cached`. The legacy releases (1.8.8 - 1.13.2) are
+// read from their own decompiled jars under MC_LEGACY_SOURCES like scripts/legacy-release-data.cjs, whose
+// mapping gives these files and methods their Mojang names (origin `legacy-jar`); hashes of different
+// origins are not compared (scripts/report-physics-breakpoints.cjs). A file absent from a source that was
+// read does not exist in the release; `absentMethods` are a present file's targets it does not declare.
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { registeredReleases } = require("./registered-releases.cjs");
 const { LEGACY_RELEASES } = require("./legacy-release-data.cjs");
 const { methodsNamed } = require("./java-declarations.cjs");
-const { modernTree, recordedSource } = require("./source-roots.cjs");
+const { modernTree, legacyTree, recordedSource } = require("./source-roots.cjs");
 const { PINNED_SOURCES, PINNED_CLIENTS } = require("./source-pins.cjs");
 
 const repositoryRoot = path.resolve(__dirname, "..");
 const outputPath = path.join(repositoryRoot, "generated", "physics-methods.json");
-const decompiledRoot = process.env.MC_DECOMPILED_ROOT
-  ?? path.join(repositoryRoot, "..", "..", "pr", "mc-decompiled");
 
 // The tracked files by their Mojang names, with their methods.
 const targets = [
@@ -84,57 +81,10 @@ const locations = {
     ],
     "FireworkRocketEntity.java": ["net/minecraft/world/entity/projectile/FireworkRocketEntity.java"],
   },
-  yarn: {
-    "Entity.java": ["net/minecraft/entity/Entity.java"],
-    "LivingEntity.java": ["net/minecraft/entity/LivingEntity.java"],
-    "Player.java": ["net/minecraft/entity/player/PlayerEntity.java"],
-    "LocalPlayer.java": [
-      "net/minecraft/client/network/ClientPlayerEntity.java",
-      "net/minecraft/entity/player/ClientPlayerEntity.java",
-    ],
-    "Boat.java": ["net/minecraft/entity/vehicle/BoatEntity.java"],
-    "AbstractBoat.java": ["net/minecraft/entity/vehicle/AbstractBoatEntity.java"],
-    "AbstractMinecart.java": ["net/minecraft/entity/vehicle/AbstractMinecartEntity.java"],
-    // the horse base class: HorseBaseEntity before 1.11 and again 1.14 - 1.16, AbstractHorseEntity
-    // in net.minecraft.entity 1.11 - 1.13
-    "AbstractHorse.java": [
-      "net/minecraft/entity/passive/AbstractHorseEntity.java",
-      "net/minecraft/entity/AbstractHorseEntity.java",
-      "net/minecraft/entity/passive/HorseBaseEntity.java",
-    ],
-    // the arrow is the base of the legacy projectile files; there is no shared projectile class
-    "ProjectileUtil.java": ["net/minecraft/entity/projectile/ProjectileUtil.java"],
-    "ThrowableProjectile.java": ["net/minecraft/entity/thrown/ThrowableEntity.java", "net/minecraft/entity/thrown/ThrownEntity.java"],
-    "AbstractArrow.java": ["net/minecraft/entity/projectile/AbstractArrowEntity.java"],
-    "ThrownTrident.java": ["net/minecraft/entity/projectile/TridentEntity.java"],
-    "AbstractHurtingProjectile.java": ["net/minecraft/entity/projectile/ExplosiveProjectileEntity.java"],
-    "FireworkRocketEntity.java": ["net/minecraft/entity/projectile/FireworkRocketEntity.java", "net/minecraft/entity/FireworkRocketEntity.java"],
-  },
 };
 
-// The Yarn (and intermediary, for methods Yarn had not named) names of the tracked methods.
-const yarnMethodNames = {
-  "Entity.java": { collide: ["adjustMovementForCollisions"], push: ["pushAwayFrom"], rideTick: ["tickRiding"] },
-  "LivingEntity.java": {
-    travel: ["travel", "method_2657"],
-    handleRelativeFrictionAndCalculateMovement: ["applyMovementInput"],
-    causeFallDamage: ["handleFallDamage"],
-  },
-  "Player.java": { travel: ["travel", "method_2657"], aiStep: ["tickMovement"], rideTick: ["tickRiding"] },
-  "LocalPlayer.java": { aiStep: ["tickMovement"], sendPosition: ["sendMovementPackets"] },
-  "Boat.java": { floatBoat: ["updateVelocity"], controlBoat: ["updatePaddles"] },
-  "AbstractBoat.java": { floatBoat: ["updateVelocity"], controlBoat: ["updatePaddles"] },
-  "AbstractMinecart.java": { moveAlongTrack: ["moveOnRail"] },
-  "AbstractHorse.java": {
-    travel: ["travel", "method_2657"],
-    tickRidden: ["tickControlled"],
-    getRiddenInput: ["getControlledMovementInput"],
-  },
-};
-
-function methodNames(fileName, name, mapping) {
-  return mapping === "yarn" ? yarnMethodNames[fileName]?.[name] ?? [name] : [name];
-}
+// (each tracked method under its Mojang name: the legacy decompiles are Mojang-named too)
+const methodNames = (fileName, name) => [name];
 
 function extractMethods(source, fileName, names, mapping) {
   const methods = {};
@@ -179,13 +129,13 @@ function treeFiles(version) {
   return files;
 }
 
-/** A tracked file of a legacy release's tree: { text, path, origin, mapping } or null. */
-function legacyFile(sourceRelease, fileName) {
-  const local = path.join(decompiledRoot, sourceRelease);
-  for (const relativePath of locations.yarn[fileName] ?? []) {
-    const filePath = path.join(local, relativePath);
+/** A tracked file of a legacy release's decompiled jar: { text, path, origin, mapping } or null. */
+function legacyFile(version, fileName) {
+  const tree = legacyTree(version);
+  for (const relativePath of locations.mojang[fileName] ?? []) {
+    const filePath = path.join(tree, relativePath);
     if (fs.existsSync(filePath)) {
-      return { text: fs.readFileSync(filePath, "utf8"), path: `${sourceRelease}/${relativePath}`, origin: "mc-decompiled", mapping: "yarn" };
+      return { text: fs.readFileSync(filePath, "utf8"), path: `${version}/${relativePath}`, origin: "legacy-jar", mapping: "mojang" };
     }
   }
   return null;
@@ -206,14 +156,14 @@ for (const { version } of registeredReleases()) {
     else unavailable.push(version);
     continue;
   }
-  if (legacy && !fs.existsSync(path.join(decompiledRoot, sourceRelease))) {
+  if (legacy && !legacyTree(version)) {
     if (cachedMode && previous[version]) releases[version] = { ...previous[version], cached: true };
     else unavailable.push(version);
     continue;
   }
   const files = tree ?? {};
   for (const [fileName, names] of legacy ? targets : []) {
-    const found = legacyFile(sourceRelease, fileName);
+    const found = legacyFile(version, fileName);
     if (!found) continue;
     files[fileName] = {
       path: found.path,

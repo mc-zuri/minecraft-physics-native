@@ -82,7 +82,8 @@ describe('block friction', () => {
             }
         }
         assert.ok(compared.includes('1.8.8') && compared.includes('1.12.2') && compared.includes('1.13.2') && compared.includes('26.3'), compared.join(' '));
-        assert.equal(compared.length, 44, compared.join(' '));
+        // every release, the six whose tables are their pair's (B302) included: none is skipped for its registry
+        assert.equal(compared.length, 50, compared.join(' '));
     });
 
     it('reads the same from the sources at hand', { skip: treeOf('26.3') == null }, () => {

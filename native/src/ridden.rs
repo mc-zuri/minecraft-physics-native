@@ -1,7 +1,7 @@
 use crate::legacy_fluid;
 use crate::math::{Aabb, Vec3};
 use crate::simulation::{
-    apply_block_effects, apply_inside_block_effects, block_below_affecting_movement,
+    applies_effects_from_blocks, apply_block_effects, apply_inside_block_effects, block_below_affecting_movement,
     block_position, block_speed_factor, blocks_inside, blocks_inside_moves, climbable,
     collision_query_entity, entity_collision_context, fluid_falling_adjusted_y,
     accumulated_fall_distance, compute_modified_friction, position_of_bounding_box, friction_influenced_speed, landing_position, main_supporting_block, movements_this_tick,
@@ -57,9 +57,9 @@ impl RiddenMobKind {
 
     /// The kind of a mob by its entity name in a release that has it. Donkeys, mules and the undead
     /// horses are types from 1.11 and HorseType variants of the horse before it (1.10.2
-    /// EntityType.java:303, HorseType.java:10-21, 1.11.2 EntityType.java:200-204), so all of them
-    /// ride from the first release. Llama: 1.11.2 EntityType.java:250, not in 1.10.2. Trader
-    /// llama: 1.14 EntityType.java, not in 1.13.2. Strider: 1.16, not in 1.15. Camel: 1.19.3
+    /// EntityType.java:310, HorseType.java:10-21, 1.11.2 EntityType.java:200-204), so all of them
+    /// ride from the first release. Llama: 1.11.2 EntityType.java:270, not in 1.10.2. Trader
+    /// llama: 1.14.4 EntityType.java, not in 1.13.2. Strider: 1.16, not in 1.15. Camel: 1.19.3
     /// EntityType.java:203 (behind UPDATE_1_20), not in 1.19.2. Happy ghast: 1.21.6, not in
     /// 1.21.5. Nautilus, zombie nautilus and camel husk: 1.21.11, not in 1.21.10.
     pub fn parse_for(name: &str, release: MinecraftVersion) -> Result<Self, String> {
@@ -80,9 +80,9 @@ impl RiddenMobKind {
     }
 
     /// EntityType's width and height: before 1.14 every horse has AbstractHorse's setSize, 1.4F
-    /// wide before 1.9 (1.8.9 HorseBaseEntity.java:207; 1.9.4 :239, 1.13.2
-    /// AbstractHorseEntity.java:142), and a donkey is 1.5 high from 1.14 (1.14
-    /// EntityType.java:164).
+    /// wide before 1.9 (1.8.8 AbstractHorse.java:209; 1.9.4 :242, 1.13.2
+    /// AbstractHorse.java:148), and a donkey is 1.5 high from 1.14 (1.14.4
+    /// EntityType.java:514).
     #[must_use]
     pub fn dimensions(self, release: MinecraftVersion) -> (f32, f32) {
         match self {
@@ -96,6 +96,7 @@ impl RiddenMobKind {
             {
                 (1.4, 1.6)
             }
+            // (1.13.2 AbstractHorse.java:148; 1.14.4 EntityType.java:514)
             Self::Donkey if release.at_least(1, 14, 0) => (1.3964844, 1.5),
             Self::Horse | Self::Donkey | Self::Mule | Self::SkeletonHorse | Self::ZombieHorse => {
                 (1.3964844, 1.6)
@@ -105,7 +106,7 @@ impl RiddenMobKind {
     }
 
     /// EntityType's eye height, 0.85F of the height where the type gives none (1.20.5
-    /// EntityType.java:256, 511, 590, 26.3 EntityTypes.java:357, 397, 405, 427,
+    /// EntityType.java:664, 227, 239, 26.3 EntityTypes.java:357, 397, 405, 427,
     /// EntityDimensions.java:15).
     fn eye_height(self) -> f32 {
         match self {
@@ -120,7 +121,11 @@ impl RiddenMobKind {
         }
     }
 
-    /// The mob's MOVEMENT_SPEED attribute base (createAttributes).
+    /// The mob's MOVEMENT_SPEED attribute base (createAttributes: Pig#createAttributes,
+    /// Strider#createAttributes, Camel#createAttributes, HappyGhast#createAttributes,
+    /// AbstractNautilus#createAttributes, ZombieNautilus#createAttributes,
+    /// AbstractHorse#createBaseHorseAttributes, AbstractChestedHorse#createBaseChestedHorseAttributes,
+    /// SkeletonHorse#createAttributes, ZombieHorse#createAttributes).
     #[must_use]
     pub fn movement_speed(self) -> f64 {
         match self {
@@ -134,6 +139,17 @@ impl RiddenMobKind {
             Self::ZombieNautilus => 1.100000023841858,
             Self::Horse => 0.22499999403953552,
             Self::SkeletonHorse | Self::ZombieHorse => 0.20000000298023224,
+        }
+    }
+
+    /// The base MOVEMENT_SPEED of the release: from 1.21.11 ZombieHorse.createAttributes adds none of
+    /// its own, so it keeps AbstractHorse.createBaseHorseAttributes' 0.225F (1.21.10
+    /// ZombieHorse.java:37 adds 0.2F; 1.21.11 ZombieHorse.java:56, 26.3 :54 do not)
+    pub fn movement_speed_in(self, release: MinecraftVersion) -> f64 {
+        if self == Self::ZombieHorse && release.at_least(1, 21, 11) {
+            Self::Horse.movement_speed()
+        } else {
+            self.movement_speed()
         }
     }
 
@@ -155,8 +171,8 @@ impl RiddenMobKind {
     }
 
     /// Whether LivingEntity.onClimbable can hold the mob: AbstractHorse's is false, for every
-    /// horse, donkey, mule, llama and camel (1.8.9 HorseBaseEntity.java:1395, 1.12.2
-    /// AbstractHorseEntity.java:958, 1.21.4 :1019, 1.21.11 AbstractHorse.java:940, 26.3 :920;
+    /// horse, donkey, mule, llama and camel (1.8.8 AbstractHorse.java:1390, 1.12.2
+    /// AbstractHorse.java:963, 1.21.4 :984, 1.21.11 AbstractHorse.java:940, 26.3 :920;
     /// Camel and AbstractChestedHorse inherit it).
     fn climbs(self) -> bool {
         !self.is_horse() && self != Self::Camel
@@ -239,10 +255,10 @@ pub struct RiddenMobState {
     /// The mob's synced NoGravity flag (Entity.isNoGravity, 1.10+): its travel takes no gravity.
     pub no_gravity: bool,
     /// Entity.stuckSpeedMultiplier, which a cobweb, berry bush or powder snow leaves for the next
-    /// move (1.9.4 Entity.java:547-549, 26.3 :783-788, 3072-3074).
+    /// move (1.9.4 Entity.java:550-552, 26.3 :783-788, 3072-3074).
     pub stuck_speed_multiplier: Vec3,
     /// Width and height over the type's, of a mob that is not its type's size: the SCALE attribute
-    /// and age (1.20.5 LivingEntity.java:3250-3255, 26.3 :3684-3689).
+    /// and age (1.20.5 LivingEntity.java:3264-3269, 26.3 :3684-3689).
     pub scale: (f32, f32),
     /// Slow Falling (1.13+): at most 0.01 of gravity while it falls.
     pub slow_falling: bool,
@@ -251,7 +267,7 @@ pub struct RiddenMobState {
     /// Dolphin's Grace (1.13+): its water slow-down is 0.96F.
     pub dolphins_grace: bool,
     /// Weaving (1.20.5+): a cobweb leaves it (0.5, 0.25, 0.5), not the (0.25, 0.05F, 0.25) of a
-    /// mob without it (1.20.5 CobwebBlock.java:24-29, 26.3 WebBlock.java:18-26).
+    /// mob without it (1.20.5 WebBlock.java:24-31, 26.3 WebBlock.java:18-26).
     pub weaving: bool,
     /// The GRAVITY attribute (1.20.5+), 0.08 when not given.
     pub gravity: Option<f64>,
@@ -330,8 +346,8 @@ impl RiddenMobState {
     }
 
     /// The type's dimensions in the mob's pose: a camel in the SITTING pose (while it sits or sits
-    /// down, Camel.isCamelSitting) is 1.43F lower (1.19.3 CamelEntity.java:68, 135-136; 1.21.11
-    /// Camel.java:79, 151-152; 26.3 Camel.java:146, 609).
+    /// down, Camel.isCamelSitting) is 1.43F lower (1.19.3 Camel.java:71, 138-139; 1.21.11
+    /// Camel.java:70-79, 138-139; 26.3 Camel.java:146, 609).
     fn pose_dimensions(&self, release: MinecraftVersion) -> (f32, f32) {
         let (width, height) = self.kind.dimensions(release);
         if self.kind == RiddenMobKind::Camel && self.sitting {
@@ -358,14 +374,21 @@ impl RiddenMobState {
     }
 
     /// Entity.getFluidJumpThreshold: the 0.4 of a mob whose scaled eyes are that high, else 0 (26.3
-    /// Entity.java:3803-3805, 1.20.5 LivingEntity.java:3250-3255, EntityDimensions.java:34 scales the
-    /// eyes by the height's factor; a sitting camel's are 0.845F, 26.3 Camel.java:609). Before
-    /// 1.20.5 no rideable mob has eyes that low: no SCALE, and no adult under 0.4.
+    /// Entity.java:3803-3805, 1.20.5 LivingEntity.java:3264-3269, EntityDimensions.java:40 scales the
+    /// eyes by the height's factor; a sitting camel's are 0.845F, 26.3 Camel.java:609). It is 1.16's
+    /// (1.16 Entity.java:2664-2666, 1.20.4 :3148-3150), and before 1.20.5 a baby's eyes are scaled
+    /// the same way: its dimensions are the type's times getScale, 0.5F of a baby (1.20.4
+    /// LivingEntity.java:561-563; 1.16 LivingEntity.java:2955,
+    /// 1.20.4 :3185-3186), and its eyes 0.85F (1.20.4 Entity.java:2802-2804), 0.95F of a horse
+    /// (1.20.4 AbstractHorse.java:1005-1007) or a camel's height less 0.1F * getScale (1.20.4
+    /// Camel.java:149-151) of those, as the type's eyes times the scale give them. A baby pig
+    /// saddled by a command and steered has its 0.765 eyes at 0.3825. Before 1.16 the jump in a
+    /// fluid compares with 0.4 (1.15.2 LivingEntity.java:2295).
     fn fluid_jump_threshold(&self, release: MinecraftVersion) -> f64 {
         if let Some(plain) = self.plain {
             return plain.fluid_jump_threshold;
         }
-        if !release.at_least(1, 20, 5) {
+        if !release.at_least(1, 16, 0) {
             return 0.4;
         }
         let eyes = if self.kind == RiddenMobKind::Camel && self.sitting {
@@ -380,6 +403,7 @@ impl RiddenMobState {
         }
     }
 
+    /// EntityDimensions#makeBoundingBox of the mob's dimensions at `position`.
     fn box_at(&self, position: Vec3, release: MinecraftVersion) -> Aabb {
         let (width, height) = self.dimensions(release);
         let half = f64::from(width / 2.0);
@@ -401,6 +425,7 @@ impl RiddenMobState {
 /// own tick after its move, and the riding jump its rider released.
 pub fn tick_ridden_mob(mob: &mut RiddenMobState, world: &WorldSnapshot, release: MinecraftVersion) {
     let (width, height) = mob.dimensions(release);
+    // (1.16.5 Entity.java:631-632; 1.17 Entity.java:561)
     let kept_box = (!release.at_least(1, 17, 0)).then(|| {
         mob.bounding_box
             .unwrap_or_else(|| mob.box_at(mob.position, release))
@@ -429,9 +454,11 @@ pub fn tick_ridden_mob(mob: &mut RiddenMobState, world: &WorldSnapshot, release:
         .previous_position
         .map(|previous| body.position - previous);
     let support = release
+        // (1.19.4 Entity.java:770-772; 1.20 Entity.java:797-799)
         .at_least(1, 20, 0)
         .then(|| main_supporting_block(world, &body, previous_movement, release))
         .flatten();
+    // (1.18.2 Strider.java:306; 1.19 Strider.java:306)
     if mob.kind == RiddenMobKind::Strider && (!mob.no_ai || !release.at_least(1, 19, 0)) {
         mob.suffocating = !strider_is_warm(mob, &body, world, support, release);
     }
@@ -445,6 +472,7 @@ pub fn tick_ridden_mob(mob: &mut RiddenMobState, world: &WorldSnapshot, release:
     } else if !release.at_least(1, 21, 5) {
         body.velocity = body.velocity.scale(0.98);
     }
+    // (1.8.8 LivingEntity.java:1414; 1.9.4 LivingEntity.java:1689)
     let negligible = if release.at_least(1, 9, 0) {
         0.003
     } else {
@@ -459,15 +487,16 @@ pub fn tick_ridden_mob(mob: &mut RiddenMobState, world: &WorldSnapshot, release:
             *axis = 0.0;
         }
     }
+    // (1.8.8 LivingEntity.java:1133-1134; 1.9.4 LivingEntity.java:1323-1324)
     if !release.at_least(1, 9, 0) {
-        // 1.8 moves a mob only where canMoveVoluntarily, off the client (1.8.9
-        // LivingEntity.java:1133, 1419, 1568-1570): a horse's travel turns it to its rider and
-        // drops its jump on the ground but moves it on the server alone (HorseBaseEntity.java:
-        // 1064-1111), and the rider's jump goes to the server (ClientPlayerEntity.java:267). The
+        // 1.8 moves a mob only where canMoveVoluntarily, off the client (1.8.8
+        // LivingEntity.java:1134, 1408, 1556-1558): a horse's travel turns it to its rider and
+        // drops its jump on the ground but moves it on the server alone (AbstractHorse.java:
+        // 1064-1111), and the rider's jump goes to the server (LocalPlayer.java:264). The
         // mob keeps the server's position, by its interpolation.
         if mob.kind.is_horse() && mob.saddled {
-            // HorseBaseEntity.travel's setRotation (1.8.9 HorseBaseEntity.java:1066-1068) takes
-            // both % 360.0F (1.8.9 Entity.java:321-323)
+            // AbstractHorse.travel's setRotation (1.8.8 AbstractHorse.java:1063-1065) takes
+            // both % 360.0F (1.8.8 Entity.java:323-325)
             mob.yaw = mob.rider.yaw % 360.0;
             mob.pitch = (mob.rider.pitch * 0.5) % 360.0;
             if body.on_ground {
@@ -479,7 +508,7 @@ pub fn tick_ridden_mob(mob: &mut RiddenMobState, world: &WorldSnapshot, release:
         mob.position = body.position;
         mob.velocity = body.velocity;
         mob.in_water = body.in_water;
-        // (Entity.isInLava asks the world, at where the interpolation left it: 1.8.9 Entity.java:927-929)
+        // (Entity.isInLava asks the world, at where the interpolation left it: 1.8.8 Entity.java:922-924)
         mob.in_lava = legacy_fluid::touching_lava(world, body.bounds(), release);
         mob.fall_distance = body.fall_distance;
         mob.bounding_box = body.bounding_box;
@@ -492,18 +521,20 @@ pub fn tick_ridden_mob(mob: &mut RiddenMobState, world: &WorldSnapshot, release:
     let forward_before = mob.own_forward;
     let input = tick_ridden(mob, &mut body, world, support, release);
     let mut moved = None;
+    // (1.21.5 Mob.java:1191-1193; 1.21.6 Entity.java:3426-3428)
     if mob.no_ai && release.at_least(1, 21, 5) && !release.at_least(1, 21, 6) {
         // 1.21.5 Mob.canSimulateMovement is false without AI: travelRidden stops at its velocity,
-        // before the setSpeed that writes both the speed and zza (LivingEntity.java:2359-2364)
+        // before the setSpeed that writes both the speed and zza (LivingEntity.java:2335-2340)
         if mob.own_forward == mob.ridden_speed {
             mob.own_forward = forward_before;
         }
         mob.ridden_speed = speed_before;
         body.velocity = Vec3::ZERO;
     } else {
-        let unsaddled = (mob.kind.is_horse()
+        let unsaddled = ((mob.kind.is_horse()
             || matches!(mob.kind, RiddenMobKind::Pig | RiddenMobKind::Strider))
-            && !mob.saddled;
+            && !mob.saddled)
+            || camel_ignores_rider_1_19_3(mob, release);
         let air_speed = if unsaddled {
             0.02
         } else if release.at_least(1, 19, 4) {
@@ -520,7 +551,9 @@ pub fn tick_ridden_mob(mob: &mut RiddenMobState, world: &WorldSnapshot, release:
         };
         moved = travel(mob, &mut body, around, input, air_speed);
     }
-    if release.at_least(1, 21, 2) {
+    // (1.21.1 Entity.java:738; 1.21.2 LivingEntity.java:2817-2819): the ridden mob is the local
+    // player's to move, so its client applies them
+    if release.at_least(1, 21, 2) && applies_effects_from_blocks(&body, release) {
         let (requested, displacement) = moved.map_or((Vec3::ZERO, Vec3::ZERO), |moved| {
             (moved.requested, moved.moved)
         });
@@ -533,6 +566,15 @@ pub fn tick_ridden_mob(mob: &mut RiddenMobState, world: &WorldSnapshot, release:
     // (1.17 ItemSteerable.java:48, 1.18.1 :46, 1.19.3 :48; none in 1.16.5 or 1.19.4)
     let steered = matches!(mob.kind, RiddenMobKind::Pig | RiddenMobKind::Strider) && mob.saddled;
     if steered && release.at_least(1, 17, 0) && !release.at_least(1, 19, 4) {
+        check_inside_blocks(&mut body, world, release);
+    }
+    // and so does AbstractHorse.travel's steered branch, a saddled horse's (a llama has no
+    // controlling passenger) or a 1.19.3 camel's that does not ignore its rider, by
+    // tryCheckBlockCollision (1.17 HorseBaseEntity.java:765, 1.19 AbstractHorseEntity.java:763,
+    // 1.19.3 :783; none in 1.16.5 :748-800 or 1.19.4)
+    let horse_steered = (mob.kind.is_horse() && mob.kind.rears() && mob.saddled)
+        || (mob.kind == RiddenMobKind::Camel && !camel_ignores_rider_1_19_3(mob, release));
+    if horse_steered && release.at_least(1, 17, 0) && !release.at_least(1, 19, 4) {
         check_inside_blocks(&mut body, world, release);
     }
     after_ridden_travel(mob, &mut body, world, release);
@@ -566,8 +608,8 @@ fn push_by_fluids(
     let mut water_height = 0.0;
     if legacy_fluid::applies(release) {
         // Entity.handleWaterMovement before 1.13: the box shrunk by 0.4F vertically and 0.001 all
-        // round, its water's flows summed and normalized (1.12.2 Entity.java:1048-1063,
-        // World.java:1635-1674; 1.9.4 Entity.java:950)
+        // round, its water's flows summed and normalized (1.12.2 Entity.java:1040-1055,
+        // Level.java:1616-1655; 1.9.4 Entity.java:948)
         legacy_fluid::handle_water_movement(body, world, pushed, release);
     } else {
         // (1.13: the fluid's own height, 1.13.2 Entity.java:2511-2551)
@@ -582,7 +624,9 @@ fn push_by_fluids(
         }
     }
     // 1.16 - 1.16.1 measure no lava in water and keep the inLava of the last move (1.16
-    // Entity.java:1042-1051, 1164-1166)
+    // Entity.java:1039-1048, 1161-1163; 1.16.1 Entity.java:1039-1047 returns in water before the
+    // lava, :1161-1162 isTouchingLava); 1.16.2 measures the lava in water too and its inLava is that
+    // height (1.16.2 Entity.java:1064-1070, 1178-1179)
     let measures_lava = release.at_least(1, 16, 2) || !release.at_least(1, 16, 0) || !body.in_water;
     let lava = if measures_lava {
         world.fluid_contact(FluidState::Lava, bounds, release)
@@ -596,12 +640,13 @@ fn push_by_fluids(
         if release.at_least(1, 16, 2) {
             body.in_lava = lava.height > 0.0;
         }
+    // (1.13.2 Entity.java:1143-1145; 1.14.4 Entity.java:568-569, 1171-1173)
     } else if !release.at_least(1, 14, 0) {
         // Entity.isInLava before 1.14: lava in the box shrunk by 0.1F sideways and 0.4F
-        // vertically (1.9.4 Entity.java:1036, 1.12.2 :1139, 1.13.2 :1145)
+        // vertically (1.9.4 Entity.java:1032, 1.12.2 :1129, 1.13.2 :1144)
         body.in_lava = legacy_fluid::touching_lava(world, bounds, release);
     }
-    // Entity.baseTick: every tick in lava halves the fall distance (1.21.4 Entity.java:487)
+    // Entity.baseTick: every tick in lava halves the fall distance (1.21.4 Entity.java:514)
     if body.in_lava {
         body.fall_distance *= 0.5;
     }
@@ -609,8 +654,10 @@ fn push_by_fluids(
 }
 
 /// Strider.tick: warm on the blocks at its feet or under it that are lava, or touching lava in
-/// the tick before (getFluidHeight(LAVA) > 0, 1.16 StriderEntity.java:314; from 1.16.2 the
-/// inLava of the base tick).
+/// the tick before (getFluidHeight(LAVA) > 0, 1.16 Strider.java:314; from 1.16.2 the
+/// inLava of the base tick). The test is the same in 1.16.1 and 1.16.2 (1.16.1 Strider.java:314,
+/// 1.16.2 Strider.java:309); 1.16.1 measures no lava height in water (1.16.1 Entity.java:1039-1047),
+/// and from 1.16.2 isInLava is that height above 0 (1.16.2 Entity.java:1178-1179).
 fn strider_is_warm(
     mob: &RiddenMobState,
     body: &SimulationState,
@@ -674,10 +721,13 @@ fn tick_ridden(
         RiddenMobKind::Pig | RiddenMobKind::Strider if !mob.saddled => {
             mob.own_forward *= 0.98;
             let input = Vec3::new(0.0, 0.0, f64::from(mob.own_forward));
-            if mob.kind == RiddenMobKind::Strider {
-                // Strider.travel's setSpeed(getMoveSpeed()) before ItemSteerable.travel, which a
-                // Mob's setSpeed makes its zza too (1.16 StriderEntity.java:260-266,
-                // MobEntity.java:494-497; 1.18.1 Strider.java:249-252, Mob.java:507-510)
+            // Strider.travel's setSpeed(getMoveSpeed()) before ItemSteerable.travel, which a
+            // Mob's setSpeed makes its zza too (1.16 Strider.java:260-266, Mob.java:488-491;
+            // 1.18.1 Strider.java:249-252, Mob.java:507-510; 1.19.3 Strider.java:254-257). 1.19.4
+            // drops the override for tickRidden and getRiddenSpeed, which only a controlling
+            // rider runs (1.19.4 Strider.java:263-278): out of a saddle a strider travels at the
+            // speed its own goals set, as a pig does
+            if mob.kind == RiddenMobKind::Strider && !release.at_least(1, 19, 4) {
                 mob.ridden_speed = strider_move_speed(mob);
                 mob.own_forward = mob.ridden_speed;
             }
@@ -694,8 +744,8 @@ fn tick_ridden(
                 }
             }
             // 1.9.4 - 1.10.2 end the boost inside the boosted speed's block, which adds the boost
-            // in the tick it ends too (1.9.4 PigEntity.java:210-216, 1.10.2 :218-224; 1.11.2
-            // :237-245 ends it first)
+            // in the tick it ends too (1.9.4 Pig.java:211-217, 1.10.2 :219-225; 1.11.2
+            // :238-246 ends it first)
             let boosted = mob.boosting || (boost_ended && !release.at_least(1, 11, 0));
             mob.ridden_speed = steering_speed(mob, boosted, release);
             mob.own_forward = mob.ridden_speed;
@@ -703,6 +753,21 @@ fn tick_ridden(
         }
         RiddenMobKind::Camel => {
             let refuses = camel_refuses_to_move(mob);
+            if refuses && !release.at_least(1, 19, 4) {
+                // 1.19.3: Camel.ignoresMovementInput stands a sitting camel up for a forward
+                // input and says it ignores the rider while stationary, so AbstractHorse.travel
+                // takes its other branch: no turn, jump or speed of the rider's, the camel's own
+                // input after LivingEntity.tickMovement's 0.98 (1.19.3 AbstractHorse.java:746-789,
+                // Camel.java:219-249, LivingEntity.java:2594-2598); from 1.19.4 getRiddenInput
+                // gives a camel that refuses to move none (1.19.4 Camel.java:262-263)
+                if rider.forward > 0.0 && mob.sitting && !camel_in_pose_transition(mob) {
+                    mob.sitting = false;
+                    mob.pose_time = 0;
+                    body.height = f64::from(mob.dimensions(release).1);
+                }
+                mob.own_forward *= 0.98;
+                return Vec3::new(0.0, 0.0, f64::from(mob.own_forward));
+            }
             if !refuses {
                 face_rider(mob);
             }
@@ -716,7 +781,7 @@ fn tick_ridden(
                 mob.sitting = false;
                 mob.pose_time = 0;
                 // Camel.standUp's setPose(STANDING) refreshes its dimensions at once
-                // (1.21.11 Camel.java:244-249, 579-584, Entity.java:3230-3233)
+                // (1.21.11 Camel.java:228-234, 529-534, Entity.java:3305-3309)
                 body.height = f64::from(mob.dimensions(release).1);
             }
             let bonus = if rider.sprinting && mob.dash_cooldown == 0 {
@@ -768,7 +833,8 @@ fn face_rider(mob: &mut RiddenMobState) {
     mob.pitch = (mob.rider.pitch * 0.5) % 360.0;
 }
 
-/// A happy ghast's or nautilus's turn: a share of the way to its rider's yaw, half its pitch.
+/// A happy ghast's or nautilus's turn: a share of the way to its rider's yaw, half its pitch
+/// (HappyGhast#tickRidden, AbstractNautilus#tickRidden).
 fn turn_toward_rider(mob: &mut RiddenMobState, share: f32) {
     let yaw = mob.yaw + wrap_degrees(mob.rider.yaw - mob.yaw) * share;
     mob.yaw = yaw % 360.0;
@@ -805,13 +871,15 @@ fn horse_input(rider: RiderInput) -> Vec3 {
 
 /// The pig's and strider's ridden speed: MOVEMENT_SPEED * 0.225 (the strider's 0.55, while
 /// suffocating 0.35 of its speed less the suffocating 34%) times the boost factor; before 1.19.4
-/// ItemSteerable.travel's float steering speed, 0.23 suffocating, plus its boost.
+/// ItemSteerable.travel's float steering speed, 0.23 suffocating, plus its boost (1.19.3 Pig.java:253
+/// 0.225F; 1.19.4 Pig.java:258 0.225).
 fn steering_speed(mob: &RiddenMobState, boosted: bool, release: MinecraftVersion) -> f32 {
     let strider = mob.kind == RiddenMobKind::Strider;
     let boost_sin = || {
         let share = mob.boost_time as f32 / mob.boost_time_total as f32 * 3.1415927;
         mth_sin(f64::from(share), release) as f32
     };
+    // (1.19.3 Strider.java:265; 1.19.4 Strider.java:277)
     if !release.at_least(1, 19, 4) {
         let share = match (strider, mob.suffocating) {
             (false, _) => 0.225,
@@ -867,6 +935,7 @@ fn tick_ridden_horse(
     let rearing =
         body.on_ground && mob.jump_pending_scale == 0.0 && mob.standing && !mob.allow_stand_sliding;
     face_rider(mob);
+    // (1.19.3 AbstractHorse.java:757; 1.19.4 AbstractHorse.java:763)
     if !release.at_least(1, 19, 4) {
         if mob.jump_pending_scale > 0.0 && !mob.horse_jumping && body.on_ground {
             horse_jump(mob, body, world, support, release, input.z);
@@ -874,7 +943,8 @@ fn tick_ridden_horse(
         }
     } else if body.on_ground {
         // from 1.21.6 the check reads LivingEntity.jumping (its AbstractHorse.tickRidden); the
-        // horse's own flag, cleared here and set by the jump, is gone
+        // horse's own flag, cleared here and set by the jump, is gone (1.21.5
+        // AbstractHorse.java:711-713, 749; 1.21.6 AbstractHorse.java:717-719, 750-754)
         if !release.at_least(1, 21, 6) {
             mob.horse_jumping = false;
         }
@@ -915,7 +985,7 @@ fn block_jump_factor(
 }
 
 /// Jump Boost's part of a riding jump: (amplifier + 1) * 0.1F, a float the double jump takes before
-/// 1.20.5 (1.9.4 HorseBaseEntity.java:1050-1053, 1.14 :757-761, 1.18 :731-732, LivingEntity.java:
+/// 1.20.5 (1.9.4 AbstractHorse.java:1047-1050, 1.14.4 :660-667, 1.18 :726-727, LivingEntity.java:
 /// 1975-1977), getJumpBoostPower's 0.1F * (amplifier + 1.0F) in getJumpPower's float sum from
 /// 1.20.5 (1.20.5 LivingEntity.java:2065-2072, 1.21.11 :2258-2264).
 fn jump_boost_power(mob: &RiddenMobState) -> f32 {
@@ -925,7 +995,10 @@ fn jump_boost_power(mob: &RiddenMobState) -> f32 {
 
 /// AbstractHorse.executeRidersJump: up by JUMP_STRENGTH times the charge (and the block's jump
 /// factor from 1.15, in float from 1.20.5) plus Jump Boost's float 0.1F a level, and moving
-/// forward 0.4F of the charge along its yaw.
+/// forward 0.4F of the charge along its yaw. The double sum until 1.20.4 (1.20.4
+/// AbstractHorse.java:800-801), getJumpPower's float from 1.20.5 (1.20.5 AbstractHorse.java:789,
+/// LivingEntity.java:2063-2064); setIsJumping(true) until 1.21.5 (1.21.5 AbstractHorse.java:749,
+/// none in 1.21.6 AbstractHorse.java:750-754).
 fn horse_jump(
     mob: &mut RiddenMobState,
     body: &mut SimulationState,
@@ -936,6 +1009,7 @@ fn horse_jump(
 ) {
     let scale = mob.jump_pending_scale;
     let boost = jump_boost_power(mob);
+    // (1.14.4 AbstractHorse.java:664; 1.15 AbstractHorse.java:744)
     body.velocity.y = if !release.at_least(1, 15, 0) {
         mob.jump_strength * f64::from(scale) + f64::from(boost)
     } else if !release.at_least(1, 20, 5) {
@@ -957,19 +1031,33 @@ fn horse_jump(
     }
 }
 
-/// Camel.refuseToMove: sitting, or sitting down or standing up.
+/// A 1.19.3 camel that is stationary, whose Camel.ignoresMovementInput sends AbstractHorse.travel
+/// to the branch of a mob nobody steers (1.19.3 Camel.java:241-248, AbstractHorse.java:749); from
+/// 1.19.4 travelRidden takes the ridden input, which getRiddenInput zeroes (1.19.4
+/// Camel.java:262-263).
+fn camel_ignores_rider_1_19_3(mob: &RiddenMobState, release: MinecraftVersion) -> bool {
+    mob.kind == RiddenMobKind::Camel
+        && !release.at_least(1, 19, 4)
+        && camel_refuses_to_move(mob)
+}
+
+/// Camel#refuseToMove: sitting, or sitting down or standing up (1.19.3 Camel.java:233-235, 26.1
+/// :240-242). `sitting` is the camel's sitting state, which 1.19.3 reads as isPoseSitting and
+/// 1.19.4 on as isCamelSitting.
 fn camel_refuses_to_move(mob: &RiddenMobState) -> bool {
     mob.sitting || camel_in_pose_transition(mob)
 }
 
+/// Camel#isInPoseTransition: under 40 ticks in the pose while sitting, 52 while standing.
 fn camel_in_pose_transition(mob: &RiddenMobState) -> bool {
     mob.pose_time < if mob.sitting { 40 } else { 52 }
 }
 
 /// Camel.executeRidersJump: a dash along its look, 22.2222F * the charge * MOVEMENT_SPEED far and
 /// 1.4285F * the charge * its jump power high (in double before 1.20.5, LivingEntity.getJumpPower
-/// in float since), Jump Boost's 0.1F a level in it (1.19.3 CamelEntity.java:263-264, 1.21.11
-/// Camel.java:289-290).
+/// in float since), Jump Boost's 0.1F a level in it (1.19.3 Camel.java:266-267, 1.21.11
+/// Camel.java:267-267). The double jump power until 1.20.4 (1.20.4 Camel.java:287), the float
+/// getJumpPower() from 1.20.5 (1.20.5 Camel.java:256, LivingEntity.java:2059-2064).
 fn camel_dash(
     mob: &mut RiddenMobState,
     body: &mut SimulationState,
@@ -1029,7 +1117,7 @@ pub(crate) fn view_vector(pitch: f32, yaw: f32, release: MinecraftVersion) -> Ve
 }
 
 /// RangedAttribute.sanitizeValue: NaN is the minimum, the rest is clamped (1.20.5
-/// ClampedEntityAttribute.java:35-36, 26.3 RangedAttribute.java:29-31). What a caller gives for an
+/// RangedAttribute.java:30-31, 26.3 RangedAttribute.java:29-31). What a caller gives for an
 /// attribute a mob's travel reads is taken through it, so no value reaches the motion unsanitized.
 fn sanitized(value: f64, min: f64, max: f64) -> f64 {
     if value.is_nan() {
@@ -1041,7 +1129,7 @@ fn sanitized(value: f64, min: f64, max: f64) -> f64 {
 
 /// LivingEntity.maxUpStep with a player in control: at least 1 (a camel's 1.5); a pig or strider
 /// its rider does not steer steps 0.5 (1.16 ItemSteerable.java:50). From 1.20.5 the STEP_HEIGHT
-/// attribute, at least 1 with a player in control (1.20.5 LivingEntity.java:3500-3503, 26.3
+/// attribute, at least 1 with a player in control (1.20.5 LivingEntity.java:3507-3510, 26.3
 /// :3974-3977), sanitized as RangedAttribute does (Attributes.java:86).
 fn step_height(mob: &RiddenMobState, release: MinecraftVersion) -> f32 {
     if let Some(plain) = mob.plain {
@@ -1061,14 +1149,19 @@ fn step_height(mob: &RiddenMobState, release: MinecraftVersion) -> f32 {
 
 /// LivingEntity.getEffectiveGravity: the GRAVITY attribute from 1.20.5, sanitized (Attributes.java:
 /// 46), 0 under NoGravity, at most 0.01 falling under Slow Falling (1.13.2 LivingEntity.java:1511,
-/// 1.20.5 :2111-2115, 26.3 :2333-2339).
-fn effective_gravity(mob: &RiddenMobState, velocity_y: f64, release: MinecraftVersion) -> f64 {
-    let gravity = mob
-        .gravity
+/// 1.20.5 :2107-2111, 26.3 :2333-2339).
+pub(crate) fn effective_gravity(
+    attribute: Option<f64>,
+    no_gravity: bool,
+    slow_falling: bool,
+    velocity_y: f64,
+    release: MinecraftVersion,
+) -> f64 {
+    let gravity = attribute
         .filter(|_| release.at_least(1, 20, 5))
         .map_or(0.08, |gravity| sanitized(gravity, -1.0, 1.0));
-    let gravity = if mob.no_gravity { 0.0 } else { gravity };
-    if mob.slow_falling && velocity_y <= 0.0 && release.at_least(1, 13, 0) {
+    let gravity = if no_gravity { 0.0 } else { gravity };
+    if slow_falling && velocity_y <= 0.0 && release.at_least(1, 13, 0) {
         gravity.min(0.01)
     } else {
         gravity
@@ -1115,6 +1208,9 @@ pub(crate) struct PlainMob {
     pub(crate) no_fall_check: bool,
     /// Vex.move before 1.21.2: the blocks inside after a move that does not look for them.
     pub(crate) inside_after_move: bool,
+    /// LivingEntity.shouldDiscardFriction from 1.17: a goat's or frog's long jump, a breeze's
+    /// jump, keep their motion through the air with no drag.
+    pub(crate) discard_friction: bool,
 }
 
 /// Entity.move of a living entity with nothing of a mount about it: LivingEntity.checkFallDamage
@@ -1159,6 +1255,7 @@ pub(crate) fn plain_living_travel(
     let bounds = body.bounds();
     let contact = |fluid| world.fluid_contact(fluid, bounds, release).height;
     let support = release
+        // (1.19.4 Entity.java:770-772; 1.20 Entity.java:797-799)
         .at_least(1, 20, 0)
         .then(|| main_supporting_block(world, body, None, release))
         .flatten();
@@ -1189,7 +1286,7 @@ fn travel(
         ..
     } = around;
     // aiStep resets the fall distance under Slow Falling or Levitation before travel from 1.20 (1.20
-    // LivingEntity.java:2566-2567); before, travel does under a Slow Falling that falls (1.13.2
+    // LivingEntity.java:2578-2579); before, travel does under a Slow Falling that falls (1.13.2
     // :1511-1513, 1.19.4 :1986-1990), and under Levitation after the air's move (below)
     let levitation = mob.levitation_amplifier.filter(|_| release.at_least(1, 9, 0));
     let falling = body.velocity.y <= 0.0;
@@ -1201,7 +1298,7 @@ fn travel(
     } else if slow_falling && falling {
         body.fall_distance = 0.0;
     }
-    let gravity = effective_gravity(mob, body.velocity.y, release);
+    let gravity = effective_gravity(mob.gravity, mob.no_gravity, mob.slow_falling, body.velocity.y, release);
     // AIR_DRAG_MODIFIER and FRICTION_MODIFIER of 26.2 (Attributes.java:10, 71: 0 to 2048)
     let modified = release.at_least(26, 2, 0);
     let attribute_modifier =
@@ -1221,17 +1318,22 @@ fn travel(
         },
         bounciness: 0.0,
         stands_on_lava: mob.kind == RiddenMobKind::Strider,
+        // Strider.checkFallDamage checks the blocks inside first from 1.16 (the strider's first
+        // release) until 1.21.1 (1.16 Strider.java:295-296, 1.21.1 :288-289; 1.21.2 :288-289 has
+        // none)
         checks_inside_at_fall: mob.kind == RiddenMobKind::Strider
             && release.at_least(1, 16, 0)
             && !release.at_least(1, 21, 2),
         rails_keep_speed: false,
         ignored: [None, None],
+        skips_restitution: false,
+        counts_fall: false,
     };
     let yaw = yaw_radians(mob.yaw, release);
     let speed = f64::from(mob.ridden_speed);
     let mut input = input;
     // Camel.travel stops a camel that refuses to move on the ground before LivingEntity.travel
-    // picks its fluid (1.19.3 CamelEntity.java:219-228, 1.21.11 Camel.java:234-241, 26.3 :226-233)
+    // picks its fluid (1.19.3 Camel.java:222-231, 1.21.11 Camel.java:219-226, 26.3 :226-233)
     if mob.kind == RiddenMobKind::Camel && camel_refuses_to_move(mob) && body.on_ground {
         body.velocity = body.velocity.multiply(Vec3::new(0.0, 1.0, 0.0));
         input = input.multiply(Vec3::new(0.0, 1.0, 0.0));
@@ -1284,7 +1386,7 @@ fn travel(
     };
     // a FlyingAnimal keeps its climb as the rest of its motion from 1.20.5, by the block under it
     // as well until 26.1; from 26.2 by the air alone, on the ground too (1.20.4 LivingEntity.java:
-    // 2161, 1.20.5 :2232, 1.21.11 :2361, 26.1 :2374, 26.2 :2408, 26.3 :2406)
+    // 2161, 1.20.5 :2234, 1.21.11 :2330, 26.1 :2374, 26.2 :2408, 26.3 :2406)
     let vertical_drag = if !mob.plain.is_some_and(|plain| plain.omnidirectional) {
         vertical_drag
     } else if release.at_least(26, 2, 0) {
@@ -1305,6 +1407,7 @@ fn travel(
         body.fall_distance = 0.0;
         body.velocity.x = body.velocity.x.clamp(-limit, limit);
         body.velocity.z = body.velocity.z.clamp(-limit, limit);
+        // (1.13.2 LivingEntity.java:1594-1596; 1.14.4 LivingEntity.java:1921-1923)
         let fall_limit = if release.at_least(1, 14, 0) {
             limit
         } else {
@@ -1314,19 +1417,20 @@ fn travel(
     }
     let moved = move_mob(mob, body, world, release, rules);
     // from 1.21.2 travelInAir takes getEffectiveGravity after the move, so Slow Falling tests the
-    // motion the move left, before the climb (1.21.3 LivingEntity.java:2183-2185, 2205-2211, 26.3
-    // :2337-2340, 2382-2397); 1.21 the motion it began with (1.21 LivingEntity.java:2097-2101)
+    // motion the move left, before the climb (1.21.3 LivingEntity.java:2194-2196, 2217-2222, 26.3
+    // :2337-2340, 2382-2397); 1.21 the motion it began with (1.21 LivingEntity.java:2117-2121,
+    // 1.21.1 LivingEntity.java:2117-2121, 2234; 1.21.2 :2194-2197, 2229)
     let gravity = if release.at_least(1, 21, 2) {
-        effective_gravity(mob, body.velocity.y, release)
+        effective_gravity(mob.gravity, mob.no_gravity, mob.slow_falling, body.velocity.y, release)
     } else {
         gravity
     };
     if body.collided_horizontally && on_climbable(mob, world, body, release) {
         body.velocity.y = 0.2;
     }
-    // Levitation in place of gravity (1.9.4 LivingEntity.java:1417-1419, 1.13.2 :1609-1611, 26.3
-    // :2387-2397), which resets the fall distance 1.13 - 1.19.4 (1.13.2 :1612, 1.19.4 :2095); no
-    // gravity under NoGravity (1.12.2 LivingEntity.java:1549-1550, 1.16.5 :2084; from 1.20.5
+    // Levitation in place of gravity (1.9.4 LivingEntity.java:1417-1418, 1.13.2 :1610-1611, 26.3
+    // :2387-2397), which resets the fall distance 1.13 - 1.19.4 (1.13.2 :1612, 1.19.4 :2105); no
+    // gravity under NoGravity (1.12.2 LivingEntity.java:1547-1548, 1.16.5 :2082; from 1.20.5
     // getEffectiveGravity() of getGravity() 0, 1.21.11 LivingEntity.java:2351, Entity.java:1443-1445)
     if let Some(amplifier) = levitation {
         let target = 0.05 * (f64::from(amplifier) + 1.0);
@@ -1336,6 +1440,11 @@ fn travel(
         }
     } else if !body.no_gravity {
         body.velocity.y -= gravity;
+    }
+    // shouldDiscardFriction keeps the motion as it is from 1.17 (1.17 LivingEntity.java:2123-2124,
+    // 636-638; 1.21.11 :2327-2328; 26.2 travelInAir)
+    if mob.plain.is_some_and(|plain| plain.discard_friction) && release.at_least(1, 17, 0) {
+        return Some(moved);
     }
     body.velocity.x *= inertia;
     body.velocity.z *= inertia;
@@ -1378,8 +1487,8 @@ fn travel_in_fluid(
     let in_water = body.in_water;
     let gravity = rules.gravity;
     // the skeleton horse's own 0.96F from 1.13 (1.12.2 LivingEntity.java:1445-1447 for every mob;
-    // 1.13.2 SkeletonHorseEntity.java:143-145), WATER_MOVEMENT_EFFICIENCY from 1.21 (halved off the
-    // ground, 1.21 LivingEntity.java:2108-2115, 26.3 :2432-2443), Dolphin's Grace last from 1.13
+    // 1.13.2 SkeletonHorse.java:143-145), WATER_MOVEMENT_EFFICIENCY from 1.21 (halved off the
+    // ground, 1.21 LivingEntity.java:2130-2137, 26.3 :2432-2443), Dolphin's Grace last from 1.13
     let own_slow_down = mob.plain.and_then(|plain| plain.water_slow_down);
     let mut slow_down = if let Some(own) = own_slow_down {
         own
@@ -1409,8 +1518,8 @@ fn travel_in_fluid(
     let moved = move_mob(mob, body, world, release, rules);
     let (water_height, lava_height) = moved.fluid_heights.unwrap_or((water_height, lava_height));
     if in_water {
-        // the climb out of water from 1.14 (1.13.2 LivingEntity.java:1646-1684 has none; 1.14
-        // :1927-1929)
+        // the climb out of water from 1.14 (1.13.2 LivingEntity.java:1646-1684 has none; 1.14.4
+        // :1880-1882)
         if release.at_least(1, 14, 0)
             && body.collided_horizontally
             && on_climbable(mob, world, body, release)
@@ -1422,9 +1531,12 @@ fn travel_in_fluid(
             .velocity
             .multiply(Vec3::new(slow_down, 0.800000011920929, slow_down));
         // NoGravity keeps the vertical motion (1.12.2 LivingEntity.java:1571-1572, 1.13.2 :1673,
-        // 1.16.5 :2122), as any gravity of 0 from 1.20.5 (1.21.11 getFluidFallingAdjustedMovement,
-        // :2544-2556, 26.3 :2608-2620)
+        // 1.16.5 :2120), as any gravity of 0 from 1.20.5 (1.21.11 getFluidFallingAdjustedMovement,
+        // :2521-2533, 26.3 :2608-2620)
         if gravity != 0.0 {
+            // 1.13 tests the motion after the move and the drag (1.13.2 LivingEntity.java:1672), from
+            // 1.14 the motion before travel (`bl`, 1.14.4 LivingEntity.java:1760)
+            let going_down = if release.at_least(1, 14, 0) { going_down } else { body.velocity.y <= 0.0 };
             body.velocity.y = if release.at_least(1, 13, 0) {
                 fluid_falling_adjusted_y(gravity, 16.0, going_down, body.velocity.y)
             } else {
@@ -1432,6 +1544,9 @@ fn travel_in_fluid(
             };
         }
     } else {
+        // lava halves the motion until 1.15.2 (1.15.2 LivingEntity.java:1944); from 1.16 a mob
+        // the lava is no deeper on than its jump threshold falls as in water (1.16
+        // LivingEntity.java:1996-2001)
         if release.at_least(1, 16, 0) && lava_height <= mob.fluid_jump_threshold(release) {
             body.velocity = body
                 .velocity
@@ -1443,12 +1558,12 @@ fn travel_in_fluid(
         } else {
             body.velocity = body.velocity.scale(0.5);
         }
-        // (1.12.2 LivingEntity.java:1602-1603, 1.16.5 :2018; 1.21.11 `d != 0.0`, :2417-2419; the
+        // (1.12.2 LivingEntity.java:1602-1603, 1.16.5 :2018; 1.21.11 `d != 0.0`, :2388-2390; the
         // whole of Vec3.add: its 0.0 clears a wall's -0.0, 26.3 :2474)
         if gravity != 0.0 {
             body.velocity.y -= gravity / 4.0;
             // Vec3.add(0.0, -gravity / 4.0, 0.0) from 1.14: its 0.0 turns the -0.0 a wall's
-            // restitution leaves from 26.2 into 0.0 (1.14 LivingEntity.java:1894, 26.3 :2473-2474,
+            // restitution leaves from 26.2 into 0.0 (1.14.4 LivingEntity.java:1907-1908, 26.3 :2473-2474,
             // Entity.java:867-872)
             if release.at_least(1, 14, 0) {
                 body.velocity.x += 0.0;
@@ -1469,8 +1584,8 @@ fn travel_in_fluid(
     }
     // floatInWaterWhileRidden from 1.21.11: a horse, donkey, mule, zombie horse or camel
     // (EntityTypeTags.CAN_FLOAT_WHILE_RIDDEN) that is ridden rises 0.04F in water deeper than its
-    // getFluidJumpThreshold (1.21.11 LivingEntity.java:2366-2372, 2432-2437,
-    // EntityTypeTagsProvider.java:255-256; 1.21.10 has none); 26.3 runs it after the lava's
+    // getFluidJumpThreshold (1.21.11 LivingEntity.java:2336-2342, 2404-2410,
+    // EntityTypeTagsProvider.java:61-62; 1.21.10 has none); 26.3 runs it after the lava's
     // travel too, by the water's height (26.3 LivingEntity.java:2416-2427, 2488-2493)
     let floats = matches!(
         mob.kind,
@@ -1518,7 +1633,7 @@ fn move_mob(
 ) -> VehicleMove {
     let velocity = body.velocity;
     if body.no_physics {
-        // (Entity.move's way out, for a vex: 1.20.4 Entity.java:598-599)
+        // (Entity.move's way out, for a vex: 1.20.4 Entity.java:606-607)
         match body.bounding_box {
             Some(bounds) => {
                 let moved = bounds.translated(velocity);
@@ -1527,13 +1642,14 @@ fn move_mob(
             }
             None => body.position = body.position + velocity,
         }
-        // (the collision flags go from 1.21.9: 1.21.8 Entity.java:670-671, 1.21.9 :677-682)
+        // (the collision flags go from 1.21.9: 1.21.8 Entity.java:706-707, 1.21.9 :713-718)
         if release.at_least(1, 21, 9) {
             body.collided_horizontally = false;
             body.collided_vertically = false;
             body.vertical_collision_below = false;
         }
-        // (1.14 VexEntity.java, 1.21 :move; the override goes at 1.21.2)
+        // (1.14.4 Vex.java, 1.21 :move; the override goes at 1.21.2: 1.21.1 Vex.java:66-69,
+        // none in 1.21.2 Vex.java:68-74)
         if mob.plain.is_some_and(|plain| plain.inside_after_move) && !release.at_least(1, 21, 2) {
             let inside: Vec<_> = blocks_inside(body, release)
                 .into_iter()
@@ -1552,7 +1668,7 @@ fn move_mob(
         };
     }
     // (a mob's fall counts before the blocks inside are checked, and a cobweb, bubble column or honey
-    // there ends it: 1.20.4 Entity.java:757-764 checkFallDamage, then checkBlockCollision; 26.3 has no
+    // there ends it: 1.20.4 Entity.java:759-766 checkFallDamage, then checkBlockCollision; 26.3 has no
     // such check in the move)
     let mut ended_inside = false;
     let mut moved = move_vehicle(body, world, release, velocity, rules, |body, support| {
@@ -1567,7 +1683,9 @@ fn move_mob(
         body.fall_distance = if body.fall_distance == 0.0 { 0.0 } else { fall };
     });
     // 1.16 - 1.16.1 Strider.fall runs checkBlockCollision first, which sets the inLava the move
-    // has not yet reset (1.16 StriderEntity.java:295-299, Entity.java:608, 657-659)
+    // has not yet reset (1.16 Strider.java:295-299, Entity.java:611, 660-662; 1.16.1
+    // Strider.java:295-297, Entity.java:660-661, 1157-1162); from 1.16.2 isInLava is the base
+    // tick's lava height (1.16.2 Strider.java:290-292, Entity.java:1178-1179)
     let strider_in_lava = || {
         body.in_lava
             || (release.at_least(1, 16, 0)
@@ -1576,14 +1694,14 @@ fn move_mob(
     };
     let strider_lava = mob.kind == RiddenMobKind::Strider && strider_in_lava();
     // (1.21.4 alone: Entity.move skips checkFallDamage, and so its water refresh, for what a player
-    // controls, 1.21.4 Entity.java:697; 1.21.5 tests isLocalInstanceAuthoritative, true for the
+    // controls, 1.21.4 Entity.java:721; 1.21.5 tests isLocalInstanceAuthoritative, true for the
     // local rider's mount)
     let controlled_1_21_4 = mob.plain.is_none() && release.at_least(1, 21, 4) && !release.at_least(1, 21, 5);
     let no_fall_check = mob.plain.is_some_and(|plain| plain.no_fall_check);
     let skips = mob.kind == RiddenMobKind::HappyGhast || strider_lava || controlled_1_21_4 || no_fall_check;
     if !skips && !body.in_water && legacy_fluid::applies(release) {
         // LivingEntity.fall's updateWaterState before 1.13 (1.9.4 LivingEntity.java:247-249,
-        // 1.12.2 :273-275)
+        // 1.12.2 :274-276)
         legacy_fluid::handle_water_movement(body, world, true, release);
     } else if !skips && !body.in_water {
         let pushed = mob
@@ -1597,10 +1715,11 @@ fn move_mob(
                 push_by_fluid(body, water, 0.014, release);
             }
         }
+        // (1.21.11 LivingEntity.java:321-323; 26.1 LivingEntity.java:311-313)
         if release.at_least(26, 1, 0) {
             // LivingEntity.checkFallDamage's updateFluidInteraction: the heights the travel reads
             // after the move are those of where the move left the mob (26.1 LivingEntity.java:
-            // 310-313, 26.3 :326-328; 1.21.11 :350-353 refreshes only the water state)
+            // 310-313, 26.3 :326-328; 1.21.11 :320-324 refreshes only the water state)
             let lava = world.fluid_contact(FluidState::Lava, body.bounds(), release);
             moved.fluid_heights = Some((water.height, lava.height));
             body.in_lava = lava.touching;
@@ -1610,16 +1729,16 @@ fn move_mob(
         }
     }
     // Entity.checkFallDamage after LivingEntity's water refresh: a mob's fall distance grows by the
-    // drop while it is in the air and is reset when it lands (1.17 Entity.java:1068-1076, 1.20.4
-    // Entity.java:1121-1132; 1.21.5 counts the drop first, then lands: Entity.java:1284-1297)
+    // drop while it is in the air and is reset when it lands (1.17 Entity.java:1062-1070, 1.20.4
+    // Entity.java:1121-1132; 1.21.5 counts the drop first, then lands: Entity.java:1321-1331)
     // (a strider in lava lands instead, Strider.checkFallDamage -> resetFallDistance, 1.20.4
-    // StriderEntity.java:295-302; a happy ghast, a flying mob, keeps no fall at all)
+    // Strider.java:297-304; a happy ghast, a flying mob, keeps no fall at all)
     if controlled_1_21_4 {
     } else if strider_lava {
         body.fall_distance = 0.0;
     } else if mob.kind != RiddenMobKind::HappyGhast && !body.no_physics && !no_fall_check {
         let dy = moved.moved.y;
-        // (not in water: 1.21.5 Entity.java:1285, 1.21.11 :1427, as the player's)
+        // (not in water: 1.21.5 Entity.java:1322, 1.21.11 :1473, as the player's)
         if release.at_least(1, 21, 5) && dy < 0.0 && !body.in_water {
             body.fall_distance = accumulated_fall_distance(body.fall_distance, dy, release);
         }
@@ -1632,15 +1751,19 @@ fn move_mob(
     if ended_inside {
         body.fall_distance = 0.0;
     }
+    // (1.13.2 Entity.java:1143-1145; 1.14.4 Entity.java:568-569, 826-848; LiquidBlock.java:158-161)
+    // the move's isTouchingLava until 1.16.1 (1.16.1 Entity.java:660-661, 1161-1162), the base
+    // tick's lava height from 1.16.2 (1.16.2 Entity.java:1178-1179)
     if release.at_least(1, 14, 0) && !release.at_least(1, 16, 2) {
         body.in_lava = if release.at_least(1, 16, 0) {
             world.has_lava_above_feet_inside(body.bounds())
         } else {
             world.has_fluid_block_inside(FluidState::Lava, body.bounds())
         };
+    // (1.13.2 Entity.java:1143-1145; 1.14.4 Entity.java:568-569, 1171-1173)
     } else if !release.at_least(1, 14, 0) {
-        // (no field before 1.14: Entity.isInLava asks the world, 1.9.4 Entity.java:1035-1037, 1.13.2
-        // :1144-1146, 1.14 :1113-1115, so the tick ends with the lava of where the move left it)
+        // (no field before 1.14: Entity.isInLava asks the world, 1.9.4 Entity.java:1031-1033, 1.13.2
+        // :1143-1145, 1.14.4 :1171-1173, so the tick ends with the lava of where the move left it)
         body.in_lava = legacy_fluid::touching_lava(world, body.bounds(), release);
     }
     moved
@@ -1659,10 +1782,13 @@ fn after_ridden_travel(
     release: MinecraftVersion,
 ) {
     if mob.kind.is_horse() {
+        // (1.19.3 AbstractHorse.java:771; 1.19.4 AbstractHorse.java:767)
         if !release.at_least(1, 19, 4) && body.on_ground {
             mob.jump_pending_scale = 0.0;
             mob.horse_jumping = false;
         }
+        // (1.21.5 AbstractHorse.java:562-565 counts up to 20; 1.21.6 AbstractHorse.java:567-569
+        // counts down to 0)
         if release.at_least(1, 21, 6) {
             if mob.stand_counter > 0 {
                 mob.stand_counter = mob.stand_counter.wrapping_sub(1);
@@ -1683,7 +1809,7 @@ fn after_ridden_travel(
         }
     }
     // a camel is an AbstractHorse too, whose tick drops the stand sliding of one not rearing (a
-    // camel never rears): 1.20.4 AbstractHorseEntity.java:649-658
+    // camel never rears): 1.20.4 AbstractHorse.java:645-654
     if mob.kind == RiddenMobKind::Camel && !mob.standing {
         mob.allow_stand_sliding = false;
     }
@@ -1703,12 +1829,20 @@ fn after_ridden_travel(
         if mob.dash_cooldown > 0 {
             mob.dash_cooldown -= 1;
         }
+        // Camel.tick stands a sitting camel in water up at once, its pose time that of a full
+        // stand: getGameTime() - (getGameTime() - 52 - 1) (1.20 Camel.java:190-191, CamelEntity.java:
+        // 187-189; 26.3 Camel.java:182-184, 553-566; none in 1.19.4 Camel.java:185-187)
+        if release.at_least(1, 20, 0) && mob.sitting && body.in_water {
+            mob.sitting = false;
+            mob.pose_time = 53;
+            body.height = f64::from(mob.dimensions(release).1);
+        }
         mob.pose_time += 1;
     }
     if mob.kind == RiddenMobKind::Strider && body.in_lava {
         // CollisionContext.isAbove(the half-high stable shape) and no lava above: flowing lava
         // holds it as a source does, the source test being LiquidBlock.getCollisionShape's
-        // (1.16 StriderEntity.java:334-343, FluidBlock.java:33; 1.21.11 Strider.java:312-322;
+        // (1.16 Strider.java:334-343, LiquidBlock.java:36; 1.21.11 Strider.java:313-323;
         // 26.3 :322-336, EntityCollisionContext.java:72-74)
         let (x, y, z) = block_position(body.position, release);
         let above_surface = body.position.y > f64::from(y) + 0.5 - 9.999999747378752e-6;
@@ -1723,13 +1857,16 @@ fn after_ridden_travel(
         && !release.at_least(1, 21, 2)
     {
         // Strider.tick checks the blocks inside once more after floatStrider, until 1.21.2 (1.16
-        // StriderEntity.java:318, 1.20.4 :322, 1.21.1 Strider.java:329; 1.21.2 has none)
+        // Strider.java:318, 1.20.4 :336, 1.21.1 Strider.java:329; 1.21.2 has none)
         check_inside_blocks(body, world, release);
     }
 }
 
 /// Whether the client runs the ridden horse's rearing (AbstractHorse.standIfPossible and its
-/// counter): before 1.19.4 and from 1.21.5, where the client runs the AI of the mob it moves.
+/// counter): before 1.19.4 and from 1.21.5, where the client runs the AI of the mob it moves
+/// (1.19.3 AbstractHorse.java:601 isControlledByLocalInstance; 1.19.4 :613 isEffectiveAi alone,
+/// !isClientSide, Entity.java:2831-2833; 1.21.4 Entity.java:3244-3246; 1.21.5 Entity.java:3242-3244
+/// isLocalInstanceAuthoritative, AbstractHorse.java:562).
 fn horse_stands_locally(release: MinecraftVersion) -> bool {
     !release.at_least(1, 19, 4) || release.at_least(1, 21, 5)
 }
@@ -1754,7 +1891,8 @@ fn rider_jump(mob: &mut RiddenMobState, power: i32, release: MinecraftVersion) {
             }
             if power >= 0 {
                 mob.allow_stand_sliding = true;
-                // (isEffectiveAi: a mob without AI does not rear, 1.21.5 AbstractHorse.java:688-693, 26.3 :680-684)
+                // (isEffectiveAi: a mob without AI does not rear, 1.21.5 Entity.java:3242-3244,
+                // AbstractHorse.java:674-680, 26.3 :680-684)
                 if horse_stands_locally(release)
                     && kind.rears()
                     && !(mob.no_ai && release.at_least(1, 21, 5))
@@ -1772,18 +1910,18 @@ fn rider_jump(mob: &mut RiddenMobState, power: i32, release: MinecraftVersion) {
         }
         RiddenMobKind::Camel => {
             // LocalPlayer.jumpableVehicle holds a camel only while Camel.canJump: not sitting or
-            // changing pose, and saddled (1.19.3 CamelEntity.java:251-253, 1.20 :269-271,
-            // 1.21.11 Camel.java:272-274, LocalPlayer.java:563-564, 847-858)
+            // changing pose, and saddled (1.19.3 Camel.java:254-256, 1.20 :272-274,
+            // 1.21.11 Camel.java:253-255, LocalPlayer.java:539-543, 816-827)
             // It runs in the client tick the camel's tickRidden ran in, on the same game time
-            // (Minecraft.java:1805, 1830; ClientLevel.tickTime :323-324 steps it after): the
+            // (Minecraft.java:1798, 1823; ClientLevel.tickTime :298-299 steps it after): the
             // pose time before after_ridden_travel's step
             let this_tick = mob.pose_time - 1;
             let in_transition = this_tick < if mob.sitting { 40 } else { 52 };
             let can_jump = mob.saddled && !mob.sitting && !in_transition;
             if can_jump && mob.dash_cooldown <= 0 && mob.on_ground {
                 // Camel.setJumpStrength / onPlayerJump goes on to AbstractHorse's, which lets the
-                // jump slide a standing horse (1.20.4 CamelEntity.java:271-275,
-                // AbstractHorseEntity.java:934-949; 1.21.5 Camel.java:276-280)
+                // jump slide a standing horse (1.20.4 Camel.java:274-278,
+                // AbstractHorse.java:924-939; 1.21.5 Camel.java:256-260)
                 if power >= 0 {
                     mob.allow_stand_sliding = true;
                 }
@@ -1805,6 +1943,16 @@ mod tests {
     const V1_16_5: MinecraftVersion = MinecraftVersion::new(1, 16, 5);
     const V1_21_1: MinecraftVersion = MinecraftVersion::new(1, 21, 1);
     const V26_2: MinecraftVersion = MinecraftVersion::new(26, 2, 0);
+
+    #[test]
+    fn a_zombie_horse_keeps_the_horse_base_speed_from_1_21_11() {
+        let zombie = RiddenMobKind::ZombieHorse;
+        assert_eq!(zombie.movement_speed_in(MinecraftVersion::new(1, 21, 10)), f64::from(0.2_f32));
+        assert_eq!(zombie.movement_speed_in(MinecraftVersion::new(1, 21, 11)), f64::from(0.225_f32));
+        assert_eq!(zombie.movement_speed_in(MinecraftVersion::new(26, 3, 0)), f64::from(0.225_f32));
+        let skeleton = RiddenMobKind::SkeletonHorse;
+        assert_eq!(skeleton.movement_speed_in(MinecraftVersion::new(26, 3, 0)), f64::from(0.2_f32));
+    }
 
     fn stone_floor(x: (i32, i32), y: i32, z: (i32, i32)) -> WorldSnapshot {
         let stone = BlockState {
@@ -2068,8 +2216,8 @@ mod tests {
 
     #[test]
     fn lava_beside_the_water_a_mob_is_in_does_not_push_it_in_1_16_and_1_16_1() {
-        // 1.16 Entity.updateWaterState returns once touching water, before the lava (1.16
-        // Entity.java:1042-1051); 1.16.2 pushes by both (1.16.5 Entity.java:1046-1052)
+        // 1.16 Entity.updateInWaterStateAndDoFluidPushing returns once touching water, before the lava (1.16
+        // Entity.java:1039-1048); 1.16.2 pushes by both (1.16.5 Entity.java:1043-1049)
         let pushed = |release| {
             let mut world = fluid_pool(FluidState::Water, (-3, 4), (98, 100), (1934, 1941));
             world.set_block(
@@ -2099,8 +2247,8 @@ mod tests {
     #[test]
     fn a_strider_stays_warm_the_tick_after_its_box_left_the_lava_beside_it_in_1_16_1() {
         // Strider.tick reads getFluidHeight(LAVA) of the base tick before (1.16
-        // StriderEntity.java:312-315), not the inLava its move clears off the lava (1.16
-        // Entity.java:657-659)
+        // Strider.java:312-315), not the inLava its move clears off the lava (1.16
+        // Entity.java:660-662)
         let release = MinecraftVersion::new(1, 16, 1);
         let mut world = stone_floor((-3, 4), 98, (1934, 1941));
         world.set_block(
@@ -2132,8 +2280,8 @@ mod tests {
 
     #[test]
     fn a_striders_lava_beside_the_water_it_is_in_is_not_measured_in_1_16_1() {
-        // in water 1.16 Entity.updateWaterState returns before the lava, whose height stays 0
-        // (1.16 Entity.java:1042-1051), so the strider is cold the next tick
+        // in water 1.16 Entity.updateInWaterStateAndDoFluidPushing returns before the lava, whose height stays 0
+        // (1.16 Entity.java:1039-1048), so the strider is cold the next tick
         let mut world = fluid_pool(FluidState::Water, (-3, 4), (99, 99), (1934, 1941));
         for x in -3..=4 {
             for z in 1934..=1941 {
@@ -2176,7 +2324,7 @@ mod tests {
     fn a_strider_entering_lava_skips_the_water_check_in_1_16_1() {
         // Strider.fall runs checkBlockCollision, which sets inLava for the lava over its feet,
         // before Entity.move resets it, and skips the fall's water check in lava (1.16
-        // StriderEntity.java:295-299, Entity.java:608, 657-659, FluidBlock.java:170-177)
+        // Strider.java:295-299, Entity.java:611, 660-662, LiquidBlock.java:173-180)
         let release = MinecraftVersion::new(1, 16, 1);
         let mut world = WorldSnapshot::new();
         world.set_block(
@@ -2214,7 +2362,7 @@ mod tests {
     #[test]
     fn a_mob_dropping_into_lava_meets_the_depth_its_move_reached_from_26_1() {
         // LivingEntity.checkFallDamage refreshes every fluid from 26.1 (26.1 LivingEntity.java:
-        // 310-313), the water alone before (1.21.11 :350-353), and travelInLava then reads
+        // 310-313), the water alone before (1.21.11 :320-324), and travelInLava then reads
         // isInShallowFluid (26.3 LivingEntity.java:2465): recorded in physrec/v_horse_into_lava
         let mut world = stone_floor((-4, 4), 95, (-4, 4));
         for x in -4..=4 {
@@ -2258,7 +2406,7 @@ mod tests {
 
         tick_ridden_mob(&mut horse, &world, V1_21_1);
 
-        // Entity.baseTick halves it in lava (1.21.4 Entity.java:487); the still horse adds no drop
+        // Entity.baseTick halves it in lava (1.21.4 Entity.java:514); the still horse adds no drop
         assert!(horse.in_lava);
         assert_eq!(horse.position.y, 99.0);
         assert_eq!(horse.fall_distance, 2.0);
@@ -2360,7 +2508,7 @@ mod tests {
 
     #[test]
     fn a_ladder_holds_neither_a_ridden_horse_nor_a_camel() {
-        // AbstractHorse.onClimbable is false (1.12.2 AbstractHorseEntity.java:958, 1.21.11
+        // AbstractHorse.onClimbable is false (1.12.2 AbstractHorse.java:963, 1.21.11
         // AbstractHorse.java:940, 26.3 :920); a pig's LivingEntity.onClimbable keeps its fall
         // to 0.15F (1.21.1 LivingEntity.java handleOnClimbable)
         use crate::world::BlockEffect;
@@ -2406,8 +2554,8 @@ mod tests {
     #[test]
     fn a_camel_that_sits_or_stands_up_takes_no_riding_jump() {
         // LocalPlayer.jumpableVehicle is null unless Camel.canJump: !refuseToMove() (sitting or in
-        // its pose transition) && isSaddled() (1.19.3 CamelEntity.java:251-253, 1.20 :269-271,
-        // 1.21.11 Camel.java:251-253, 272-274, LocalPlayer.java:563-564, 847-858)
+        // its pose transition) && isSaddled() (1.19.3 Camel.java:254-256, 1.20 :272-274,
+        // 1.21.11 Camel.java:236-238, 253-255, LocalPlayer.java:539-543, 816-827)
         let world = stone_floor((0, 12), 100, (2170, 2177));
         let released = |sitting: bool, pose_time: i64, saddled: bool| {
             let mut camel = ridden(
@@ -2429,7 +2577,7 @@ mod tests {
         assert_eq!(released(false, 10, true), 0.0);
         assert_eq!(released(false, 50, true), 0.0);
         // LocalPlayer.aiStep's canJump reads the getPoseTime the camel's tick read (1.21.11
-        // LocalPlayer.java:563-564, 847; Minecraft.java:1805, 1830; ClientLevel.java:323-324):
+        // LocalPlayer.java:539-543, 816; Minecraft.java:1798, 1823; ClientLevel.java:298-299):
         // 51 is still standing up (Camel.isInPoseTransition, 51 < 52), 52 is done
         assert_eq!(released(false, 51, true), 0.0);
         assert_eq!(released(false, 52, true), 1.0);
@@ -2440,9 +2588,9 @@ mod tests {
     #[test]
     fn a_ridden_mob_with_no_gravity_takes_no_gravity_in_air_water_or_lava() {
         // LivingEntity.travel skips gravity under NoGravity: in the air (1.12.2
-        // LivingEntity.java:1549-1550, 1.16.5 :2084), in water (1.12.2 :1571-1572, 1.16.5 :2122)
-        // and in lava (1.12.2 :1602-1603, 1.16.5 :2018); from 1.20.5 getGravity() is 0 (1.21.11
-        // Entity.java:1443-1445, LivingEntity.java:2351, 2416-2419, 2544-2556)
+        // LivingEntity.java:1547-1548, 1.16.5 :2082), in water (1.12.2 :1571-1572, 1.16.5 :2120)
+        // and in lava (1.12.2 :1600-1601, 1.16.5 :2018); from 1.20.5 getGravity() is 0 (1.21.11
+        // Entity.java:1443-1445, LivingEntity.java:2317, 2387-2390, 2521-2533)
         for release in [MinecraftVersion::new(1, 12, 2), MinecraftVersion::new(1, 16, 5), V1_21_1] {
             let world = WorldSnapshot::new();
             let mut horse = ridden(RiddenMobKind::Horse, Vec3::new(0.5, 100.0, 0.5), Vec3::ZERO, 270.0);
@@ -2503,8 +2651,8 @@ mod tests {
     #[test]
     fn a_strider_above_flowing_lava_stands_on_it() {
         // Strider.floatStrider: CollisionContext.isAbove(the half-high shape) and no lava above,
-        // with no test of the lava's level (1.16 StriderEntity.java:334-343, 1.21.11
-        // Strider.java:312-322, 26.3 :322-331)
+        // with no test of the lava's level (1.16 Strider.java:334-343, 1.21.11
+        // Strider.java:313-323, 26.3 :322-331)
         let mut world = WorldSnapshot::new();
         for x in -1..=1 {
             for z in 1936..=1938 {
@@ -2536,7 +2684,7 @@ mod tests {
     fn lava_pushes_a_ridden_mob_at_0_007_in_an_ultrawarm_dimension() {
         // Entity.updateFluidHeightAndDoFluidPushing: 0.007 where the dimension is ultrawarm
         // (FAST_LAVA), else 0.0023333333333333335, lifted to 0.0045 for a still entity (1.16
-        // Entity.java:1049-1070, 1.21.4 :1341, 1.21.11 :1519); aiStep then fades it by 0.98
+        // Entity.java:1046-1067, 1.21.4 :1364, 1.21.11 :1561); aiStep then fades it by 0.98
         let mut world = stone_floor((-1, 1), 99, (1936, 1938));
         for x in -1..=1 {
             for z in 1936..=1938 {
@@ -2573,7 +2721,7 @@ mod tests {
     fn a_ridden_mob_takes_the_legacy_water_scan_before_1_13() {
         // Entity.handleWaterMovement before 1.13: the box shrunk by 0.4F vertically and 0.001 all
         // round meets the layers from y 100, whose water is touched where the cells top (ceil
-        // maxY, 102) reaches its surface (1.12.2 Entity.java:1051, World.java:1635-1674); from 1.13
+        // maxY, 102) reaches its surface (1.12.2 Entity.java:1043, Level.java:1616-1655); from 1.13
         // its surface (100.333) must reach the box bottom (1.13.2 Entity.java:2511-2551)
         let mut world = WorldSnapshot::new();
         for x in -1..=1 {
@@ -2615,7 +2763,7 @@ mod tests {
     #[test]
     fn a_ridden_mob_moved_into_water_is_not_in_it_in_1_21_4_alone() {
         // the refresh of checkFallDamage, which 1.21.4 skips for what a player controls (1.21.4
-        // Entity.java:697, LivingEntity.checkFallDamage): physrec/v_horse_into_water
+        // Entity.java:721, LivingEntity.checkFallDamage): physrec/v_horse_into_water
         let mut world = stone_floor((-4, 4), 95, (-4, 4));
         for x in -4..=4 {
             for z in -4..=4 {
@@ -2644,8 +2792,8 @@ mod tests {
 
     #[test]
     fn a_mob_moved_into_lava_is_in_it_at_once_before_1_14() {
-        // Entity.isInLava asks the world before 1.14 (1.9.4 Entity.java:1035-1037, 1.13.2
-        // :1144-1146) and reads the base tick's field from it (1.14 :1113-1115): physrec/v_horse_into_lava
+        // Entity.isInLava asks the world before 1.14 (1.9.4 Entity.java:1031-1033, 1.13.2
+        // :1143-1145) and reads the base tick's field from it (1.14.4 :1171-1173): physrec/v_horse_into_lava
         let mut world = stone_floor((-4, 4), 95, (-4, 4));
         for x in -4..=4 {
             for z in -4..=4 {
@@ -2669,7 +2817,7 @@ mod tests {
         };
         assert!(entered(MinecraftVersion::new(1, 9, 4)));
         assert!(entered(MinecraftVersion::new(1, 13, 2)));
-        // (1.8 interpolates the mob the server moves: 1.8.9 Entity.java:927-929)
+        // (1.8 interpolates the mob the server moves: 1.8.8 Entity.java:922-924)
         let mut interpolated = RiddenMobState::new(RiddenMobKind::Horse, Vec3::new(0.5, 100.4, 0.5));
         interpolated.lerp_position = Some(Vec3::new(0.5, 99.5, 0.5));
         tick_ridden_mob(&mut interpolated, &world, MinecraftVersion::new(1, 8, 8));
@@ -2680,7 +2828,7 @@ mod tests {
     #[test]
     fn a_ridden_mob_is_in_lava_by_its_box_shrunk_by_0_1_before_1_14() {
         // Entity.isInLava: the box shrunk by 0.1F sideways and 0.4F vertically (1.9.4
-        // Entity.java:1036, 1.12.2 :1139, 1.13.2 :1145): lava 0.048 into the box is outside it
+        // Entity.java:1032, 1.12.2 :1129, 1.13.2 :1144): lava 0.048 into the box is outside it
         let mut world = stone_floor((-2, 2), 100, (-2, 2));
         for z in -1..=1 {
             world.set_block(
@@ -2720,9 +2868,9 @@ mod tests {
 
     #[test]
     fn a_ridden_mob_is_not_moved_on_the_1_8_client() {
-        // LivingEntity.travel moves only where canMoveVoluntarily, not on the client (1.8.9
-        // LivingEntity.java:1133, 1419-1423, 1568-1570; HorseBaseEntity.travel turns the horse to its
-        // rider and moves it off the client alone, :1064-1106): its motion fades by 0.98
+        // LivingEntity.travel moves only where canMoveVoluntarily, not on the client (1.8.8
+        // LivingEntity.java:1134, 1408-1412, 1556-1558; AbstractHorse.travel turns the horse to its
+        // rider and moves it off the client alone, :1061-1103): its motion fades by 0.98
         let world = stone_floor((-3, 3), 100, (-3, 3));
         let ticked = |release: MinecraftVersion| {
             let mut horse = ridden(
@@ -2745,8 +2893,8 @@ mod tests {
         assert_eq!(horse.jump_pending_scale, 0.0);
         let moved = ticked(MinecraftVersion::new(1, 9, 4));
         assert!(moved.position.x > 0.5);
-        // setRotation takes the rider's unbounded yaw % 360.0F (1.8.9 Entity.java:321-323,
-        // HorseBaseEntity.java:1066-1068)
+        // setRotation takes the rider's unbounded yaw % 360.0F (1.8.8 Entity.java:323-325,
+        // AbstractHorse.java:1063-1065)
         for (rider_yaw, yaw) in [(450.0, 90.0), (-400.0, -40.0)] {
             let mut horse = ridden(
                 RiddenMobKind::Horse,
@@ -2764,8 +2912,8 @@ mod tests {
     #[test]
     fn a_horse_under_jump_boost_jumps_a_tenth_higher_a_level() {
         // AbstractHorse's riding jump adds (amplifier + 1) * 0.1F: to the double jump before 1.20.5
-        // (1.16.5 HorseBaseEntity.java:771-775), in getJumpPower's float sum from 1.20.5 (1.21
-        // AbstractHorseEntity.java:822, 1.20.5 LivingEntity.java:2065-2072)
+        // (1.16.5 AbstractHorse.java:766-770), in getJumpPower's float sum from 1.20.5 (1.21
+        // AbstractHorse.java:796, 1.20.5 LivingEntity.java:2065-2072)
         let world = stone_floor((-3, 4), 100, (2170, 2177));
         let jumped = |release: MinecraftVersion, boost: Option<i32>| {
             let mut horse = ridden(
@@ -2790,7 +2938,7 @@ mod tests {
     #[test]
     fn a_camel_under_jump_boost_dashes_higher() {
         // Camel.executeRidersJump's height 1.4285F * the charge * getJumpPower(), Jump Boost's
-        // 0.1F a level in it (1.21.11 Camel.java:289-296, LivingEntity.java:2258-2264)
+        // 0.1F a level in it (1.21.11 Camel.java:267-269, LivingEntity.java:2258-2264)
         let world = stone_floor((-6, 12), 100, (2165, 2182));
         let dashed = |boost: Option<i32>| {
             let mut camel = ridden(
@@ -2813,7 +2961,7 @@ mod tests {
     #[test]
     fn a_sitting_camel_is_1_43_lower() {
         // Camel.getDefaultDimensions: SITTING is CAMEL's height - 1.43F (1.19.3
-        // CamelEntity.java:68, 135-136; 1.21.11 Camel.java:79, 151-152): a sitting camel under
+        // Camel.java:71, 138-139; 1.21.11 Camel.java:70-79, 138-139): a sitting camel under
         // water 1 block above its feet does not reach it, a standing one does
         let mut world = stone_floor((0, 6), 100, (2170, 2177));
         let water = BlockState {
@@ -2849,8 +2997,8 @@ mod tests {
     #[test]
     fn a_camel_that_refuses_to_move_stops_before_it_swims() {
         // Camel.travel zeroes the motion of a camel that refuses to move on the ground before
-        // LivingEntity.travel picks the water (1.21.11 Camel.java:234-241, 1.19.3
-        // CamelEntity.java:219-228)
+        // LivingEntity.travel picks the water (1.21.11 Camel.java:219-226, 1.19.3
+        // Camel.java:222-231)
         let mut world = fluid_pool(FluidState::Water, (0, 6), (101, 104), (2170, 2177));
         let stone = BlockState {
             shape: Some(BlockShape::full_block()),
@@ -2893,9 +3041,9 @@ mod tests {
 
     #[test]
     fn horse_sizes_follow_their_release() {
-        // 1.8.9 HorseBaseEntity.java:207 setBounds(1.4F, 1.6F); 1.9.4 :239 and 1.13.2
-        // AbstractHorseEntity.java:142 setBounds(1.3964844F, 1.6F) for every horse; the donkey's
-        // own 1.5 from 1.14 (1.14 EntityType.java:164)
+        // 1.8.8 AbstractHorse.java:209 setBounds(1.4F, 1.6F); 1.9.4 :242 and 1.13.2
+        // AbstractHorse.java:148 setBounds(1.3964844F, 1.6F) for every horse; the donkey's
+        // own 1.5 from 1.14 (1.14.4 EntityType.java:514)
         let v = MinecraftVersion::new;
         assert_eq!(RiddenMobKind::Horse.dimensions(v(1, 8, 8)), (1.4, 1.6));
         assert_eq!(RiddenMobKind::Donkey.dimensions(v(1, 8, 8)), (1.4, 1.6));
@@ -2925,7 +3073,7 @@ mod tests {
     #[test]
     fn skeleton_horse_keeps_the_water_slow_down_of_every_mob_before_1_13() {
         // 1.12.2 LivingEntity.java:1445-1447 0.8F with no override in SkeletonHorseEntity; 1.13.2
-        // SkeletonHorseEntity.java:143-145 0.96F
+        // SkeletonHorse.java:143-145 0.96F
         let world = fluid_pool(FluidState::Water, (-4, 4), (98, 104), (-4, 4));
         let swim = |release: MinecraftVersion| {
             let mut horse = ridden(
@@ -2982,7 +3130,7 @@ mod tests {
     fn a_ridden_horse_or_camel_floats_in_deep_water_from_1_21_11() {
         // LivingEntity.floatInWaterWhileRidden after travelInWater: + 0.04F for a ridden
         // CAN_FLOAT_WHILE_RIDDEN mob in water deeper than getFluidJumpThreshold, 0.4 (1.21.11
-        // LivingEntity.java:2366-2372, 2432-2437, EntityTypeTagsProvider.java:255-256; none in
+        // LivingEntity.java:2336-2342, 2404-2410, EntityTypeTagsProvider.java:61-62; none in
         // 1.21.10; 26.2 LivingEntity.java:2420-2424, 2490-2496), not a skeleton horse or llama
         let world = fluid_pool(FluidState::Water, (-4, 4), (98, 104), (-4, 4));
         let swim = |kind: RiddenMobKind, release: MinecraftVersion| {
@@ -3036,7 +3184,7 @@ mod tests {
 
     #[test]
     fn mob_in_water_climbs_against_a_wall_only_from_1_14() {
-        // 1.13.2 LivingEntity.java:1646-1684: no climb in the water branch; 1.14 :1927-1929 sets
+        // 1.13.2 LivingEntity.java:1646-1684: no climb in the water branch; 1.14.4 :1880-1882 sets
         // 0.2 against a wall on a climbable block
         let mut world = fluid_pool(FluidState::Water, (-4, 4), (98, 104), (-4, 4));
         world.set_block((0, 101, 0), water_with(BlockEffect::Climbable));
@@ -3066,8 +3214,8 @@ mod tests {
 
     #[test]
     fn pig_boost_adds_its_term_in_the_tick_it_ends_before_1_11() {
-        // 1.10.2 PigEntity.java:218-224 ends the boost inside the boosted block and still adds
-        // the boost; 1.11.2 :237-245 ends it before
+        // 1.10.2 Pig.java:219-225 ends the boost inside the boosted block and still adds
+        // the boost; 1.11.2 :238-246 ends it before
         let world = stone_floor((-4, 4), 100, (-4, 4));
         let speed = |release: MinecraftVersion| {
             let mut pig = ridden(
@@ -3098,7 +3246,7 @@ mod tests {
 
     #[test]
     fn strider_checks_the_blocks_inside_in_its_fall_and_tick_until_1_21_2() {
-        // 1.16 StriderEntity.java:295-296 (fall) and :318 (tick), 1.21.1 Strider.java:289, 329,
+        // 1.16 Strider.java:295-296 (fall) and :318 (tick), 1.21.1 Strider.java:289, 329,
         // beside Entity.move's own; 1.17 - 1.19.3 ItemSteerable.java:48 once more after a steered
         // travel; 1.21.2 Strider.java has neither
         let mut world = fluid_pool(FluidState::Water, (-4, 4), (98, 106), (-4, 4));
@@ -3122,9 +3270,106 @@ mod tests {
     }
 
     #[test]
+    fn a_steered_horse_checks_the_blocks_inside_again_1_17_to_1_19_3() {
+        // AbstractHorse.travel's steered branch ends with tryCheckBlockCollision, beside
+        // Entity.move's own (1.17 HorseBaseEntity.java:765, 1.19 AbstractHorseEntity.java:763,
+        // 1.19.3 :783); 1.16.5 :748-800 and 1.19.4 have none. A 1.19.3 camel steered is a horse
+        // here; one sitting ignores its rider and takes the other branch, which has none.
+        let mut world = fluid_pool(FluidState::Water, (-4, 4), (98, 106), (-4, 4));
+        world.set_block((0, 101, 0), water_with(BlockEffect::BubbleUp));
+        let rise = |kind: RiddenMobKind, sitting: bool, release: MinecraftVersion| {
+            let mut mob = ridden(kind, Vec3::new(0.5, 101.0, 0.5), Vec3::ZERO, 270.0);
+            mob.sitting = sitting;
+            tick_ridden_mob(&mut mob, &world, release);
+            mob.velocity.y
+        };
+        let v = MinecraftVersion::new;
+        for kind in [RiddenMobKind::Horse, RiddenMobKind::Donkey, RiddenMobKind::ZombieHorse] {
+            let once = rise(kind, false, v(1, 16, 5));
+            assert_eq!(rise(kind, false, v(1, 17, 1)), once + 0.06, "{kind:?}");
+            assert_eq!(rise(kind, false, v(1, 18, 2)), once + 0.06, "{kind:?}");
+            assert_eq!(rise(kind, false, v(1, 19, 3)), once + 0.06, "{kind:?}");
+            assert_eq!(rise(kind, false, v(1, 19, 4)), once, "{kind:?}");
+        }
+        // a llama has no controlling passenger, so it is never steered
+        assert_eq!(
+            rise(RiddenMobKind::Llama, false, v(1, 18, 2)),
+            rise(RiddenMobKind::Llama, false, v(1, 16, 5))
+        );
+        let camel = RiddenMobKind::Camel;
+        assert_eq!(
+            rise(camel, false, v(1, 19, 3)),
+            rise(camel, false, v(1, 19, 4)) + 0.06
+        );
+        assert_eq!(rise(camel, true, v(1, 19, 3)), rise(camel, true, v(1, 19, 4)));
+    }
+
+    #[test]
+    fn a_1_19_3_camel_that_ignores_its_rider_goes_on_its_own_input() {
+        // 1.19.3 Camel.ignoresMovementInput is isStationary(): AbstractHorse.travel then takes
+        // the branch of a mob nobody steers, flyingSpeed 0.02F and the camel's own input after
+        // LivingEntity.tickMovement's 0.98, at the speed the last steered tick set (1.19.3
+        // AbstractHorse.java:746-789, Camel.java:219-249, LivingEntity.java:2594-2598); from 1.19.4
+        // Camel.getRiddenInput gives a camel that refuses to move none (1.19.4 Camel.java:262-263)
+        let world = WorldSnapshot::new();
+        let tick = |release: MinecraftVersion| {
+            let mut camel = ridden(
+                RiddenMobKind::Camel,
+                Vec3::new(0.5, 110.0, 0.5),
+                Vec3::ZERO,
+                270.0,
+            );
+            camel.sitting = true;
+            camel.own_forward = 0.09;
+            camel.ridden_speed = 0.09;
+            camel.rider.sprinting = true;
+            tick_ridden_mob(&mut camel, &world, release);
+            camel
+        };
+        let old = tick(MinecraftVersion::new(1, 19, 3));
+        assert_eq!(old.own_forward, 0.09_f32 * 0.98);
+        assert_eq!(old.ridden_speed, 0.09);
+        assert!(old.velocity.x > 0.0);
+        assert_eq!(old.yaw, 270.0);
+        for version in [MinecraftVersion::new(1, 19, 4), MinecraftVersion::new(1, 20, 0)] {
+            let new = tick(version);
+            assert_eq!(new.velocity.x, 0.0, "{version}");
+            assert_eq!(new.ridden_speed, 0.09_f32 + 0.1, "{version}");
+        }
+    }
+
+    #[test]
+    fn a_sitting_camel_in_water_stands_up_at_once_from_1_20() {
+        // Camel.tick: isCamelSitting() && isInWater() -> standUpInstantly(), its pose time that
+        // of a full stand, 52 + 1 (1.20 CamelEntity.java:187-189; 26.3 Camel.java:182-184,
+        // 553-566); 1.19.3 Camel.java has none
+        let world = fluid_pool(FluidState::Water, (0, 6), (100, 104), (2170, 2177));
+        for (release, stands) in [
+            (MinecraftVersion::new(1, 19, 3), false),
+            (MinecraftVersion::new(1, 20, 0), true),
+            (V26_2, true),
+            (MinecraftVersion::new(26, 3, 0), true),
+        ] {
+            let mut camel = ridden(
+                RiddenMobKind::Camel,
+                Vec3::new(3.5, 101.0, 2173.5),
+                Vec3::ZERO,
+                270.0,
+            );
+            camel.in_water = true;
+            camel.sitting = true;
+            tick_ridden_mob(&mut camel, &world, release);
+            assert!(camel.in_water, "{release}");
+            assert_eq!(camel.sitting, !stands, "{release}");
+            assert_eq!(camel.pose_time, if stands { 54 } else { 1001 }, "{release}");
+            assert!(!super::camel_in_pose_transition(&camel), "{release}");
+        }
+    }
+
+    #[test]
     fn unsteered_strider_goes_on_its_own_input_at_its_move_speed_before_1_19() {
         // 1.16 ItemSteerable.java:50-52: step 0.5 and flyingSpeed 0.02F without the stick;
-        // StriderEntity.java:260-266 sets its speed (and, as a Mob, its zza: MobEntity.java:
+        // Strider.java:260-266 sets its speed (and, as a Mob, its zza: Mob.java:
         // 494-497) to getSpeed every tick
         let mut world = stone_floor((-4, 4), 100, (-4, 4));
         let stone = BlockState {
@@ -3153,6 +3398,26 @@ mod tests {
         assert_eq!(unsteered.position.y, 101.0);
         assert!(unsteered.collided_horizontally);
         assert_eq!(walk(true).position.y, 102.0);
+    }
+
+    #[test]
+    fn an_unsaddled_strider_keeps_its_own_speed_from_1_19_4() {
+        // 1.19.3 Strider.travel sets the speed to getMoveSpeed() every travel (Strider.java:254-261);
+        // 1.19.4 has no travel of its own, and the speed is the one its goals set (Strider.java:263-278)
+        let world = stone_floor((-4, 4), 100, (-4, 4));
+        let walk = |release: MinecraftVersion| {
+            let mut strider = ridden(RiddenMobKind::Strider, Vec3::new(0.5, 101.0, 0.5), Vec3::ZERO, 270.0);
+            strider.on_ground = true;
+            strider.saddled = false;
+            strider.own_forward = 0.1;
+            strider.ridden_speed = 0.05;
+            tick_ridden_mob(&mut strider, &world, release);
+            (strider.ridden_speed, strider.own_forward)
+        };
+        // (out of lava it is cold, and its getMoveSpeed takes 0.66 of the attribute)
+        let move_speed = 0.17499999701976776_f64 as f32 * 0.66;
+        assert_eq!(walk(MinecraftVersion::new(1, 19, 3)), (move_speed, move_speed));
+        assert_eq!(walk(MinecraftVersion::new(1, 19, 4)), (0.05, 0.1 * 0.98));
     }
 
     fn web_volume() -> WorldSnapshot {
@@ -3187,7 +3452,7 @@ mod tests {
 
     #[test]
     fn a_web_slows_the_next_move_of_a_mount() {
-        // the multiplier a cobweb leaves slows the next move and is spent (1.9.4 Entity.java:547-549,
+        // the multiplier a cobweb leaves slows the next move and is spent (1.9.4 Entity.java:550-552,
         // 26.3 WebBlock.java:26, Entity.java:783-788, 3072-3074): three ticks in it are no air
         let web = (web_volume(), (0.25, f64::from(0.05_f32), 0.25));
         for release in [
@@ -3234,7 +3499,7 @@ mod tests {
 
     #[test]
     fn a_mount_without_ai_sets_no_speed_only_in_1_21_5() {
-        // Mob overrides canSimulateMovement in 1.21.5 alone (1.21.5 Mob.java:1174), so only there
+        // Mob overrides canSimulateMovement in 1.21.5 alone (1.21.5 Mob.java:1191), so only there
         // does travelRidden skip its setSpeed
         let floor = stone_floor((-2, 4), 9, (-2, 2));
         for (release, speed) in [
@@ -3253,9 +3518,9 @@ mod tests {
 
     #[test]
     fn a_mount_without_movement_speed_takes_no_steering() {
-        // MOVEMENT_SPEED goes down to 0 in every release (1.9.4 EntityAttributes.java:20, 1.20.4
-        // :45, 26.3 Attributes.java:80), and the ground's move is that speed times the friction's
-        // factor (1.20.4 LivingEntity.java:2248-2249, 26.3 :2640-2642): none, not the mob's base
+        // MOVEMENT_SPEED goes down to 0 in every release (1.9.4 SharedMonsterAttributes.java:24, 1.20.4
+        // :39, 26.3 Attributes.java:80), and the ground's move is that speed times the friction's
+        // factor (1.20.4 LivingEntity.java:2259-2260, 26.3 :2640-2642): none, not the mob's base
         let floor = stone_floor((-2, 4), 9, (-2, 2));
         for release in RELEASES {
             let mut kinds = vec![RiddenMobKind::Horse, RiddenMobKind::Pig, RiddenMobKind::Llama];
@@ -3278,7 +3543,7 @@ mod tests {
 
     #[test]
     fn a_mount_without_movement_speed_keeps_what_does_not_come_from_it() {
-        // a sprinting camel's 0.1F is added to the attribute (1.20.4 CamelEntity.java:250-253, 26.3
+        // a sprinting camel's 0.1F is added to the attribute (1.20.4 Camel.java:253-256, 26.3
         // Camel.java:247-250), and water takes its own 0.02F (1.20.4 LivingEntity.java:2048,
         // 26.3 :2431)
         let floor = stone_floor((-2, 4), 9, (-2, 2));
@@ -3302,8 +3567,8 @@ mod tests {
 
     #[test]
     fn a_mount_in_the_air_without_movement_speed_takes_no_steering() {
-        // a tenth of the speed in the air (1.19.3 AbstractHorseEntity.java:769, 1.21.11
-        // LivingEntity.java:2580-2581): a tenth of nothing
+        // a tenth of the speed in the air (1.19.3 AbstractHorse.java:762, 1.21.11
+        // LivingEntity.java:2557-2558): a tenth of nothing
         for release in RELEASES {
             let mut mob = standing(RiddenMobKind::Horse);
             mob.on_ground = false;
@@ -3319,9 +3584,9 @@ mod tests {
     fn a_mount_without_jump_strength_leaves_the_floor_by_nothing_but_its_push_forward() {
         // executeRidersJump sets the impulse, JUMP_STRENGTH * the charge * the block's factor, and
         // pushes 0.4F of the charge forward whatever the impulse is (1.20.4
-        // AbstractHorseEntity.java:809-820, 26.3 AbstractHorse.java:754-763). With no impulse the
+        // AbstractHorse.java:799-810, 26.3 AbstractHorse.java:754-763). With no impulse the
         // move asks for no fall, so no collision below keeps it on the ground (1.20.4
-        // Entity.java:641-642), and gravity is back for the next tick
+        // Entity.java:645-646), and gravity is back for the next tick
         let floor = stone_floor((-2, 4), 9, (-2, 2));
         let drag = f64::from(0.98_f32);
         for release in RELEASES {
@@ -3345,8 +3610,8 @@ mod tests {
 
     #[test]
     fn jump_boost_is_all_of_the_jump_of_a_mount_without_jump_strength() {
-        // the float 0.1F a level on an impulse of nothing (1.9.4 HorseBaseEntity.java:1050-1053,
-        // 1.20.4 AbstractHorseEntity.java:810-811, 26.3 LivingEntity.java:2294-2300)
+        // the float 0.1F a level on an impulse of nothing (1.9.4 AbstractHorse.java:1047-1050,
+        // 1.20.4 AbstractHorse.java:800-801, 26.3 LivingEntity.java:2294-2300)
         let floor = stone_floor((-2, 4), 9, (-2, 2));
         let drag = f64::from(0.98_f32);
         for release in RELEASES {
@@ -3364,7 +3629,7 @@ mod tests {
 
     #[test]
     fn a_camel_without_movement_speed_or_jump_strength_dashes_nowhere() {
-        // the dash is the charge times both (1.19.3 CamelEntity.java:263-264, 1.21.11 Camel.java:
+        // the dash is the charge times both (1.19.3 Camel.java:266-267, 1.21.11 Camel.java:
         // 289-290)
         let floor = stone_floor((-2, 4), 9, (-2, 2));
         let release = MinecraftVersion::new(1, 21, 9);
@@ -3380,10 +3645,10 @@ mod tests {
 
     #[test]
     fn a_tiny_movement_speed_is_a_speed() {
-        // Entity.move sets the position only for a movement over 1.0E-7 squared, from 1.14 (1.14
-        // Entity.java:561, 1.20.4 :620), or from 1.21.2 one the collision took nothing off (1.21.3
-        // Entity.java:654, 1.21.4 :662), which a settled mob's fall into the floor does; 1.13 has
-        // no such test (1.13.2 Entity.java:564). The motion takes the speed all the same, never
+        // Entity.move sets the position only for a movement over 1.0E-7 squared, from 1.14 (1.14.4
+        // Entity.java:492, 1.20.4 :620), or from 1.21.2 one the collision took nothing off (1.21.3
+        // Entity.java:682, 1.21.4 :691), which a settled mob's fall into the floor does; 1.13 has
+        // no such test (1.13.2 Entity.java:569). The motion takes the speed all the same, never
         // the base's
         let floor = stone_floor((-2, 4), 9, (-2, 2));
         let inertia = f64::from(0.6_f32 * 0.91_f32);
@@ -3434,14 +3699,14 @@ mod tests {
     /// Walks a mount through the column of `effect` and checks every tick against Entity.move's
     /// stuck speed: a multiplier left by the tick before scales the requested move and zeroes the
     /// motion, the block's makeStuckInBlock leaves it again for the next move, and the move after
-    /// the last contact is the first step from rest (1.9.4 Entity.java:547-552, 1.20.4 :611-615,
+    /// the last contact is the first step from rest (1.9.4 Entity.java:550-555, 1.20.4 :619-623,
     /// 26.3 :783-790, 3072-3075). The blocks act in the move on the box where it ends, deflated by
-    /// 0.001, by 1.0E-7 from 1.19.3 (1.9.4 Entity.java:837-838, 1.19.2 :891-894, 1.19.3 :899-902);
+    /// 0.001, by 1.0E-7 from 1.19.3 (1.9.4 Entity.java:835-836, 1.19.2 :891-894, 1.19.3 :904-907);
     /// after travel on the box deflated by 1.0E-5F from 1.21.2, a move under a block long still
-    /// taking the target's blocks alone (1.21.4 Entity.java:1072-1082, BlockView.java:172-177), and
+    /// taking the target's blocks alone (1.21.4 Entity.java:1096-1106, BlockGetter.java:164-169), and
     /// on the blocks swept from where the tick began from 1.21.5 (26.3 Entity.java:1351-1357,
     /// BlockGetter.java:161-182). Powder snow takes a living entity only by its feet (1.17
-    /// PowderSnowBlock.java:50-52, 26.3 :55).
+    /// PowderSnowBlock.java:54-56, 26.3 :55).
     fn walks_through(
         kind: RiddenMobKind,
         effect: BlockEffect,
@@ -3557,7 +3822,7 @@ mod tests {
 
     #[test]
     fn a_mount_enters_stays_in_and_leaves_a_berry_bush_from_1_14() {
-        // (0.8F, 0.75, 0.8F) for what is not a fox or bee (1.14 SweetBerryBushBlock.java:60-61,
+        // (0.8F, 0.75, 0.8F) for what is not a fox or bee (1.14.4 SweetBerryBushBlock.java:58-59,
         // 26.3 :76-77)
         let bush = Vec3::new(f64::from(0.8_f32), 0.75, f64::from(0.8_f32));
         for release in [
@@ -3575,7 +3840,7 @@ mod tests {
 
     #[test]
     fn a_mount_enters_stays_in_and_leaves_powder_snow_from_1_17() {
-        // (0.9F, 1.5, 0.9F), once the feet are in it (1.17 PowderSnowBlock.java:50-52, 26.3 :55-56)
+        // (0.9F, 1.5, 0.9F), once the feet are in it (1.17 PowderSnowBlock.java:54-56, 26.3 :55-56)
         let snow = Vec3::new(f64::from(0.9_f32), 1.5, f64::from(0.9_f32));
         for release in [
             MinecraftVersion::new(1, 17, 0),
@@ -3593,7 +3858,7 @@ mod tests {
     #[test]
     fn weaving_loosens_the_web_a_mount_is_in() {
         // WebBlock.entityInside's (0.5, 0.25, 0.5) for a LivingEntity under Weaving (1.20.5
-        // CobwebBlock.java:25-28, 26.3 WebBlock.java:19-24)
+        // WebBlock.java:25-29, 26.3 WebBlock.java:19-24)
         let release = MinecraftVersion::new(1, 21, 9);
         let weaving = |mob: &mut RiddenMobState| mob.weaving = true;
         let loose = Vec3::new(0.5, 0.25, 0.5);
@@ -3628,7 +3893,7 @@ mod tests {
 
     #[test]
     fn a_scaled_mount_collides_at_its_measured_size() {
-        // SCALE multiplies the dimensions (1.20.5 LivingEntity.java:3250-3255, 26.3 :3684-3689): a
+        // SCALE multiplies the dimensions (1.20.5 LivingEntity.java:3264-3269, 26.3 :3684-3689): a
         // ceiling at y 13 clears a horse 1.6 high at y 9.7, and stops one 3.2 high a little up
         let release = MinecraftVersion::new(1, 21, 11);
         let world = stone_floor((-2, 2), 13, (-2, 2));
@@ -3670,7 +3935,7 @@ mod tests {
 
     #[test]
     fn a_doubled_mount_stops_at_an_opening_and_a_ceiling_a_plain_one_passes() {
-        // the SCALE of 1.20.5 scales both dimensions (1.20.5 LivingEntity.java:3250-3255, 26.3
+        // the SCALE of 1.20.5 scales both dimensions (1.20.5 LivingEntity.java:3264-3269, 26.3
         // :3684-3689, EntityDimensions.java:34): a horse 1.3964844 wide and 1.6 high is 2.7929688
         // by 3.2 at scale 2, an ordinary rideable horse that /attribute has resized
         let wall = -6..=6;
@@ -3699,7 +3964,7 @@ mod tests {
 
     #[test]
     fn a_doubled_mount_touches_the_water_beside_and_above_a_plain_one() {
-        // the fluid's contact is taken over the entity's box (1.20.5 Entity.java:3079-3084): a doubled horse's reaches
+        // the fluid's contact is taken over the entity's box (1.20.5 Entity.java:3103-3107): a doubled horse's reaches
         // the shallow water 1.4 away and the layer 2 above its feet, a plain one's neither
         let release = MinecraftVersion::new(1, 21, 9);
         let beside = fluid_pool(FluidState::Water, (2, 4), (10, 10), (-2, 2));
@@ -3839,7 +4104,7 @@ mod tests {
     #[test]
     fn a_scaled_camel_stands_up_to_its_scaled_height_in_the_tick() {
         // Camel.standUp's setPose(STANDING) refreshes the dimensions at once, getDimensions scaling
-        // the pose's (1.21.11 Camel.java:244-249, 579-584, 26.3 LivingEntity.java:3684-3689): 4.75
+        // the pose's (1.21.11 Camel.java:228-234, 529-534, 26.3 LivingEntity.java:3684-3689): 4.75
         // high under a ceiling at 15, so a rise of 0.3 stops at 0.25; sitting it is 1.89 high
         let release = MinecraftVersion::new(1, 21, 9);
         let world = stone_floor((-4, 4), 15, (-4, 4));
@@ -3864,9 +4129,9 @@ mod tests {
 
     #[test]
     fn a_kept_box_is_a_mounts_body_until_1_17() {
-        // the box is moved and the position read back from it before 1.17 (1.16.5 Entity.java:608-609,
+        // the box is moved and the position read back from it before 1.17 (1.16.5 Entity.java:611-612,
         // 911); from 1.17
-        // the position is set and the box rebuilt from the dimensions (1.17 Entity.java:365-367,
+        // the position is set and the box rebuilt from the dimensions (1.17 Entity.java:367-369,
         // 537). A rideable mob's
         // box is its type's size: one of other dimensions is no gameplay, but the fixture that
         // tells the two apart, 2.8 wide on a horse 1.4 wide
@@ -3902,7 +4167,7 @@ mod tests {
 
     #[test]
     fn a_step_toward_a_teleport_rebuilds_a_kept_box_at_the_measured_size() {
-        // setPosition builds the box from the dimensions before 1.17 too (1.16.5 Entity.java:468)
+        // setPosition builds the box from the dimensions before 1.17 too (1.16.5 Entity.java:471)
         let release = MinecraftVersion::new(1, 16, 5);
         let mut mob = RiddenMobState::new(RiddenMobKind::Horse, Vec3::new(0.5, 10.0, 0.5));
         mob.scale = (2.0, 2.0);
@@ -3982,7 +4247,7 @@ mod tests {
     #[test]
     fn a_mount_steps_by_its_attribute_with_a_player_in_control() {
         // LivingEntity.maxUpStep: the attribute, at least 1 with a player in control (1.20.5
-        // LivingEntity.java:3500-3503, 26.3 :3974-3977)
+        // LivingEntity.java:3507-3510, 26.3 :3974-3977)
         let new = MinecraftVersion::new(1, 21, 11);
         let steps = |height: f64, attribute: Option<f64>, release| {
             let mut world = stone_floor((-2, 6), 9, (-2, 2));
@@ -4173,7 +4438,7 @@ mod tests {
 
     #[test]
     fn a_mount_falls_by_a_gravity_of_nothing_and_rises_by_a_negative_one() {
-        // getGravity is the attribute, whatever its sign (1.20.5 LivingEntity.java:2111, 26.3
+        // getGravity is the attribute, whatever its sign (1.20.5 LivingEntity.java:2107, 26.3
         // :2333-2339, 2397; Attributes.java range -1 to 1); the same goes for fluids, whose
         // falling adjustment is skipped for a gravity of 0 (26.3 LivingEntity.java:2608-2620)
         let release = MinecraftVersion::new(26, 3, 0);
@@ -4213,7 +4478,7 @@ mod tests {
         // travelInAir takes getEffectiveGravity after the move from 1.21.2 (1.21.3 LivingEntity.java:
         // 2183-2185, 2205-2211; 26.3 :2337-2340, 2382-2397), so a mount that rose into a ceiling has
         // no upward motion left and falls by 0.01; 1.21 reads the motion travel began with (1.21
-        // LivingEntity.java:2097-2101)
+        // LivingEntity.java:2117-2121)
         let world = stone_floor((-2, 2), 12, (-2, 2));
         let rose = |release| {
             let mut mob = RiddenMobState::new(RiddenMobKind::Horse, Vec3::new(0.5, 10.3, 0.5));
@@ -4495,5 +4760,582 @@ mod tests {
         assert_eq!(drifted(None, new), 0.5 * f64::from(0.91_f32));
         assert_eq!(drifted(Some(0.0), new), 0.5);
         assert_eq!(drifted(Some(0.0), old), 0.5 * f64::from(0.91_f32));
+    }
+
+    /// B290: each test runs a gate on the two releases either side of its boundary, so moving the
+    /// gate one release either way fails here.
+    mod gate_boundaries {
+        use super::super::*;
+        use super::{fluid_pool, ridden, stone_floor, water_with};
+        use crate::world::{BlockShape, BlockState};
+
+        const fn v(major: u16, minor: u16, patch: u16) -> MinecraftVersion {
+            MinecraftVersion::new(major, minor, patch)
+        }
+
+        fn stone() -> BlockState {
+            BlockState {
+                shape: Some(BlockShape::full_block()),
+                ..BlockState::default()
+            }
+        }
+
+        #[test]
+        fn a_donkey_is_lower_from_1_14_4_and_a_scaled_mob_loses_its_fluid_jump_from_1_20_5() {
+            // 1.13.2 AbstractHorse.java:148 setSize(1.3964844F, 1.6F) for every horse; 1.14.4
+            // EntityType.java:514 sizes the donkey 1.3964844F x 1.5F
+            assert_eq!(RiddenMobKind::Donkey.dimensions(v(1, 13, 2)), (1.3964844, 1.6));
+            assert_eq!(RiddenMobKind::Donkey.dimensions(v(1, 14, 4)), (1.3964844, 1.5));
+            // Entity.getFluidJumpThreshold: eyes under 0.4 give 0 (1.20.5 Entity.java:3183-3185), and
+            // from 1.20.5 SCALE scales the eyes (EntityDimensions.java:40): a pig scaled to 0.4 high
+            // has its 0.765 eyes at 0.306
+            let mut pig = RiddenMobState::new(RiddenMobKind::Pig, Vec3::new(0.5, 100.0, 0.5));
+            pig.scale = (1.0, 0.4);
+            assert_eq!(pig.fluid_jump_threshold(v(1, 20, 5)), 0.0);
+            pig.scale = (1.0, 1.0);
+            assert_eq!(pig.fluid_jump_threshold(v(1, 20, 5)), 0.4);
+        }
+
+        #[test]
+        fn a_baby_loses_its_fluid_jump_from_1_16_not_from_1_20_5() {
+            // 1.15.2 LivingEntity.java:2295 compares the fluid with 0.4 for every mob; from 1.16
+            // getFluidJumpThreshold reads the eyes (1.16 Entity.java:2664-2666, 1.20.4 :3148-3150), and
+            // a baby's are those of its dimensions scaled by 0.5 (1.20.4 LivingEntity.java:3185-3186,
+            // Entity.java:2802-2804): a baby pig's 0.765 eyes are at 0.3825
+            let mut pig = RiddenMobState::new(RiddenMobKind::Pig, Vec3::new(0.5, 100.0, 0.5));
+            pig.scale = (0.5, 0.5);
+            assert_eq!(pig.fluid_jump_threshold(v(1, 15, 2)), 0.4);
+            assert_eq!(pig.fluid_jump_threshold(v(1, 16, 0)), 0.0);
+            assert_eq!(pig.fluid_jump_threshold(v(1, 20, 4)), 0.0);
+            assert_eq!(pig.fluid_jump_threshold(v(1, 20, 5)), 0.0);
+            // an adult's eyes are over 0.4 on every release
+            pig.scale = (1.0, 1.0);
+            assert_eq!(pig.fluid_jump_threshold(v(1, 16, 0)), 0.4);
+            assert_eq!(pig.fluid_jump_threshold(v(1, 20, 4)), 0.4);
+            // a baby horse's 1.52 eyes at 0.76 keep the 0.4 (1.20.4 AbstractHorse.java:1005-1007)
+            let mut foal = RiddenMobState::new(RiddenMobKind::Horse, Vec3::new(0.5, 100.0, 0.5));
+            foal.scale = (0.5, 0.5);
+            assert_eq!(foal.fluid_jump_threshold(v(1, 20, 4)), 0.4);
+        }
+
+        #[test]
+        fn a_strider_without_ai_keeps_its_suffocation_from_1_19() {
+            // 1.18.2 Strider.java:303-306 sets suffocating every tick; 1.19 Strider.java:306-311
+            // only with its AI
+            let world = stone_floor((-3, 3), 100, (-3, 3));
+            let cold = |release| {
+                let mut strider =
+                    ridden(RiddenMobKind::Strider, Vec3::new(0.5, 101.0, 0.5), Vec3::ZERO, 270.0);
+                strider.on_ground = true;
+                strider.no_ai = true;
+                tick_ridden_mob(&mut strider, &world, release);
+                strider.suffocating
+            };
+            assert!(cold(v(1, 18, 2)));
+            assert!(!cold(v(1, 19, 0)));
+        }
+
+        #[test]
+        fn a_steered_horse_checks_the_blocks_inside_again_from_1_17() {
+            // AbstractHorse.travel's steered branch calls tryCheckBlockCollision after the move from 1.17
+            // (1.17 HorseBaseEntity.java:765; none in 1.16.5 :748-800): a bubble column pushes once more
+            let mut world = fluid_pool(FluidState::Water, (-4, 4), (98, 106), (-4, 4));
+            world.set_block((0, 101, 0), water_with(BlockEffect::BubbleUp));
+            let rise = |release| {
+                let mut mob = ridden(RiddenMobKind::Horse, Vec3::new(0.5, 101.0, 0.5), Vec3::ZERO, 270.0);
+                tick_ridden_mob(&mut mob, &world, release);
+                mob.velocity.y
+            };
+            assert_eq!(rise(v(1, 17, 0)), rise(v(1, 16, 5)) + 0.06);
+        }
+
+        #[test]
+        fn a_slow_falling_mob_pushed_up_in_its_move_snaps_from_1_14_alone() {
+            // getFluidFallingAdjustedMovement's falling flag: 1.13.2 tests the motion after the move and
+            // the drag (LivingEntity.java:1672-1676), 1.14 the motion before travel (1.14.4
+            // LivingEntity.java:1760). Falling at -0.059 into a bubble column, the move's push leaves a
+            // little upward motion: 1.14.4 snaps it to -0.003 (|y - 0.01 / 16| < 0.003), 1.13.2 does not
+            let mut world = fluid_pool(FluidState::Water, (-4, 4), (98, 106), (-4, 4));
+            world.set_block((0, 101, 0), water_with(BlockEffect::BubbleUp));
+            let after = |release| {
+                let mut mob = ridden(RiddenMobKind::Pig, Vec3::new(0.5, 101.0, 0.5), Vec3::new(0.0, -0.059, 0.0), 270.0);
+                mob.slow_falling = true;
+                tick_ridden_mob(&mut mob, &world, release);
+                mob.velocity.y
+            };
+            assert_eq!(after(v(1, 14, 4)), -0.003);
+            assert!(after(v(1, 13, 2)) > 0.0);
+        }
+
+        #[test]
+        fn a_sitting_camel_in_water_stands_from_1_20() {
+            // 1.20 Camel.tick stands a sitting camel in water up at once (Camel.java:190-191); 1.19.4 has
+            // no such test (Camel.java:185-187)
+            let pool = fluid_pool(FluidState::Water, (-4, 4), (98, 106), (-4, 4));
+            let sits = |release| {
+                let mut camel = ridden(RiddenMobKind::Camel, Vec3::new(0.5, 101.0, 0.5), Vec3::ZERO, 270.0);
+                camel.sitting = true;
+                camel.pose_time = 100;
+                tick_ridden_mob(&mut camel, &pool, release);
+                camel.sitting
+            };
+            assert!(sits(v(1, 19, 4)));
+            assert!(!sits(v(1, 20, 0)));
+        }
+
+        #[test]
+        fn the_steered_and_strider_checks_of_the_blocks_inside_at_their_boundaries() {
+            // the bubble column of strider_checks_the_blocks_inside_in_its_fall_and_tick_until_1_21_2:
+            // 1.16 Strider.java:295-296 (fall) and :318 (tick) from the strider's first release;
+            // ItemSteerable.travel's own check from 1.17 (1.17 ItemSteerable.java:48) to 1.19.3
+            // (1.19.3 :48; none in 1.16.5 or 1.19.4)
+            let mut world = fluid_pool(FluidState::Water, (-4, 4), (98, 106), (-4, 4));
+            world.set_block((0, 101, 0), water_with(BlockEffect::BubbleUp));
+            let rise = |kind: RiddenMobKind, release: MinecraftVersion| {
+                let mut mob = ridden(kind, Vec3::new(0.5, 101.0, 0.5), Vec3::ZERO, 270.0);
+                tick_ridden_mob(&mut mob, &world, release);
+                mob.velocity.y
+            };
+            let swim = |pushes_in_move: f64| pushes_in_move * 0.06 * 0.800000011920929 - 0.08 / 16.0;
+            assert_eq!(rise(RiddenMobKind::Strider, v(1, 16, 0)), swim(2.0) + 0.06);
+            assert_eq!(rise(RiddenMobKind::Strider, v(1, 17, 0)), swim(2.0) + 0.06 + 0.06);
+            assert_eq!(rise(RiddenMobKind::Pig, v(1, 16, 5)), swim(1.0));
+            assert_eq!(rise(RiddenMobKind::Pig, v(1, 17, 0)), swim(1.0) + 0.06);
+            assert_eq!(rise(RiddenMobKind::Pig, v(1, 19, 3)), swim(1.0) + 0.06);
+            assert_eq!(rise(RiddenMobKind::Pig, v(1, 19, 4)), swim(1.0));
+        }
+
+        #[test]
+        fn a_landed_horse_still_jumping_waits_for_its_flag_until_1_19_4() {
+            // 1.19.3 AbstractHorse.java:757-760 jumps only when !isJumping(); 1.19.4
+            // AbstractHorse.java:760-764 clears the flag on the ground first, then jumps
+            let world = stone_floor((-3, 3), 100, (-3, 3));
+            let jumped = |release| {
+                let mut horse =
+                    ridden(RiddenMobKind::Horse, Vec3::new(0.5, 101.0, 0.5), Vec3::ZERO, 270.0);
+                horse.on_ground = true;
+                horse.horse_jumping = true;
+                horse.jump_pending_scale = 1.0;
+                horse.jump_strength = 0.7;
+                tick_ridden_mob(&mut horse, &world, release);
+                horse.position.y > 101.0
+            };
+            assert!(!jumped(v(1, 19, 3)));
+            assert!(jumped(v(1, 19, 4)));
+        }
+
+        #[test]
+        fn a_riding_jump_takes_the_honey_jump_factor_from_1_15_and_a_float_power_from_1_20_5() {
+            // 1.14.4 AbstractHorse.java:664 getCustomJump() * scale; 1.15 AbstractHorse.java:744
+            // times getBlockJumpFactor(), which honey halves
+            let mut world = WorldSnapshot::new();
+            world.set_block(
+                (0, 100, 0),
+                BlockState {
+                    shape: Some(BlockShape {
+                        effect: BlockEffect::Honey,
+                        ..BlockShape::full_block()
+                    }),
+                    ..BlockState::default()
+                },
+            );
+            let body = || SimulationState {
+                position: Vec3::new(0.5, 101.0, 0.5),
+                half_width: 0.6982421875,
+                height: 1.6,
+                on_ground: true,
+                ..SimulationState::default()
+            };
+            let horse_jump_y = |release| {
+                let mut horse = RiddenMobState::new(RiddenMobKind::Horse, Vec3::new(0.5, 101.0, 0.5));
+                horse.jump_strength = 0.7;
+                horse.jump_pending_scale = 1.0;
+                let mut body = body();
+                horse_jump(&mut horse, &mut body, &world, None, release, 0.0);
+                body.velocity.y
+            };
+            assert_eq!(horse_jump_y(v(1, 14, 4)), 0.7);
+            assert_eq!(horse_jump_y(v(1, 15, 0)), 0.7 * 0.5);
+            // Camel.executeRidersJump: 1.4285F * scale * the double jump power until 1.20.4
+            // (1.20.4 Camel.java:287), the float getJumpPower() from 1.20.5 (1.20.5 Camel.java:256,
+            // LivingEntity.java:2059-2064)
+            let floor = stone_floor((-3, 3), 100, (-3, 3));
+            let camel_dash_y = |release| {
+                let mut camel = RiddenMobState::new(RiddenMobKind::Camel, Vec3::new(0.5, 101.0, 0.5));
+                camel.jump_strength = 0.42;
+                camel.jump_pending_scale = 1.0;
+                let mut body = SimulationState {
+                    half_width: 0.85,
+                    height: 2.375,
+                    ..body()
+                };
+                camel_dash(&mut camel, &mut body, &floor, None, release);
+                body.velocity.y
+            };
+            let lift = f64::from(1.4285_f32);
+            assert_eq!(camel_dash_y(v(1, 20, 4)), lift * 0.42);
+            assert_eq!(camel_dash_y(v(1, 20, 5)), lift * f64::from(0.42_f32));
+        }
+
+        #[test]
+        fn slow_falling_reads_the_motion_the_move_left_on_1_21_2_itself() {
+            // the ceiling of slow_falling_reads_the_motion_the_move_left_from_1_21_2 at the boundary:
+            // 1.21.1 LivingEntity.java:2117-2121 the motion travel began with, 1.21.2
+            // LivingEntity.java:2194-2197 the motion the move left
+            let world = stone_floor((-2, 2), 12, (-2, 2));
+            let rose = |release| {
+                let mut mob = RiddenMobState::new(RiddenMobKind::Horse, Vec3::new(0.5, 10.3, 0.5));
+                mob.velocity.y = 0.2;
+                mob.slow_falling = true;
+                tick_ridden_mob(&mut mob, &world, release);
+                mob.velocity.y
+            };
+            let drag = f64::from(0.98_f32);
+            assert_eq!(rose(v(1, 21, 1)), -0.08 * drag);
+            assert_eq!(rose(v(1, 21, 2)), -0.01 * drag);
+        }
+
+        #[test]
+        fn the_step_height_attribute_is_read_from_1_20_5() {
+            // 1.20.5 LivingEntity.java:3507-3510 maxUpStep is the STEP_HEIGHT attribute, at least 1
+            // with a player in control; 1.20.4 AbstractHorse has the fixed 1.0
+            let mut horse = RiddenMobState::new(RiddenMobKind::Horse, Vec3::ZERO);
+            horse.step_height = Some(2.0);
+            assert_eq!(step_height(&horse, v(1, 20, 4)), 1.0);
+            assert_eq!(step_height(&horse, v(1, 20, 5)), 2.0);
+        }
+
+        fn plain() -> PlainMob {
+            PlainMob {
+                yaw: 0.0,
+                max_step: 0.6,
+                pushed_by_fluid: true,
+                fluid_jump_threshold: 0.4,
+                climbing: None,
+                water_slow_down: None,
+                omnidirectional: false,
+                slow_falling: false,
+                levitation_amplifier: None,
+                dolphins_grace: false,
+                gravity: None,
+                water_movement_efficiency: 0.0,
+                no_fall_check: false,
+                inside_after_move: false,
+                discard_friction: false,
+            }
+        }
+
+        fn plain_body(position: Vec3, velocity: Vec3) -> SimulationState {
+            SimulationState {
+                position,
+                velocity,
+                half_width: 0.45,
+                height: 0.9,
+                ..SimulationState::default()
+            }
+        }
+
+        #[test]
+        fn levitation_lifts_a_mob_from_1_9() {
+            // Levitation is of 1.9 (1.9.4 LivingEntity.java:1417-1418 in place of gravity); 1.8.8
+            // LivingEntity.java:1556-1560 pulls by 0.08 alone
+            let travelled = |release, levitation| {
+                let mut body = plain_body(Vec3::new(0.5, 50.0, 0.5), Vec3::ZERO);
+                let mob = PlainMob {
+                    levitation_amplifier: levitation,
+                    ..plain()
+                };
+                let empty = WorldSnapshot::new();
+                plain_living_travel(RiddenMobKind::Pig, body.position, 0.1, Vec3::ZERO, &mut body, &empty, release, mob);
+                body.velocity.y
+            };
+            assert_eq!(travelled(v(1, 8, 8), Some(0)), travelled(v(1, 8, 8), None));
+            assert_eq!(travelled(v(1, 9, 4), Some(0)), 0.05 * 0.2 * f64::from(0.98_f32));
+        }
+
+        fn falling(release: MinecraftVersion, set: impl FnOnce(&mut RiddenMobState)) -> RiddenMobState {
+            let mut mob = RiddenMobState::new(RiddenMobKind::Horse, Vec3::new(0.5, 50.0, 0.5));
+            mob.fall_distance = 5.0;
+            set(&mut mob);
+            tick_ridden_mob(&mut mob, &WorldSnapshot::new(), release);
+            mob
+        }
+
+        #[test]
+        fn the_fall_distance_under_slow_falling_and_levitation_at_their_boundaries() {
+            // Slow Falling is of 1.13: 1.13.2 LivingEntity.java:1511-1513 resets a falling mob's fall
+            // distance before travel, 1.12.2 has no such effect
+            let plain_fall = falling(v(1, 12, 2), |_| {}).fall_distance;
+            assert_eq!(falling(v(1, 12, 2), |mob| mob.slow_falling = true).fall_distance, plain_fall);
+            assert!(falling(v(1, 13, 2), |mob| mob.slow_falling = true).fall_distance < 1.0);
+            // 1.19.4 :1986-1990 only while falling; 1.20 LivingEntity.java:2578-2579 under either
+            // effect, rising too
+            let rising = |release| {
+                falling(release, |mob| {
+                    mob.slow_falling = true;
+                    mob.velocity.y = 0.5;
+                })
+                .fall_distance
+            };
+            assert_eq!(rising(v(1, 19, 4)), 5.0);
+            assert_eq!(rising(v(1, 20, 0)), 0.0);
+            // Levitation resets the fall after the move 1.13 - 1.19.4 (1.13.2 :1612, 1.19.4 :2105);
+            // 1.12.2 never, 1.20 before the move (1.20 :2578-2579), so the drop of the move counts
+            let levitating = |release| {
+                falling(release, |mob| {
+                    mob.levitation_amplifier = Some(0);
+                    mob.velocity.y = -0.5;
+                })
+                .fall_distance
+            };
+            // (the drop is the 0.98 the tick fades the motion by before 1.21.5, counted in float)
+            assert_eq!(levitating(v(1, 12, 2)), f64::from(5.0_f32 + 0.49_f32));
+            assert_eq!(levitating(v(1, 13, 2)), 0.0);
+            assert_eq!(levitating(v(1, 19, 4)), 0.0);
+            assert_eq!(levitating(v(1, 20, 0)), f64::from(0.49_f32));
+        }
+
+        #[test]
+        fn the_drag_modifier_is_of_26_2() {
+            // AIR_DRAG_MODIFIER arrives in 26.2 (26.2 Attributes.java:10; 26.1.2 Attributes.java has
+            // none)
+            let drifted = |release, modifier| {
+                falling(release, |mob| {
+                    mob.velocity.x = 0.5;
+                    mob.air_drag_modifier = modifier;
+                })
+                .velocity
+            };
+            assert_eq!(drifted(v(26, 1, 2), Some(2.0)), drifted(v(26, 1, 2), None));
+            assert_ne!(drifted(v(26, 2, 0), Some(2.0)), drifted(v(26, 2, 0), None));
+        }
+
+        #[test]
+        fn a_ladder_holds_a_fall_to_a_float_from_1_14() {
+            // 1.13.2 LivingEntity.java:1594-1596 keeps motionY to -0.15 (a double); 1.14.4
+            // LivingEntity.java:1921-1923 to -0.15F
+            let mut ladder = WorldSnapshot::new();
+            ladder.set_block(
+                (0, 105, 2173),
+                BlockState {
+                    shape: Some(BlockShape {
+                        effect: BlockEffect::Climbable,
+                        bounds: Aabb::new(Vec3::ZERO, Vec3::ZERO),
+                        ..BlockShape::full_block()
+                    }),
+                    ..BlockState::default()
+                },
+            );
+            let fallen = |release| {
+                let mut pig = ridden(
+                    RiddenMobKind::Pig,
+                    Vec3::new(0.5, 105.0, 2173.5),
+                    Vec3::new(0.0, -0.5, 0.0),
+                    270.0,
+                );
+                tick_ridden_mob(&mut pig, &ladder, release);
+                pig.position.y
+            };
+            assert_eq!(fallen(v(1, 13, 2)), 105.0 - 0.15);
+            assert_eq!(fallen(v(1, 14, 4)), 105.0 - f64::from(0.15_f32));
+        }
+
+        #[test]
+        fn water_movement_efficiency_and_the_climb_out_of_water_at_their_boundaries() {
+            // WATER_MOVEMENT_EFFICIENCY is of 1.21 (1.21 LivingEntity.java:2130-2137; 1.20.6 has no
+            // such attribute)
+            let world = fluid_pool(FluidState::Water, (-4, 4), (98, 106), (-4, 4));
+            let swum = |release, efficiency| {
+                let mut horse =
+                    ridden(RiddenMobKind::Horse, Vec3::new(0.5, 101.0, 0.5), Vec3::ZERO, 270.0);
+                horse.rider.forward = 1.0;
+                horse.water_movement_efficiency = efficiency;
+                tick_ridden_mob(&mut horse, &world, release);
+                horse.velocity
+            };
+            assert_eq!(swum(v(1, 20, 6), 1.0), swum(v(1, 20, 6), 0.0));
+            assert_ne!(swum(v(1, 21, 0), 1.0), swum(v(1, 21, 0), 0.0));
+            // the climb out of water against a wall on a climbable block: none in 1.13.2
+            // LivingEntity.java:1646-1684, 0.2 in 1.14.4 :1880-1882
+            let mut world = fluid_pool(FluidState::Water, (-4, 4), (98, 104), (-4, 4));
+            world.set_block((0, 101, 0), water_with(BlockEffect::Climbable));
+            world.set_block((1, 101, 0), stone());
+            world.set_block((1, 102, 0), stone());
+            let climbed = |release| {
+                let mut pig =
+                    ridden(RiddenMobKind::Pig, Vec3::new(0.5, 101.0, 0.5), Vec3::new(0.2, 0.0, 0.0), 270.0);
+                tick_ridden_mob(&mut pig, &world, release);
+                assert!(pig.collided_horizontally);
+                pig.velocity.y
+            };
+            assert_eq!(climbed(v(1, 13, 2)), -0.08 / 16.0);
+            assert_eq!(climbed(v(1, 14, 4)), 0.2 * 0.800000011920929 - 0.08 / 16.0);
+        }
+
+        #[test]
+        fn the_lava_add_turns_a_negative_zero_positive_from_1_14() {
+            // 1.13.2 LivingEntity.java:1602-1603 subtracts from motionY alone; 1.14.4
+            // LivingEntity.java:1907-1908 setDeltaMovement(getDeltaMovement().add(0.0, -0.02, 0.0)),
+            // whose 0.0 makes x and z +0.0
+            let lava = fluid_pool(FluidState::Lava, (-4, 4), (98, 104), (-4, 4));
+            let signs = |release| {
+                let mut body = plain_body(Vec3::new(0.5, 100.0, 0.5), Vec3::new(-0.0, 0.0, 0.0));
+                body.in_lava = true;
+                plain_living_travel(
+                    RiddenMobKind::Pig,
+                    body.position,
+                    0.1,
+                    Vec3::new(-0.0, 0.0, 1.0),
+                    &mut body,
+                    &lava,
+                    release,
+                    plain(),
+                );
+                body.velocity.x.is_sign_negative()
+            };
+            assert!(signs(v(1, 13, 2)));
+            assert!(!signs(v(1, 14, 4)));
+        }
+
+        #[test]
+        fn a_horse_floats_by_the_water_after_its_lava_travel_from_26_3() {
+            // floatInWaterWhileRidden after the water's travel alone in 26.2, after the lava's too in
+            // 26.3 (26.3 LivingEntity.java:2416-2427, 2488-2493), by the water the move left it in
+            // (26.3 :326-328)
+            let mut beside = fluid_pool(FluidState::Lava, (-6, -1), (98, 104), (-4, 4));
+            let water = fluid_pool(FluidState::Water, (0, 4), (98, 104), (-4, 4));
+            for x in 0..=4 {
+                for y in 98..=104 {
+                    for z in -4..=4 {
+                        beside.set_block((x, y, z), water.block((x, y, z)));
+                    }
+                }
+            }
+            let all_lava = fluid_pool(FluidState::Lava, (-6, 4), (98, 104), (-4, 4));
+            let crossed = |world: &WorldSnapshot, release| {
+                let mut horse =
+                    ridden(RiddenMobKind::Horse, Vec3::new(-2.5, 100.0, 0.5), Vec3::new(3.0, 0.0, 0.0), 270.0);
+                tick_ridden_mob(&mut horse, world, release);
+                horse.velocity.y
+            };
+            assert_eq!(crossed(&beside, v(26, 2, 0)), crossed(&all_lava, v(26, 2, 0)));
+            assert_ne!(crossed(&beside, v(26, 3, 0)), crossed(&all_lava, v(26, 3, 0)));
+        }
+
+        #[test]
+        fn a_vex_takes_the_blocks_inside_after_its_move_until_1_21_2() {
+            // 1.21.1 Vex.java:66-69 checks the blocks inside after a noPhysics move; 1.21.2
+            // Vex.java:68-74 has no such override
+            let mut web = WorldSnapshot::new();
+            web.set_block(
+                (0, 50, 0),
+                BlockState {
+                    shape: Some(BlockShape {
+                        effect: BlockEffect::Web,
+                        bounds: Aabb::new(Vec3::ZERO, Vec3::ZERO),
+                        ..BlockShape::full_block()
+                    }),
+                    ..BlockState::default()
+                },
+            );
+            let stuck = |release| {
+                let mut body = plain_body(Vec3::new(0.5, 50.0, 0.5), Vec3::ZERO);
+                body.no_physics = true;
+                let mob = PlainMob {
+                    inside_after_move: true,
+                    ..plain()
+                };
+                plain_living_travel(RiddenMobKind::Pig, body.position, 0.1, Vec3::ZERO, &mut body, &web, release, mob);
+                body.stuck_speed_multiplier
+            };
+            assert_ne!(stuck(v(1, 21, 1)), Vec3::ZERO);
+            assert_eq!(stuck(v(1, 21, 2)), Vec3::ZERO);
+        }
+
+        #[test]
+        fn the_lava_a_mob_is_in_at_the_lava_boundaries() {
+            // Entity.isInLava: a world query before 1.14 (1.13.2 Entity.java:1143-1145); the move's
+            // field from 1.14 (1.14.4 Entity.java:568-569, 1168-1173), set by any lava block of the
+            // box (LiquidBlock.java:158-161) until 1.15.2, by one whose top is above the feet in
+            // 1.16 - 1.16.1 (1.16 LiquidBlock.java:173-180); the base tick's lava height from
+            // 1.16.2 (1.16.2 Entity.java:1178-1179). A stale inLava of a tick that has no lava:
+            let stale = |release| falling(release, |mob| mob.in_lava = true).velocity.y;
+            let air = -0.08 * f64::from(0.98_f32);
+            assert_eq!(stale(v(1, 13, 2)), air);
+            assert_ne!(stale(v(1, 14, 4)), air);
+            assert_ne!(stale(v(1, 16, 1)), air);
+            assert_eq!(stale(v(1, 16, 2)), air);
+            // feet above the top of the lava of their cell
+            let mut lava = WorldSnapshot::new();
+            lava.set_block(
+                (0, 100, 0),
+                BlockState {
+                    fluid: FluidState::Lava,
+                    fluid_source: true,
+                    ..BlockState::default()
+                },
+            );
+            let hovering = |release| {
+                let mut horse =
+                    ridden(RiddenMobKind::Horse, Vec3::new(0.5, 100.95, 0.5), Vec3::ZERO, 270.0);
+                horse.no_gravity = true;
+                tick_ridden_mob(&mut horse, &lava, release);
+                assert_eq!(horse.position.y, 100.95);
+                horse.in_lava
+            };
+            assert!(hovering(v(1, 15, 2)));
+            assert!(!hovering(v(1, 16, 0)));
+        }
+
+        #[test]
+        fn the_flow_of_lava_pushes_a_mob_from_1_16_and_in_water_from_1_16_2() {
+            // 1.16 Entity.java:1039-1048 pushes by the lava's flow, 1.15.2 Entity.java has no lava
+            // push; in water 1.16 returns before the lava, 1.16.2 Entity.java:1064-1070 measures and
+            // pushes by it too
+            let flowing = |flow: Vec3| BlockState {
+                fluid: FluidState::Lava,
+                fluid_level: 4,
+                fluid_flow: flow,
+                ..BlockState::default()
+            };
+            let world = |flow: Vec3, water: bool| {
+                let mut world = WorldSnapshot::new();
+                for x in -2..=2 {
+                    for z in -2..=2 {
+                        world.set_block((x, 99, z), stone());
+                        world.set_block((x, 100, z), flowing(flow));
+                    }
+                }
+                if water {
+                    world.set_block(
+                        (0, 100, 0),
+                        BlockState {
+                            fluid: FluidState::Water,
+                            fluid_source: true,
+                            ..BlockState::default()
+                        },
+                    );
+                }
+                world
+            };
+            let pushed = |release, water| {
+                let moved = |flow| {
+                    // (moving, so the 1.15.2 push is not under the 0.003 a still motion drops)
+                    let mut horse = ridden(
+                        RiddenMobKind::Horse,
+                        Vec3::new(0.9, 100.0, 0.5),
+                        Vec3::new(0.1, 0.0, 0.0),
+                        270.0,
+                    );
+                    tick_ridden_mob(&mut horse, &world(flow, water), release);
+                    horse.velocity
+                };
+                moved(Vec3::new(1.0, 0.0, 0.0)) != moved(Vec3::ZERO)
+            };
+            assert!(!pushed(v(1, 15, 2), false));
+            assert!(pushed(v(1, 16, 0), false));
+            assert!(!pushed(v(1, 16, 0), true));
+            assert!(pushed(v(1, 16, 2), true));
+        }
     }
 }

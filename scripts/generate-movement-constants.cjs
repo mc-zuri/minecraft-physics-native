@@ -10,11 +10,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { registeredReleases } = require("./registered-releases.cjs");
 const { LEGACY_RELEASES } = require("./legacy-release-data.cjs");
-const { modernTree } = require("./source-roots.cjs");
+const { modernTree, legacyTree } = require("./source-roots.cjs");
 
 const repositoryRoot = path.resolve(__dirname, "..");
 const outputPath = path.join(repositoryRoot, "generated", "movement-constants.json");
-const decompiledRoot = process.env.MC_DECOMPILED_ROOT ?? path.join(repositoryRoot, "..", "..", "pr", "mc-decompiled");
 const SOURCE_ROOTS = ["net/minecraft/world/entity", "net/minecraft/world/phys", "net/minecraft/world/level/block", "net/minecraft/world/level/material",
   "net/minecraft/client/player", "net/minecraft/util", "net/minecraft/world/item", "net/minecraft/item", "net/minecraft/entity", "net/minecraft/block", "net/minecraft/fluid", "net/minecraft/client/network",
   "net/minecraft/util/math", "net/minecraft/util/shape"];
@@ -100,11 +99,11 @@ const moved = (file) => file.endsWith(".rs") && !/^napi|_tests?\.rs$|^tests?\.rs
 
 function generate() {
   const versions = registeredReleases().map(({ version }) => version);
-  const legacy = new Map(LEGACY_RELEASES.map((release) => [release.version, release.source]));
+  const legacy = new Set(LEGACY_RELEASES.map((release) => release.version));
   const trees = [];
   const unavailable = [];
   for (const version of versions) {
-    const tree = legacy.has(version) ? path.join(decompiledRoot, legacy.get(version)) : modernTree(version);
+    const tree = legacy.has(version) ? legacyTree(version) : modernTree(version);
     if (tree && fs.existsSync(tree)) trees.push([version, treeLiterals(tree)]);
     else unavailable.push(version);
   }

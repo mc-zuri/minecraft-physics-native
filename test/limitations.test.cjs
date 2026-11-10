@@ -46,10 +46,11 @@ describe('the limitation documents', () => {
         assert.deepEqual(releases, [...SUPPORTED_VERSIONS]);
     });
 
-    it('keep the notes unreleased, with the pass result a placeholder, while nothing is admitted', () => {
+    it('keep the notes unreleased, their pass result generated from the records, while nothing is admitted', () => {
         assert.ok(notes.includes('## Unreleased'));
         assert.ok(Object.values(status).every(entry => !entry.admitted));
-        assert.match(notes, /\*\*PLACEHOLDER\. TO FILL WHEN THE FINAL PASS ENDS/);
+        // (scripts/release-notes.cjs writes the pass result between its markers; with nothing admitted it supports nothing)
+        assert.match(notes, /<!-- release-notes\.cjs: begin\.[\s\S]*Releases supported by this candidate, each with a complete evidence row: none\.[\s\S]*<!-- release-notes\.cjs: end -->/);
         assert.match(notes, /\| Admitted \| 0 \|/);
     });
 });

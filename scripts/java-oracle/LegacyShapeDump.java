@@ -25,11 +25,13 @@ import java.util.List;
  * The jar is the one the recorder runs: Mojang's names of 1.14.4 mapped on by Calamus ids (recorder/mod/legacy-mappings.py).
  *
  * Lines, tab separated, boxes as in ShapeDump.java, relative to the block:
- *   state NAME ID PROPS collision outline
+ *   state NAME ID PROPS collision outline full
  *   refused NAME ID PROPS channel reason        a query the blank level could not answer: a block entity, as a rule
  *
  * ID is Block.getId(state): (block id << 4) | metadata before 1.13, the state id from it. `-` is a channel the release
- * has no method for.
+ * has no method for. `full` is World.isBlockFullCube's answer for the state alone before 1.13: its
+ * getCollisionBoundingBox (Block.getCollisionShape returning an AABB, 1.12.2 Block.java:405-407) is there and its
+ * average edge is at least 1 (1.12.2 World.java:1835-1838, 1.8.9 World.java isBlockFullCube): 1 or 0, `-` from 1.13.
  *
  * java -XX:+UnlockDiagnosticVMOptions -XX:-BytecodeVerificationRemote -cp "out;JARS" LegacyShapeDump OUTPUT_FILE
  *
@@ -243,6 +245,30 @@ public final class LegacyShapeDump {
         return boxes(List.of(onBlock.invoke(block, arguments(onBlock, state, null, null))), false);
     }
 
+    private static String full(Object state, Object block) throws Exception {
+        Method box = null;
+        for (Method candidate : block.getClass().getMethods()) {
+            if (candidate.getName().equals("getCollisionShape") && candidate.getParameterCount() == 3
+                && candidate.getReturnType().getSimpleName().equals("AABB")) {
+                box = candidate;
+            }
+        }
+        if (box == null) {
+            return ABSENT;
+        }
+        Object answer = box.invoke(block, arguments(box, state, null, null));
+        if (answer == null) {
+            return "0";
+        }
+        String[] names = {"minX", "minY", "minZ", "maxX", "maxY", "maxZ"};
+        double[] v = new double[6];
+        for (int i = 0; i < 6; i++) {
+            v[i] = answer.getClass().getField(names[i]).getDouble(answer);
+        }
+        double average = (v[3] - v[0] + v[4] - v[1] + v[5] - v[2]) / 3.0;
+        return average >= 1.0 ? "1" : "0";
+    }
+
     private static String reason(Throwable failed) {
         Throwable at = failed;
         while (at instanceof InvocationTargetException && at.getCause() != null) {
@@ -332,7 +358,14 @@ public final class LegacyShapeDump {
                         out.write(String.join("\t", "refused", name, id, joined, "outline", reason(refused)));
                         out.newLine();
                     }
-                    out.write(String.join("\t", "state", name, id, joined, collision, outline));
+                    String full = ABSENT;
+                    try {
+                        full = full(state, block);
+                    } catch (ReflectiveOperationException | RuntimeException refused) {
+                        out.write(String.join("\t", "refused", name, id, joined, "full", reason(refused)));
+                        out.newLine();
+                    }
+                    out.write(String.join("\t", "state", name, id, joined, collision, outline, full));
                     out.newLine();
                     if (upperDoor) {
                         placeBelow(air);

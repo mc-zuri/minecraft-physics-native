@@ -96,15 +96,22 @@ export declare class NativeWorld {
   checkpoint(): Buffer
   /** What names this world's content in a checkpoint. */
   contentDigest(): string
+  /**
+   * The release whose client this world is: what it reads in a chunk it does not hold of the
+   * shared empty chunk, which keeps what is written there (WorldSnapshot::set_release; 1.8 its
+   * blocks, 1.13 their fluids, other releases nothing). A world given none reads nothing there.
+   */
+  setRelease(version: string): void
   setChunkLoaded(chunkX: number, chunkZ: number, loaded: boolean): void
   isChunkLoaded(chunkX: number, chunkZ: number): boolean
   setWorldBounds(minBuildHeight: number, maxBuildHeight: number, borderCenterX: number, borderCenterZ: number, borderSize: number, borderAbsoluteMaxSize?: number | undefined | null): void
   /**
    * MovingPistonBlock.getCollisionShape: the block at the piston's cell takes the shape its block
    * entity gives at its progress, which a move before the block entity's tick meets.
-   * `base_shapes`: the extended base a source piston leaves as it retracts.
+   * `base_shapes`: the extended base a source piston leaves as it retracts. Returns the boxes the
+   * cell collides with, relative to it (free to leave it), for the caller's own collision queries.
    */
-  setMovingBlock(version: string, piston: NativeMovingPiston, baseShapes?: Array<NativeAabb> | undefined | null): void
+  setMovingBlock(version: string, piston: NativeMovingPiston, baseShapes?: Array<NativeAabb> | undefined | null): Array<NativeAabb>
   /** The moving block's block entity ended: the block has no shape until it is written anew. */
   clearMovingBlock(x: number, y: number, z: number): void
   /** WorldBorder.isWithinBounds(x, z) of the release (the newest one when none is given). */
@@ -140,9 +147,17 @@ export declare class NativeWorld {
   setVersionedFluidState(x: number, y: number, z: number, version: string, fluid: number, fluidTags: number, fluidLevel: number, fluidSource: boolean, fluidFalling: boolean, fluidFlow: NativeVec3): void
   /**
    * The collision boxes in the query, its cells by the release's Mth.floor and Mth.ceil (the
-   * newest release when none is given).
+   * newest release when none is given). Before 1.13 a box of no height is among them, as the
+   * release's entities meet it (legacy_collision_shapes): 1.12.2 SnowLayerBlock.java:27 keeps the
+   * one-layer box as an AABB of no height, while 1.13.2 Shapes.java:60-66 makes a box that covers
+   * no voxel an empty shape.
    */
   collisionShapes(min: NativeVec3, max: NativeVec3, version?: string | undefined | null): Array<NativeAabb>
+  /**
+   * The collision boxes in the query as an entity is given them, the blocks that ask its
+   * CollisionContext (scaffolding, powder snow) answering for this one.
+   */
+  entityCollisionShapes(min: NativeVec3, max: NativeVec3, context: NativeCollisionContext, version?: string | undefined | null): Array<NativeAabb>
   /** The outline boxes in the query, as collision_shapes takes its cells. */
   outlineShapes(min: NativeVec3, max: NativeVec3, version?: string | undefined | null): Array<NativeAabb>
   /** The interaction boxes in the query, as collision_shapes takes its cells. */
@@ -233,6 +248,16 @@ export declare function generatedStateShapeForProperties(version: string, block:
  * NativePlayer accept), so a caller can refuse one before it builds an engine.
  */
 export declare function isSupportedVersion(version: string): boolean
+
+/**
+ * LivingEntity.knockback on a delta movement (simulation::living_knockback): none when vanilla would
+ * draw a random direction, the velocity as it was when the resistance stops the hit. `roll` is the
+ * random.nextDouble() the resistance is rolled against to 1.15.
+ */
+export declare function livingKnockback(version: string, velocity: NativeVec3, onGround: boolean, strength: number, x: number, z: number, resistance: number, roll?: number | undefined | null): NativeVec3 | null
+
+/** The Java major whose Math a release follows now (setMathJava, else the declared one). */
+export declare function mathJava(version: string): number
 
 /** The steps a client's interpolation of a cart starts with under the old path. */
 export declare function minecartClientLerpSteps(version: string): number
@@ -379,6 +404,8 @@ export interface NativeBlockUpdate {
   suffocating?: boolean
   inWall?: boolean
   bottomFaceSturdy?: boolean
+  /** Block.getExplosionResistance of the block, absent for air: what a blast's rays lose in it. */
+  explosionResistance?: number
   remove?: boolean
 }
 
@@ -421,6 +448,8 @@ export interface NativeBoatState {
   yawDegrees?: number
   landFriction?: number
   lastVerticalVelocity?: number
+  /** Entity.fallDistance of the boat (absent: 0). */
+  fallDistance?: number
   boundingBox?: NativeAabb
   speedMultiplier?: number
   riderYaw?: number
@@ -439,6 +468,15 @@ export interface NativeBoatState {
   paddlePhases?: Array<number>
   /** Entity.isSilent: a silent boat plays no paddle sound (which takes its status again). */
   silent?: boolean
+  /**
+   * AbstractBoat.lerpSteps: the steps left of the interpolation a position packet started,
+   * which 1.21.2 to 1.21.4 run on a boat the client controls too.
+   */
+  lerpSteps?: number
+  /** AbstractBoat.lerpX, lerpY and lerpZ: where the interpolation goes. */
+  lerpPosition?: NativeVec3
+  /** AbstractBoat.lerpYRot: the yaw it turns to, in degrees. */
+  lerpYRot?: number
 }
 
 /**
@@ -462,6 +500,20 @@ export interface NativeBuildIdentity {
   target: string
   sourceHash: string
   crateVersion: string
+}
+
+/** What vanilla's EntityCollisionContext tells a block about the entity asking. */
+export interface NativeCollisionContext {
+  /** The entity's feet: entityBottom. */
+  bottom: number
+  /** Entity.isDescending, the sneak key. */
+  descending: boolean
+  /** Entity.fallDistance. */
+  fallDistance: number
+  /** PowderSnowBlock.canEntityWalkOnPowderSnow. */
+  walksOnPowderSnow: boolean
+  /** The entity is a FallingBlockEntity; absent: false. */
+  fallingBlock?: boolean
 }
 
 /** A sample of a dragon's flight history. */
@@ -618,8 +670,9 @@ export interface NativeEntityPushState {
 /** What entityTravelSupport says of a kind. */
 export interface NativeEntityTravelSupport {
   /**
-   * "player", "boat", "ridden", "unsupported", which the game has and the engine has no path
-   * for, or "unknown", outside the inventory.
+   * "player", "boat", "ridden", "mob", "dragon" (simulateVersionedDragonTick), "entity", which is
+   * no LivingEntity and has its own tick,
+   * "unsupported", which the game has and the engine has no path for, or "unknown", no kind of the game.
    */
   family: string
   /** The release's registry holds the kind. */
@@ -780,9 +833,32 @@ export interface NativeMinecartContainer {
   slots: Array<NativeMinecartStack>
 }
 
+/**
+ * A TNT cart's Level.explode and the blocks its rays reach, air included, as the explosion's
+ * toBlow has them: `certain` breaks under any of the level's draws, `possible` under some, and
+ * `blown` is the exact list where the rules gave `levelRandom`, with `levelRandom` after it.
+ * Breaking them is the server's, after the entities.
+ */
 export interface NativeMinecartExplosion {
   position: NativeVec3
   power: number
+  certain: Array<NativeBlockPosition>
+  possible: Array<NativeBlockPosition>
+  blown?: Array<NativeBlockPosition>
+  levelRandom?: number
+}
+
+/**
+ * An end gateway's block entity: its block, the block it sends to (the exit portal under
+ * ExactTeleport, else findExitPosition's; none where it has none), its teleportCooldown and age.
+ * `undecided` comes back set where the level's random picked among entities on different carts.
+ */
+export interface NativeMinecartGateway {
+  position: NativeBlockPosition
+  exit?: NativeBlockPosition
+  cooldown?: number
+  age?: number
+  undecided?: boolean
 }
 
 /** A hurt from outside a cart's tick: `kind` is `plain`, `fire` or `explosion`. */
@@ -794,10 +870,21 @@ export interface NativeMinecartHurt {
   burningArrow?: number
 }
 
-/** An item entity a hopper cart can take. */
+/**
+ * An item entity about the carts: what a hopper cart can take, and what a TNT cart's blast hurts
+ * and pushes. `position` is Entity.position (its box's bottom centre without it), `health`
+ * ItemEntity.health (5), `blastProof` whether a blast's hurt is kept off it (an invulnerable item,
+ * a nether star, a stack resistant to explosions). `removed` comes back set where the hurt took
+ * its health.
+ */
 export interface NativeMinecartItem {
   boundingBox: NativeAabb
   stack: NativeMinecartStack
+  position?: NativeVec3
+  velocity?: NativeVec3
+  health?: number
+  blastProof?: boolean
+  removed?: boolean
 }
 
 /** A client's cart under the old path. */
@@ -825,6 +912,11 @@ export interface NativeMinecartOther {
   hasPassengers?: boolean
   /** Set by the tick: the index of the cart that picked it up. */
   rides?: number
+  /**
+   * The index among the scene's others of the entity it rides, which rides a cart (a jockey):
+   * from 1.9 nothing of that cart's pushes or collides with it (isPassengerOfSameVehicle).
+   */
+  ridesOther?: number
   /** AbstractBoat: its tick from 1.9 pushes the carts it reaches. */
   boat?: boolean
   /** Where its own tick leaves it, from where it pushes: with `tickBoundingBox`, for what a cart ticking ahead of it finds elsewhere. */
@@ -834,6 +926,18 @@ export interface NativeMinecartOther {
   ticksAfter?: number
   /** A player that leaves the cart it `rides` this tick: after that cart's tick, and before its own push from where it landed. */
   getsOff?: boolean
+  /** Its eye height, from which a TNT cart's blast pushes it: without it 0.85 of its box's height. */
+  eyeHeight?: number
+  /** An armor stand: it pushes only the rideable carts at its own place, by its own way. */
+  armorStand?: boolean
+  /** A bat, which pushes nothing. */
+  bat?: boolean
+  /** The scoreboard team it is on. */
+  team?: NativeMinecartTeam
+  /** Entity.boardingCooldown, from 1.9: while above 0 no cart picks it up. Getting off a cart sets 60. */
+  boardingCooldown?: number
+  /** Set by the tick: it left the level with the cart it rides, through a nether or end portal (from 1.21). */
+  removed?: boolean
 }
 
 /** A cart's first passenger: which field counts depends on the release. */
@@ -863,6 +967,13 @@ export interface NativeMinecartRules {
   tntExplodes?: boolean
   /** Whether a nether portal has a portal of the level's beyond it: only a player's makes one. */
   netherExit?: boolean
+  /** The spawnerBlocksEnabled game rule of 1.21.9+, which a spawner cart's spawner runs under. */
+  spawnerBlocksEnabled?: boolean
+  /**
+   * Level.random's raw 48 bits, where the caller knows them: a TNT cart's blast then gives the
+   * exact blocks its rays break (`blown`), drawing from it in the tick's order.
+   */
+  levelRandom?: number
 }
 
 export interface NativeMinecartScene {
@@ -870,6 +981,7 @@ export interface NativeMinecartScene {
   others: Array<NativeMinecartOther>
   items: Array<NativeMinecartItem>
   containers: Array<NativeMinecartContainer>
+  gateways: Array<NativeMinecartGateway>
 }
 
 /**
@@ -906,6 +1018,8 @@ export interface NativeMinecartState {
   push?: NativeVec3
   comparatorSignal?: number
   hasLootTable?: boolean
+  /** Entity.hasCustomName, which before 1.20.3 keeps a creative hit from discarding the cart. */
+  customName?: boolean
   tickCount?: number
   hurtTime?: number
   hurtDir?: number
@@ -913,6 +1027,8 @@ export interface NativeMinecartState {
   invulnerable?: boolean
   /** MinecartTNT.fuse, -1 until it is primed. */
   fuse?: number
+  /** From 1.21.5, MinecartTNT.ignitionSource has a creative player for its attacker: its blast is that player's. */
+  creativeIgnition?: boolean
   explosionPowerBase?: number
   explosionSpeedFactor?: number
   /**
@@ -921,16 +1037,28 @@ export interface NativeMinecartState {
    */
   randomSeed?: number
   enabled?: boolean
-  /** A hopper cart's five slots, the empty ones as null. */
+  /** A hopper cart's five slots, the empty ones as null: required of one, refused of any other. */
   inventory?: Array<NativeMinecartStack | undefined | null>
   lastActivated?: number
-  /** `nether` or `end`, the portal it is in. */
+  /**
+   * A spawner cart's BaseSpawner: Delay (20 without it), MinSpawnDelay (200), MaxSpawnDelay (800)
+   * and RequiredPlayerRange (16).
+   */
+  spawnDelay?: number
+  minSpawnDelay?: number
+  maxSpawnDelay?: number
+  requiredPlayerRange?: number
+  /** `nether`, `end` or `gateway`, the portal it is in (Entity.portalProcess from 1.21). */
   portal?: string
+  /** The block of the gateway it went into, required of a `gateway` portal. */
+  portalEntry?: NativeBlockPosition
   insidePortal?: boolean
   portalTime?: number
   portalCooldown?: number
   /** Set by the tick: `destroyed`, `discarded`, `exploded`, `below_world`, `nether` or `end`. */
   removed?: string
+  /** The scoreboard team it is on, whose collision rule the pushes ask from 1.9. */
+  team?: NativeMinecartTeam
 }
 
 export interface NativeMinecartStep {
@@ -939,6 +1067,17 @@ export interface NativeMinecartStep {
   yRot: number
   xRot: number
   weight: number
+}
+
+/**
+ * A scoreboard team: its name (the same name is the same team) and Team.CollisionRule, `always`,
+ * `never`, `pushOtherTeams` or `pushOwnTeam`.
+ */
+export interface NativeMinecartTeam {
+  name: string
+  collisionRule: string
+  /** PlayerTeam.allowFriendlyFire, true without it: from 26.3 a TNT cart's blast hurts its allies only with it. */
+  allowFriendlyFire?: boolean
 }
 
 /** What a tick left of one cart. */
@@ -952,11 +1091,24 @@ export interface NativeMinecartTick {
   primed: boolean
   explosions: Array<NativeMinecartExplosion>
   commandRan: boolean
+  /**
+   * A spawner cart's turn that the level's random decides: `attempt`, with `spawnAt` its block
+   * (whether anything came, and the delay after, are the server's), or `delay`, a delay of -1
+   * drawn between its min and max.
+   */
+  spawner?: string
+  spawnAt?: NativeBlockPosition
 }
 
-/** A squid, fish, guardian, ghast, phantom, allay or vex where its AI left it. */
+/** A mob whose travel is the engine's, where its AI left it. */
 export interface NativeMobTravelState {
-  /** The entity's registry name. */
+  /**
+   * The entity's registry name: squid, glow_squid, cod, salmon, tropical_fish, pufferfish,
+   * tadpole, guardian, elder_guardian, ghast, phantom, allay, vex, blaze, zombie, cow, bat, bee,
+   * parrot, dolphin, turtle, axolotl, frog, drowned, spider, cave_spider, polar_bear, wither,
+   * armor_stand, strider, skeleton_horse or sulfur_cube; "living" for any mob with no travel of
+   * its own.
+   */
   kind: string
   position: NativeVec3
   /** The motion after its AI. */
@@ -1011,6 +1163,22 @@ export interface NativeMobTravelState {
   gravity?: number
   /** Attributes.WATER_MOVEMENT_EFFICIENCY, from 1.21. */
   waterMovementEfficiency?: number
+  /** Attributes.AIR_DRAG_MODIFIER, from 26.2; absent is 1. */
+  airDragModifier?: number
+  /** LivingEntity.shouldDiscardFriction (a goat's or frog's long jump, a breeze's jump), from 1.17. */
+  discardFriction?: boolean
+  /** Mob.isEffectiveAi, false for a NoAI mob, whose travel then does nothing; true when absent. */
+  effectiveAi?: boolean
+}
+
+/**
+ * Entity.Movement: a move from `from` to `to`, checked one axis at a time in the order of
+ * `axisOrder` where it has one (Direction.axisStepOrder, from 1.21.5).
+ */
+export interface NativeMovement {
+  from: NativeVec3
+  to: NativeVec3
+  axisOrder?: NativeVec3
 }
 
 /**
@@ -1083,6 +1251,8 @@ export interface NativeMovingEntityState {
   age?: number
   pickupDelay?: number
   itemEmpty?: boolean
+  /** The item is fire immune (a netherite item or ancient debris): no burn draw in lava on 1.16. */
+  fireImmune?: boolean
   followingPlayer?: number
   followingTime?: number
   orbTicks?: number
@@ -1130,8 +1300,9 @@ export interface NativeNearbyEntity {
   /**
    * "living", "boat", "shulker", "happy_ghast", "happy_ghast_stays_still" (on its still
    * timeout), "still_living" (a living entity that neither pushes nor collides, the armor
-   * stand) or "attached_rocket" (a firework rocket attached to the player, boosting it in its
-   * turn of the tick); other entities neither push nor collide.
+   * stand), "minecart" or "attached_rocket" (a firework rocket attached to the player, boosting
+   * it in its turn of the tick) or "spectator" (a spectating player, which the riptide spin's
+   * sweep leaves out); other entities neither push nor collide.
    */
   kind: string
   position: NativeVec3
@@ -1308,6 +1479,8 @@ export interface NativeProjectileHitState {
   bulletDelta?: NativeVec3
   /** The server has no chunk here: a fireball is gone. */
   chunkUnloaded?: boolean
+  /** Entity.isOutsideWorldBorder as 1.13's collision query of the box leaves it; pass back the one returned. */
+  outsideBorder?: boolean
   /** A shulker bullet is gone on peaceful. */
   peaceful?: boolean
   /** enderPearlsVanishOnDeath is off. */
@@ -1338,6 +1511,11 @@ export interface NativeProjectileOwner {
   spectator?: boolean
   /** Entity.isRemoved: a fireball is gone with it. */
   removed?: boolean
+  /**
+   * ServerPlayer.wonGame: in the end credits, which an ender pearl waits out from 1.21.9.
+   * Absent: false.
+   */
+  wonGame?: boolean
 }
 
 export interface NativeProjectileState {
@@ -1346,7 +1524,7 @@ export interface NativeProjectileState {
   gravity?: number
   airDrag?: number
   power?: NativeVec3
-  /** AbstractHurtingProjectile.accelerationPower (1.21+; 0.1 when absent). */
+  /** AbstractHurtingProjectile.accelerationPower (1.21+; when absent the kind's, 0.1 and 0 for a wind charge). */
   accelerationPower?: number
   /** A dangerous (blue) wither skull, whose air inertia is 0.73F. */
   dangerous?: boolean
@@ -1366,6 +1544,11 @@ export interface NativeProjectileState {
   noPhysics?: boolean
   /** The box a rocket or hook keeps before 1.17 (absent: from the position). */
   boundingBox?: NativeAabb
+  /**
+   * Entity.stuckSpeedMultiplier a cobweb or powder snow left on a hook or rocket, which its next
+   * move takes (absent: none).
+   */
+  stuckSpeedMultiplier?: NativeVec3
 }
 
 /** An entity a projectile may hit. The array's order is Level.getEntities's, which decides ties. */
@@ -1390,7 +1573,7 @@ export interface NativeProjectileTarget {
   spectator?: boolean
   /** A player the owning player may not harm. */
   friendly?: boolean
-  /** 1.8: PlayerAbilities.invulnerable. */
+  /** 1.8: Abilities.invulnerable. */
   invulnerablePlayer?: boolean
   /** What Entity.hurt answers; true when absent. */
   hurt?: boolean
@@ -1424,6 +1607,8 @@ export interface NativeProjectileTickResult {
   discarded: boolean
   /** The box a rocket or hook keeps before 1.17. */
   boundingBox?: NativeAabb
+  /** Entity.stuckSpeedMultiplier the tick left on a hook or rocket, for the next tick's state. */
+  stuckSpeedMultiplier: NativeVec3
 }
 
 /**
@@ -1497,6 +1682,11 @@ export interface NativeSimulationState {
   autoJump?: boolean
   autoJumpTime?: number
   riptideLaunch?: number
+  /**
+   * The shulker boxes' pushes since the last tick, in order, which the next tick's block effects
+   * take first (from 1.21.5; the engine's own output, to hand back with the state).
+   */
+  pendingMovements?: Array<NativeMovement>
   sprinting?: boolean
   wasSprinting?: boolean
   /**
@@ -1527,6 +1717,11 @@ export interface NativeSimulationState {
    * the tick ends on the position handed in, the seat the caller keeps with the vehicle.
    */
   passenger?: boolean
+  /**
+   * Entity.isVehicle: it carries passengers (a server's, as vanilla seats none on a player). From
+   * 1.9 nothing pushes it (1.9.4 Entity.java:1164-1169, 26.3 :1931-1937). False when absent.
+   */
+  isVehicle?: boolean
   /** Optional boat geometry/status for passenger fluid queries; omission clears it. */
   boatVehicle?: NativeBoatVehicle
   inWeb?: boolean
@@ -1797,16 +1992,26 @@ export declare function projectileTargetHitbox(position: NativeVec3, width: numb
 /**
  * Player.updatePlayerPose (updateSize before 1.17): the requested pose when it fits, else
  * crouching or swimming, and no change without room to swim; a spectator or passenger takes the
- * requested pose unchecked (1.14 PlayerEntity.java:401-430, 1.21.11 Player.java:352-366). Each fit
+ * requested pose unchecked (1.14.4 Player.java:333-363, 1.21.11 Player.java:336-352). Each fit
  * is CollisionGetter.noCollision for the player (its block context and the state's
- * nearbyEntities that collide) of the pose's box, shrunk by 1e-7 from 1.16 (1.14 Entity.java:1641-
- * 1643, 1.15 :1657-1659, 1.16 :1695-1697, 1.21.11 Player.java:382-384). `scale` is the SCALE
+ * nearbyEntities that collide) of the pose's box, shrunk by 1e-7 from 1.16 (1.14.4 Entity.java:1769-
+ * 1643, 1.15 :1651-1653, 1.16 :1687-1689, 1.21.11 Player.java:368-370). `scale` is the SCALE
  * attribute, read from 1.20.5.
  */
 export declare function refreshVersionedPose(version: string, world: NativeWorld, state: NativeSimulationState, currentPose: number, requestedPose: number, spectator: boolean, scale?: number | undefined | null): NativePoseRefreshResult
 
-/** A shulker box's block event, the server's (triggerEvent(1, count)). */
-export declare function shulkerBoxBlockEvent(state: NativeShulkerBox, count: number): NativeShulkerBox
+/**
+ * Makes every release follow one Java major's Math.sin and Math.cos (8, or 9 and up, which agree),
+ * or with null each the one its version json declares: Java 8 up to 1.16.5 (crate::math::math_java).
+ * For the whole process; the recorder runs every release on Java 21 or 25, so its replays set 21.
+ */
+export declare function setMathJava(major?: number | undefined | null): void
+
+/**
+ * A shulker box's block event, the server's (triggerEvent(1, count)), in the releases that have
+ * the box (from 1.11).
+ */
+export declare function shulkerBoxBlockEvent(version: string, state: NativeShulkerBox, count: number): NativeShulkerBox
 
 export declare function simulateArrowTick(world: NativeWorld, state: NativeArrowState): NativeArrowTickResult
 
@@ -1877,7 +2082,7 @@ export declare function simulateVersionedMinecartHurt(version: string, world: Na
 export declare function simulateVersionedMinecartPush(version: string, cart: NativeMinecartState, other: NativeMinecartOther): NativeMinecartScene
 
 /** A server tick of a level's carts in its tick order, among the other entities near them. */
-export declare function simulateVersionedMinecartScene(version: string, world: NativeWorld, carts: Array<NativeMinecartState>, others: Array<NativeMinecartOther>, rules: NativeMinecartRules, items?: Array<NativeMinecartItem> | undefined | null, containers?: Array<NativeMinecartContainer> | undefined | null): NativeMinecartScene
+export declare function simulateVersionedMinecartScene(version: string, world: NativeWorld, carts: Array<NativeMinecartState>, others: Array<NativeMinecartOther>, rules: NativeMinecartRules, items?: Array<NativeMinecartItem> | undefined | null, containers?: Array<NativeMinecartContainer> | undefined | null, gateways?: Array<NativeMinecartGateway> | undefined | null): NativeMinecartScene
 
 /** A server tick of one cart. */
 export declare function simulateVersionedMinecartTick(version: string, world: NativeWorld, state: NativeMinecartState, rules: NativeMinecartRules): NativeMinecartTick

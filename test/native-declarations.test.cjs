@@ -64,7 +64,7 @@ describe('the native declarations', () => {
     });
 
     it('refuse a packed layout the engine does not read', () => {
-        refused({ native: changed(native, 'LENGTH: 29,', 'LENGTH: 30,') }, /NativePlayerInput\.LENGTH is 30, input::LENGTH is 29/);
+        refused({ native: changed(native, 'LENGTH: 32,', 'LENGTH: 33,') }, /NativePlayerInput\.LENGTH is 33, input::LENGTH is 32/);
         refused({ rust: changed(rust, 'pub const ENTITY_LENGTH: usize = 21;', 'pub const ENTITY_LENGTH: usize = 22;') }, /NATIVE_PLAYER_ENTITY_LENGTH is 21, ENTITY_LENGTH is 22/);
         refused({ rust: changed(rust, 'pub const ON_GROUND: u32 = 1 << 11;', 'pub const ON_GROUND: u32 = 1 << 25;') }, /NativePlayerInputFlag\.ON_GROUND/);
         refused({ rust: changed(rust, 'pub const LENGTH: usize = 24;', 'pub const EXTRA: usize = 24;\n    pub const LENGTH: usize = 25;') }, /NativePlayerOutput\.EXTRA is undefined/);

@@ -153,7 +153,7 @@ function parseRegistryFriction(source, where) {
 const LEGACY_REGISTRATION = /\bregister\s*\(\s*\d+\s*,\s*"([a-z0-9_]+)"\s*,\s*[^\n]{0,40}?\bnew\s+([A-Za-z0-9_]+)\s*\(/g;
 
 /**
- * Before 1.13 a block class's constructor sets `this.slipperiness`, and Block.java registers the blocks. `classes`
+ * Before 1.13 a block class's constructor sets `this.friction` (Yarn: slipperiness), and Block.java registers the blocks. `classes`
  * gives { extends, expression? } of the classes that set it and those under them, and `declared` tells a class some
  * source declares: each registered block takes its class's nearest setter, and a class nothing declares throws.
  */
@@ -183,7 +183,7 @@ function parseLegacyFriction(registry, classes, declared, where) {
 function parseLegacyClass(source) {
   const declaration = /\bclass\s+([A-Za-z0-9_]+)(?:\s+extends\s+([A-Za-z0-9_]+))?/.exec(source);
   if (!declaration) return undefined;
-  const assignment = /\bthis\.slipperiness\s*=\s*([^;]+);/.exec(source);
+  const assignment = /\bthis\.(?:friction|slipperiness)\s*=\s*([^;]+);/.exec(source);
   return { name: declaration[1], extends: declaration[2], expression: assignment?.[1].trim() };
 }
 

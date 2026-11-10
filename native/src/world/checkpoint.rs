@@ -4,14 +4,14 @@
 //! this encodes takes a new one.
 
 use super::{
-    BlockEffect, BlockPosition, BlockShape, BlockState, ChunkPosition, EntityCollider, FluidState,
+    BlockEffect, BlockPosition, BlockShape, BlockState, ChunkPosition, EmptyChunkReads, EntityCollider, FluidState,
     MovingBlockCell, SectionPosition, VersionedBlockStateId, WorldSnapshot,
 };
 use crate::math::{Aabb, Vec3};
 use crate::version::MinecraftVersion;
 use std::collections::{HashMap, HashSet};
 
-const MAGIC: &[u8; 8] = b"MCPNWLD1";
+const MAGIC: &[u8; 8] = b"MCPNWLD3";
 
 /// FNV-1a over the encoded world, which is what makes two worlds the same world to a checkpoint.
 #[cfg_attr(not(feature = "bindings"), allow(dead_code))]
@@ -80,6 +80,12 @@ impl Writer {
     fn maybe_flag(&mut self, value: Option<bool>) {
         self.u8(value.map_or(2, u8::from));
     }
+    fn maybe_f32(&mut self, value: Option<f32>) {
+        self.flag(value.is_some());
+        if let Some(value) = value {
+            self.u32(value.to_bits());
+        }
+    }
     fn state(&mut self, value: &BlockState) {
         self.u32(value.id);
         self.u32(value.tags);
@@ -100,6 +106,7 @@ impl Writer {
         self.maybe_flag(value.suffocating);
         self.maybe_flag(value.in_wall);
         self.maybe_flag(value.bottom_face_sturdy);
+        self.maybe_f32(value.explosion_resistance);
     }
     fn shapes(&mut self, map: &HashMap<BlockPosition, Vec<BlockShape>>) {
         let mut keys: Vec<_> = map.keys().copied().collect();
@@ -222,6 +229,9 @@ impl Reader<'_> {
             other => Err(format!("a world checkpoint holds {other} for an optional flag")),
         }
     }
+    fn maybe_f32(&mut self) -> Decoded<Option<f32>> {
+        Ok(if self.flag()? { Some(f32::from_bits(self.u32()?)) } else { None })
+    }
     fn state(&mut self) -> Decoded<BlockState> {
         Ok(BlockState {
             id: self.u32()?,
@@ -243,6 +253,7 @@ impl Reader<'_> {
             suffocating: self.maybe_flag()?,
             in_wall: self.maybe_flag()?,
             bottom_face_sturdy: self.maybe_flag()?,
+            explosion_resistance: self.maybe_f32()?,
         })
     }
     fn shapes(&mut self) -> Decoded<HashMap<BlockPosition, Vec<BlockShape>>> {
@@ -342,12 +353,24 @@ impl WorldSnapshot {
             out.aabb(collider.bounds);
             out.flag(collider.only_from_above);
         }
+        // the shared empty chunk and what the release reads of it (EmptyChunkReads)
+        out.u8(match self.empty_chunk_reads {
+            EmptyChunkReads::Nothing => 0,
+            EmptyChunkReads::Blocks => 1,
+            EmptyChunkReads::Fluids => 2,
+        });
+        out.flag(self.empty_chunk.is_some());
+        if let Some(shared) = &self.empty_chunk {
+            let bytes = shared.encode();
+            out.len(bytes.len());
+            out.0.extend_from_slice(&bytes);
+        }
         out.0
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() < MAGIC.len() || &bytes[..MAGIC.len()] != MAGIC {
-            return Err("not a world checkpoint of this schema (MCPNWLD1)".to_string());
+            return Err("not a world checkpoint of this schema (MCPNWLD3)".to_string());
         }
         let mut input = Reader { bytes, at: MAGIC.len() };
         let mut world = Self::default();
@@ -414,6 +437,16 @@ impl WorldSnapshot {
             let bounds = input.aabb()?;
             let only_from_above = input.flag()?;
             world.entity_colliders.push(EntityCollider { bounds, only_from_above });
+        }
+        world.empty_chunk_reads = match input.u8()? {
+            0 => EmptyChunkReads::Nothing,
+            1 => EmptyChunkReads::Blocks,
+            2 => EmptyChunkReads::Fluids,
+            other => return Err(format!("a world checkpoint reads the empty chunk as {other}")),
+        };
+        if input.flag()? {
+            let count = input.len()?;
+            world.empty_chunk = Some(Box::new(Self::decode(input.take(count)?)?));
         }
         if input.at != bytes.len() {
             return Err("a world checkpoint goes on past its end".to_string());

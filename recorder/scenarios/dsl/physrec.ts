@@ -86,6 +86,8 @@ export interface PhysrecSetup {
     readonly effects?: readonly { readonly id: string; readonly amplifier?: number }[];
     readonly equipment?: Readonly<Record<string, PhysrecItem>>;
     readonly attributes?: Readonly<Record<string, number>>;
+    /** Modifiers of an attribute of the player, on top of `attributes`: the mod adds them through the release's own container. */
+    readonly modifiers?: Readonly<Record<string, readonly core.ModifierSpec[]>>;
     readonly food?: number;
     readonly flying?: boolean;
     readonly autoJump?: boolean;
@@ -111,6 +113,7 @@ export interface PhysrecAction {
     readonly tabList?: { readonly header: string; readonly footer: string };
     readonly resourcePack?: { readonly url: string; readonly hash?: string; readonly required?: boolean; readonly prompt?: string; readonly pop?: boolean };
     readonly blockDamage?: { readonly at: Pos; readonly stage: number };
+    readonly forgetChunk?: Pos;
     readonly kick?: string;
     readonly respawnPoint?: Pos;
     readonly noGravity?: boolean;
@@ -317,6 +320,7 @@ function action(a: PhysrecAction, refs: { next: number }): ServerActionSpec {
     if (a.commands) return srv.commands(a.commands);
     if (a.tabList) return srv.tabList(a.tabList.header, a.tabList.footer);
     if (a.blockDamage) return srv.blockDamage(shift(a.blockDamage.at), a.blockDamage.stage);
+    if (a.forgetChunk) return srv.forgetChunk(shift(a.forgetChunk));
     if (a.kick !== undefined) return srv.kick(a.kick);
     if (a.resourcePack) return srv.resourcePack(a.resourcePack.url, a.resourcePack.hash ?? '', a.resourcePack.required ?? false, a.resourcePack.prompt, a.resourcePack.pop ?? false);
     if (a.respawnPoint) return srv.respawnPoint(shift(a.respawnPoint));
@@ -378,7 +382,10 @@ function convertCase(c: PhysrecCase, file: PhysrecAreas, areas: ReadonlyMap<stri
         const setup: SetupSpec = {
             gameMode: gameMode(c),
             effects: (s.effects ?? []).map(e => ({ id: e.id as never, amplifier: e.amplifier ?? 0 })),
-            attributes: Object.fromEntries(Object.entries(s.attributes ?? {}).map(([id, b]) => [id, { base: b }])),
+            attributes: Object.fromEntries([...new Set([...Object.keys(s.attributes ?? {}), ...Object.keys(s.modifiers ?? {})])].map(id => [id, {
+                ...(s.attributes?.[id] !== undefined ? { base: s.attributes[id] } : {}),
+                ...(s.modifiers?.[id] ? { modifiers: s.modifiers[id] } : {}),
+            }])),
             equipment: Object.fromEntries(Object.entries(s.equipment ?? {}).map(([slot, i]) => [slot, toItem(i)])),
             inventory: Object.fromEntries(Object.entries(s.inventory ?? {}).map(([slot, i]) => [Number(slot), toItem(i)])),
             ...(s.selected !== undefined ? { selectedSlot: s.selected } : {}),
@@ -595,6 +602,8 @@ export const setNoGravity = (on: boolean): PhysrecAction => ({ noGravity: on });
 export const teleport = (x: number, y: number, z: number): PhysrecAction => ({ teleport: [x, y, z] });
 /** Another player's digging progress on a block (area-local), as the server shows it: 0-9, -1 ends it. */
 export const blockDamage = (at: Pos, stage: number): PhysrecAction => ({ blockDamage: { at, stage } });
+/** The client forgets the chunk column of this block (area-local); the server still has it, and sends it again after the case. */
+export const forgetChunk = (at: Pos): PhysrecAction => ({ forgetChunk: at });
 
 // feature cases: client actions through the vanilla code paths, and waits for screens
 const client = (type: string, fields: Record<string, unknown> = {}): PhysrecStep => ({ op: 'client', client: { type, ...fields } });

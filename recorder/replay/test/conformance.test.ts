@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { checkCorpus, decide, emptyOutcomes, pinCorpus, reconcileKnown, requiredFields, selectEntries, type CorpusManifest, type GateInput } from '../conformance.ts';
+import { checkCorpus, decide, emptyOutcomes, manifestProblems, pinCorpus, reconcileKnown, requiredFields, selectEntries, type CorpusManifest, type GateInput } from '../conformance.ts';
 
 const FIXTURES = fileURLToPath(new URL('fixtures', import.meta.url));
 const CASES = ['physrec/j_walk_f', 'physrec/j_hop_held', 'physrec/b_cobweb_sprint_in'];
@@ -150,4 +150,16 @@ test('known failures: every key is checked against the whole corpus, and only se
     assert.match(reconcileKnown({ '26.3/a': failure }, pinned, new Map([['26.3/a', { results: [] }]])).join(), /passes now/);
     const moved = { first: { tick: 2, at: '', source: 'native' as const, field: 'pos', expected: 0, actual: 1 }, results: [{ t: 2, divergences: [] }, { t: 3, divergences: [] }] };
     assert.match(reconcileKnown({ '26.3/a': failure }, pinned, new Map([['26.3/a', moved]])).join(), /no longer fails as listed/);
+});
+
+test('a manifest by itself: its release, its digests, and a scenario changed since it was pinned', () => {
+    const entry = { id: 'a', scenario: 'h1', sha256: 'f'.repeat(64), rows: 3, build: 'b' };
+    const good: CorpusManifest = { schema: 1, version: '26.3', protocol: 1, entries: [entry], exclusions: [] };
+    assert.deepEqual(manifestProblems(good, '26.3', new Map([['a', 'h1'], ['unpinned', 'h2']])), []);
+    assert.match(manifestProblems(good, '26.2').join(), /the manifest is of 26.3/);
+    assert.match(manifestProblems({ ...good, entries: [entry, entry] }, '26.3').join(), /pinned twice/);
+    assert.match(manifestProblems({ ...good, entries: [{ ...entry, sha256: '' }] }, '26.3').join(), /no sha256/);
+    assert.match(manifestProblems(good, '26.3', new Map([['a', 'h3']])).join(), /another version of its scenario/);
+    assert.match(manifestProblems(good, '26.3', new Map()).join(), /no compiled scenario/);
+    assert.match(manifestProblems({ ...good, exclusions: [{ id: 'a', reason: ' ' }] }, '26.3').join(), /no reason/);
 });

@@ -1,9 +1,14 @@
 # Movement attributes
 
-`test/fixtures/attributes.tsv` holds what 44 jars register, every Mojang-named jar from 1.14 to 26.3:
+`test/fixtures/attributes.tsv` holds what the jars of all 50 registered releases register:
 `scripts/java-oracle/OracleAttributes.java` reads 1.16 on from each jar's own registry and `DefaultAttributes`, with the key,
-default, range, player base and zombie base, and `OracleAttributesLegacy.java` reads 1.14 and 1.15 from
+default, range, player base and zombie base, and `OracleAttributesLegacy.java` reads 1.8.8 to 1.15 from
 `SharedMonsterAttributes`, with each entity's own `registerAttributes` for the bases.
+
+Mojang published no names before 1.14. There the jar is the release's own client, by its sha1, remapped with
+`recorder/mod/mappings/<release>.tiny`, the mapping the recorder builds on (`recorder/mod/legacy-mappings.py`). The names are
+1.14.4's carried across, but the values come from running that release's bytecode. Each row of 1.9.4 to 1.13.2 was also
+compared with `EntityAttributes.java` in `E:\pr\mc-decompiled`; 1.8.8 has no tree, so its rows have the jar alone.
 `test/attributes.test.cjs` compares minecraft-data and the adapter's fallbacks against it.
 
 | attribute | from | player base | consumer | absent means |
@@ -23,7 +28,9 @@ default, range, player base and zombie base, and `OracleAttributesLegacy.java` r
 | `friction_modifier` | 26.2 | 1 | `frictionModifier` | 1 |
 | `bounciness` | 26.2 | 0 | `entityBounciness` | 0 |
 
-Releases before 1.14 have no Mojang-named jar here, so they come from minecraft-data alone.
+Before 1.16 the keys are `generic.movementSpeed` and the like, and only `movement_speed` is consumed.
+`attack_knockback` first registers at 1.14, `flying_speed` at 1.12, and `attack_speed`, `armor`, `armor_toughness` and `luck`
+at 1.9.
 
 ## Accepted without a movement consumer
 
@@ -42,6 +49,7 @@ a registered default: only an entity's base and synced values.
 
 Up to 1.20.6 the jars register `movement_speed` and `flying_speed` as 0.7F and 0.4F widened, while minecraft-data holds
 0.7 and 0.4. Nothing reads these two defaults, so no movement changes, and the test states the difference exactly.
+Up to 1.13.2 minecraft-data also holds 1 as the least `max_health`, where the jars have 0. Nothing here reads that either.
 
 ## Modifiers
 

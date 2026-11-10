@@ -6,7 +6,7 @@
 // The mx_ cases run the same tracks under the minecart_improvements experiment: `record.ts --features
 // minecart_improvements`. A world has it for every case, so those run apart and no other run has them.
 import './_areas/index.ts'
-import { type KaseSpec, type Pos, ATTACK, F, cartVelocity, crosshair, hold, kase, press, releaseAll, server, setBlock, ticks } from '../../dsl/physrec.ts'
+import { type KaseSpec, type Pos, ATTACK, F, cartVelocity, commandBy, crosshair, hold, kase, press, releaseAll, server, setBlock, ticks } from '../../dsl/physrec.ts'
 
 const out = []
 
@@ -19,12 +19,21 @@ const watch = (summon: NonNullable<NonNullable<KaseSpec['setup']>['summon']>, ex
 const cart = (at: Pos, entity = 'minecart', extra: Partial<NonNullable<NonNullable<KaseSpec['setup']>['summon']>[number]> = {}) => ({ entity, at, yaw: 90, ...extra })
 const go = (x: number, z = 0, ref = 'summon0') => server(cartVelocity(ref, [x, 0, z]))
 
-/** Each case on both paths: the old from `since`, the improved from 1.21.2 in a world with the experiment. */
+/** Whether release `a` is `b` or later. */
+const atLeast = (a: string, b: string) => {
+  const [x, y] = [a, b].map(v => v.split('.').map(Number))
+  for (let i = 0; i < Math.max(x!.length, y!.length); i++) {
+    if ((x![i] ?? 0) !== (y![i] ?? 0)) return (x![i] ?? 0) > (y![i] ?? 0)
+  }
+  return true
+}
+
+/** Each case on both paths: the old from `since`, the improved from 1.21.2 (or a later `since`) in a world with the experiment. */
 const both = (name: string, spec: KaseSpec, ...steps: Parameters<typeof kase>[2][]) => [
   kase(`mc_${name}`, spec, ...steps),
   kase(`mx_${name}`, {
-    ...spec, since: '1.21.2', tags: [...(spec.tags ?? []), 'feature:minecart_improvements'],
-    setup: { ...spec.setup, commands: [{ '1.21.2': 'gamerule minecartMaxSpeed 8', '26.1': 'gamerule max_minecart_speed 8' }] },
+    ...spec, since: spec.since && atLeast(spec.since, '1.21.2') ? spec.since : '1.21.2', tags: [...(spec.tags ?? []), 'feature:minecart_improvements'],
+    setup: { ...spec.setup, commands: [...(spec.setup?.commands ?? []), { '1.21.2': 'gamerule minecartMaxSpeed 8', '26.1': 'gamerule max_minecart_speed 8' }] },
   }, ...steps),
 ]
 
@@ -113,7 +122,7 @@ out.push(
 out.push(
   kase('mx_top_speed', {
     ...watch([cart([2.5, 0, 0.5])]), since: '1.21.2', tags: ['minecart', 'feature:minecart_improvements'],
-    setup: { summon: [cart([2.5, 0, 0.5])], commands: [{ '1.21.2': 'gamerule minecartMaxSpeed 40', '26.1': 'gamerule max_minecart_speed 40' }] },
+    setup: { summon: [cart([2.5, 0, 0.5])], commands: [{ '1.21.2': 'gamerule minecartMaxSpeed 40', '1.21.11': 'gamerule max_minecart_speed 40' }] },
   }, go(2.0), ticks(30)),
 )
 
@@ -190,6 +199,116 @@ out.push(
   ...both('below_world_deep', watch([cart([2.5, -224, 12.5])], { since: '1.18' }), ticks(30)),
   ...both('nether_portal', watch([cart([5.25, 0, 0])], { area: 'portals', at: [-3.5, 0, -6], requires: ['nether_portal'] }), go(0.3), ticks(20)),
   ...both('end_portal', watch([cart([20.5, 2, -5.5])], { area: 'portals', at: [-3.5, 0, -6] }), ticks(30)),
+)
+
+// What only the server's block entities and its random know (B189): a hopper cart taking from the chest over it, a TNT
+// cart's blast on the carts about it, a spawner cart's countdown, and an end gateway sending a cart down its own rails. The
+// commands write NBT, so they name the world's blocks: the area's origin is (0, 100, 0) and its fills are a block lower
+// (BridgeImpl.ORIGIN; physrec.ts shift), so the fill cell (x, y, z) is the world's (x, 99 + y, z).
+const world = ([x, y, z]: Pos) => `${x} ${99 + (y ?? 0)} ${z}`
+const stone = (count: number) => commandBy({
+  '1.20.5': `setblock ${world([2, 2, 3])} chest{Items:[{Slot:0b,id:"minecraft:stone",count:${count}}]}`,
+  '1.13': `setblock ${world([2, 2, 3])} chest{Items:[{Slot:0b,id:"minecraft:stone",Count:${count}b}]}`,
+  '1.8': `setblock ${world([2, 2, 3])} chest 0 replace {Items:[{Slot:0b,id:"minecraft:stone",Count:${count}b,Damage:0s}]}`,
+})
+// (ExactTeleport sends it to the exit itself; exit_portal is an int array from 1.20.5)
+const gateway = commandBy({
+  '1.20.5': `setblock ${world([14, 1, 3])} end_gateway{exit_portal:[I;24,100,3],ExactTeleport:1b}`,
+  '1.13': `setblock ${world([14, 1, 3])} end_gateway{ExitPortal:{X:24,Y:100,Z:3},ExactTeleport:1b}`,
+  '1.9': `setblock ${world([14, 1, 3])} end_gateway 0 replace {ExitPortal:{X:24,Y:100,Z:3},ExactTeleport:1b}`,
+})
+// (no spawn count, so that the spawner only counts down: what comes of a spawn is the level's random)
+const SPAWNER = '{Delay:30s,MinSpawnDelay:400s,MaxSpawnDelay:400s,SpawnCount:0s}'
+out.push(
+  // one item a tick until the chest is empty, then nothing; at rest, and rolling under it
+  ...both('hopper_from_chest', hazard([cart([2.5, 0, 3.5], 'hopper_minecart')]), server(stone(3)), ticks(20)),
+  ...both('hopper_under_chest_rolling', hazard([cart([0.5, 0, 3.5], 'hopper_minecart')]), server(stone(64)), go(0.1), ticks(40)),
+  // a lit TNT cart at rest between a cart near enough to break and one far enough to be pushed
+  ...both('tnt_blast_on_carts', hazard([cart([2.5, 0, 3.5], 'tnt_minecart', { nbt: FUSED }), cart([6.5, 0, 3.5]), cart([10.1, 0, 3.5], 'chest_minecart')]), ticks(40)),
+  ...both('spawner_counts_down', hazard([cart([2.5, 0, 12.5], 'spawner_minecart', { nbt: SPAWNER })]), ticks(40)),
+  ...both('spawner_out_of_range', hazard([cart([2.5, 0, 12.5], 'spawner_minecart', { nbt: '{Delay:30s,RequiredPlayerRange:4s,SpawnCount:0s}' })]), ticks(20)),
+  ...both('end_gateway', hazard([cart([6.5, 0, 3.5])], { since: '1.9' }), server(gateway), go(0.3), ticks(60)),
+)
+
+// What pushes a cart and what a cart pushes by more than its box (B189): the scoreboard teams' collision rules from 1.9
+// (EntitySelector.pushableBy), an armor stand, which pushes only a rideable cart at its own place and is not pushable, and a
+// bat, which pushes nothing and is not pushable; and the order the level ticks them in, which is their summons' order: a boat
+// and a mob ahead of the cart, another after it. Each entity a team takes is tagged (Tags from 1.9) for the join's selector.
+const tagged = (tag: string) => ({ nbt: `{Tags:["${tag}"]}` })
+// (in the setup, after the summons and ahead of the first tick, so that nothing pushes before the rules hold)
+const teamUp = (...teams: (readonly [string, string])[]): Partial<KaseSpec> => ({
+  since: '1.9',
+  setup: {
+    commands: teams.flatMap(([team, rule]) => [
+      { '1.13': `team add ${team}`, '1.9': `scoreboard teams add ${team}` },
+      { '1.13': `team modify ${team} collisionRule ${rule}`, '1.9': `scoreboard teams option ${team} collisionRule ${rule}` },
+      { '1.13': `team join ${team} @e[tag=${team}]`, '1.9': `scoreboard teams join ${team} @e[tag=${team}]` },
+    ]),
+  },
+})
+// (a team stays for the next case: each goes before its case ends)
+const teamDown = (team: string) => server(commandBy({ '1.13': `team remove ${team}`, '1.9': `scoreboard teams remove ${team}` }))
+out.push(
+  // a cow on a team that never collides shoves nothing; a cart on such a team is shoved by nothing
+  ...both('team_cow_never', watch([cart([8.5, 0, 0.5], 'chest_minecart'), { entity: 'cow', at: [9.1, 0, 0.5], noAi: true, ...tagged('tn') }], teamUp(['tn', 'never'])), ticks(40), teamDown('tn'), ticks(2)),
+  ...both('team_cart_never', watch([cart([8.5, 0, 0.5], 'chest_minecart', tagged('tn')), { entity: 'cow', at: [9.1, 0, 0.5], noAi: true }], teamUp(['tn', 'never'])), ticks(40), teamDown('tn'), ticks(2)),
+  // a fast cart and a pig of one team that pushes only other teams: the pig is picked up; of two such teams it is not
+  ...both('team_own_picks_up', watch([cart([2.5, 0, 0.5], 'minecart', tagged('to')), { entity: 'pig', at: [8.5, 0, 0.5], noAi: true, ...tagged('to') }], teamUp(['to', 'pushOtherTeams'])), go(0.4), ticks(60), teamDown('to'), ticks(2)),
+  ...both('team_other_passes', watch([cart([2.5, 0, 0.5], 'minecart', tagged('ta')), { entity: 'pig', at: [8.5, 0, 0.5], noAi: true, ...tagged('tb') }], teamUp(['ta', 'pushOtherTeams'], ['tb', 'always'])), go(0.4), ticks(60), teamDown('ta'), teamDown('tb'), ticks(2)),
+  // an armor stand at a still cart's place pushes it; a cart runs through one, which picks it up only before 1.10
+  ...both('armor_stand_beside', watch([cart([8.5, 0, 0.5]), { entity: 'armor_stand', at: [8.75, 0, 0.5] }]), ticks(40)),
+  ...both('into_an_armor_stand', watch([cart([2.5, 0, 0.5]), { entity: 'armor_stand', at: [8.5, 0, 0.5] }]), go(0.4), ticks(60)),
+  // a bat in a cart's way, hanging still: not picked up, and it pushes nothing
+  ...both('into_a_bat', watch([cart([2.5, 0, 0.5]), { entity: 'bat', at: [8.5, 0.2, 0.5], noAi: true, noGravity: true }]), go(0.4), ticks(60)),
+  ...both('bat_beside', watch([cart([8.5, 0, 0.5], 'chest_minecart'), { entity: 'bat', at: [9.0, 0.2, 0.5], noAi: true, noGravity: true }]), ticks(30)),
+  // the level's order: a boat summoned ahead of a moving cart pushes it before the cart's move; a cow ahead of a still cart
+  // shoves it before its tick, a pig after it shoves it after
+  ...both('boat_ahead', watch([{ entity: 'oak_boat', at: [9.4, 0, 0.5], noAi: true }, cart([8.5, 0, 0.5], 'chest_minecart')], { since: '1.9' }), go(0.05, 0, 'summon1'), ticks(30)),
+  ...both('mobs_either_side', watch([{ entity: 'cow', at: [7.9, 0, 0.5], noAi: true }, cart([8.5, 0, 0.5], 'chest_minecart'), { entity: 'pig', at: [9.1, 0, 0.5], noAi: true }]), ticks(40)),
+)
+
+// What a TNT cart's blast does that no client sees but comes back in its packets and the server's view (B189): the blocks its
+// rays break, which their resistance shortens (obsidian beside it stays, and keeps what is behind it), and the items about it,
+// one near enough to burn up and one far enough off to keep.
+const item = (at: Pos, flat: boolean) => ({ entity: 'item', at, nbt: flat ? '{Item:{id:"minecraft:stone",count:1}}' : '{Item:{id:"minecraft:stone",Count:1b,Damage:0s}}' })
+const lit = cart([2.5, 0, 3.5], 'tnt_minecart', { nbt: FUSED })
+out.push(
+  ...both('tnt_blast_on_items', hazard([lit, item([4.5, 0.2, 3.5], false), item([9.9, 0.2, 3.5], false)], { until: '1.20.5' }), ticks(40)),
+  ...both('tnt_blast_on_items_new', hazard([lit, item([4.5, 0.2, 3.5], true), item([9.9, 0.2, 3.5], true)], { since: '1.20.5' }), ticks(40)),
+  ...both('tnt_blast_by_obsidian', hazard([lit]), server(setBlock([2, 0, 5], 'obsidian')), server(setBlock([2, 1, 5], 'obsidian')), server(setBlock([2, 0, 6], 'stone')), ticks(40)),
+)
+
+// What the B280 review found of the cart's server side (minecart.rs), each where a recording shows it: a creative player's
+// hit takes an invulnerable cart away; a mob an activator rail threw off is not picked up again by the cart behind within
+// its boarding cooldown (1.9); a blast of no power is nothing to a cart at its own place (the NaN of 1.21.9 and 1.21.10
+// is left out: no recording holds it); a blast spares its cart's allies on a team without friendly fire (26.3); and a
+// stack of up to 99 fills a hopper cart's slot by 99 for its comparator (1.20.5).
+const POWERLESS = '{TNTFuse:20,fuse:20,explosion_power:0.0f}'
+const friendlyFireOff = (team: string): Partial<KaseSpec> => ({
+  setup: {
+    commands: [
+      { '1.13': `team add ${team}` },
+      { '1.13': `team modify ${team} friendlyFire false` },
+      { '1.13': `team join ${team} @e[tag=${team}]` },
+    ],
+  },
+})
+out.push(
+  ...both('hurt_invulnerable_by_creative', hazard([cart([-3.5, 0, 12.5], 'minecart', { nbt: '{Invulnerable:1b}' })], { yaw: 270, pitch: 30, gamemode: 'creative' }), crosshair(), press(ATTACK, 1), ticks(10)),
+  ...both('hurt_invulnerable_punched', hazard([cart([-3.5, 0, 12.5], 'minecart', { nbt: '{Invulnerable:1b}' })], { yaw: 270, pitch: 30 }), crosshair(), press(ATTACK, 1), ticks(10)),
+  // (the front cart picks the pig up within its reach before it meets it, and the rail at x 10 throws it off beside the
+  // track; the cart behind, set going later so that it never meets the front one, reaches it fast enough to pick it up
+  // some fifteen ticks later)
+  ...both('ejected_mob_left_alone', hazard([cart([3.0, 0, 0.5]), cart([6.0, 0, 0.5]), { entity: 'pig', at: [8.5, 0, 0.5], noAi: true }], { since: '1.9' }),
+    go(0.3, 0, 'summon1'), ticks(8), go(0.5), ticks(40)),
+  ...both('tnt_blast_powerless', hazard([cart([2.5, 0, 3.5], 'tnt_minecart', { nbt: POWERLESS }), cart([2.5, 0, 3.5])], { since: '1.21.2', until: '1.21.9' }), ticks(30)),
+  ...both('tnt_blast_powerless_new', hazard([cart([2.5, 0, 3.5], 'tnt_minecart', { nbt: POWERLESS }), cart([2.5, 0, 3.5])], { since: '1.21.11' }), ticks(30)),
+  ...both('tnt_blast_spares_allies', hazard([cart([2.5, 0, 3.5], 'tnt_minecart', { nbt: '{TNTFuse:20,fuse:20,Tags:["tf"]}' }), cart([6.5, 0, 3.5], 'minecart', tagged('tf'))], { since: '1.13', ...friendlyFireOff('tf') }),
+    ticks(40), teamDown('tf'), ticks(2)),
+  ...both('hopper_large_stack', hazard([
+    cart([2.5, 0, 3.5], 'hopper_minecart', { nbt: '{Items:[{Slot:0b,id:"minecraft:stone",count:60,components:{"minecraft:max_stack_size":99}}]}' }),
+    { entity: 'item', at: [8.5, 0.2, 3.5], nbt: '{Item:{id:"minecraft:dirt",count:1}}' },
+  ], { since: '1.20.5' }), go(0.2), ticks(60)),
 )
 
 export default out

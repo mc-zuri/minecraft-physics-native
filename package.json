@@ -24,7 +24,8 @@
         "native/artifacts/index.wasip1-deferred.js",
         "native/artifacts/index.wasip1-deferred.d.ts",
         "native/artifacts/wasi-worker*.mjs",
-        "native/artifacts/provenance.*.json"
+        "native/artifacts/provenance.*.json",
+        "THIRD_PARTY_NOTICES"
     ],
     "napi": {
         "binaryName": "index",

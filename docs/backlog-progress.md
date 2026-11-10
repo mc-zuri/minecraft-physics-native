@@ -1369,3 +1369,453 @@ et_ and eo_ doubling on 1.14.4 and 1.15.1: when the view centre moves before the
 Commits: none: no code change.
 
 - B117: Server side only, closed at the user's decision. Movement statistics add exhaustion through causeFoodExhaustion (addExhaustion before 1.14), which is guarded by !isClientSide, read on 1.8.9, 1.12.2, 1.14.4 and 1.21.11: a client never changes its own food by moving, whichever class holds checkMovementStatistics. The engine keeps taking food as synchronised state, as sprint eligibility does. Server-mode exhaustion is not modelled and is not claimed.
+
+## Mineflayer fork
+
+Commits: mineflayer 5125443c b617942e ad7f876b 2e901c14 02e71fef 348ab605.
+
+- B312: The fork's physics.js uses MinecartTracker, pushes a vehicle by moving pistons and fills nearbyEntities; merged fast-forward into mc-physics-demo after Grim, not pushed. mineflayer-replay on 1.20.4 passes 2690 of 2690, so the 38 failures are gone; other releases were not rerun at this tip. mineflayer-survival's grim.test.ts under lockstep on 1.21.11 with the local Grim build: 15 of 15 and 0 alerts over about 4000 ticks, with the JS physics and with the native engine, so the set-back loop stays fixed.
+
+## Exact trig
+
+Commits: 4fd5c894 d30c800f.
+
+- B065: Math.sin and Math.cos are now Intel LIBM's, merged: equal to JDK 21.0.11 and 25.0.3 by raw-bit digests on every finite float, the Mth tables, 22,000,000 random values and 160,361 hard cases, on Windows x64 native and wasip1. Left: the same vectors on a Linux native build. Java 8, macOS and arm64 did not run.
+
+## Exact trig on Linux
+
+Commits: 4fd5c894 d30c800f.
+
+- B065: x86_64 Linux native on Temurin 21.0.13: Rust equals the JDK on all 529 digest lines of the same sets as Windows, including every finite float, the Mth tables and atan tables, and cargo test --lib trig passes 12 of 12. The Windows boundaries vector file gives the Windows digests on Linux. With Windows x64 and wasm32-wasip1, the oracle runs on each supported target here; macOS and arm64 stay with B264 and B275, as they are not built. Older JDKs differ on direct calls, and the Mth sine tables are equal on all of them: B315.
+
+## Public field contract lane
+
+Commits: 1d2ffcd3 c43dd82e 80232779 5d1d23fc.
+
+- B209: N-API lossy integers refused by field name; round trips on all 50 releases for player, boat, mount, cart, moving entity, projectile and arrow, trident from 1.13.2; adapter against binding on 44. Left: the adapter path on 1.19.1, 1.21.2, 1.21.7, 1.21.10, 26.1.1, 26.1.2 (exact data on the way), world inputs beyond 26.3, field names in non-player refusals, addons not loaded through LoadNativePhysics.
+- B271: Catalogue and field maps generated from contracts with 484 source anchors; the vague rows are gone and the examples are doctests. Left: 671 rows have a family range unchecked by name below 1.14.4, MECHANIC_ANCHORS was sorted by judgement, 1,013 rows written by subagents had about 12 sampled, and the kept column is a snapshot.
+
+## Extraction and randomness lane
+
+Commits: 1d51e90c b73e161c 45fc4454 d68864c1 1d417884 8b5b08d4 ec41b387 25de7b6c.
+
+- B125: test/fixtures/attributes.tsv covers all 50 releases with keys, defaults, ranges, player and zombie bases; the six legacy releases come from their own remapped jars, sha1 checked against version.json, and 1.9.4 to 1.13.2 match EntityAttributes.java on 47 rows. 1.8.8 has no tree, so its rows rest on its jar. minecraft-data holds 1 as the least max_health up to 1.13.2 where the jars have 0, pinned by release; no movement reads it.
+- B041: Entity.positionRider called on built vehicles: 4129 rows across all 50 releases at yaw 0, 37.5 and 90, per seat, at scale 2 from 1.20.5 and as a baby; the engine's boat seat equals them on x and z, alone and with two aboard. Legacy sizes, eyes and offsets from LegacyEntityDump, agreeing with minecraft-data-generator on 253 entities. Limits: other seats come from the caller, y is not compared with the engine, pig and chicken from 1.21.5 and minecart from 1.21.2 have no rider rows, legacy eyeCrouching is null and the legacy player's eye is not read.
+- B058: scripts/audit-random-draws.cjs walks all 50 releases into test/fixtures/random-draws.tsv, helper-routed draws included; draws in a LocalPlayer's tick are each named, none moves the player, and an unnamed draw fails the test. Both fire increments, LocalPlayer unread on all 50, clone, restore, missing draw, version mismatch and unrelated world events are tested. Limits: calls on other objects are not walked, mob AI and block classes pass by class rules, a particle or sound in a statement counts as cosmetic, and exact server randomness stays excluded.
+
+## Player lane
+
+Commits: fcd85507 680411b6 0fe2c7f6 867132d0 c255224a b6111f29 ecf6c866 97b2ced0 83ccd93a 15c77763 618a42eb 984a8c16 ce166ece 2aa5037e 84f7ee58 7ea255bf.
+
+- B098: fd_ cases on 50 releases with no difference, each landing held to the server's health; the matrix source column splits exact, inferred and runtime. On 1.17 and 1.17.1 a player takes no damage landing on powder snow, shown by two recordings and the source.
+- B099: pl_glide_into_water_sprint_80 at t=37 is fall_flying on 1.21.4 and swimming on 1.21.5, both replay; passenger and spectator poses in a tunnel recorded and replayed.
+- B105: pl_mod_mix_* pick a base where the fold order decides the float: the real order matches on 1.21.4, 1.21.5 and 26.3, reversed or sorted orders fail 2 of 4 cases.
+- B107: Ridden ticks now compare decisions and input. Limit: 1.19.3 on from the corpus and 1.14 on through pl_passenger_*; not compared on 1.8 to 1.13.
+- B110: Lava and ladder overlap families on 50 releases, no difference.
+- B111: pl_swim_eyes_only_sprint swims on 1.17 and does not on 1.17.1 on the real clients; 1.13 fluids now use the box updateSize left, and to 1.15 the eyes are a late query.
+- B112: Spectator entry, dismount into a tunnel and ceilings that change are recorded and match.
+- B115: living_knockback, six release families, by bits against the jars on 1.17.1, 1.18.2, 1.20.4, 1.20.5, 1.21 and 26.3; 1.8 to 1.16 against recorded arrow packets at 1/8000 precision at resistance 0 and 1. At 0.5 those releases roll, so no formula check there; 1.21.5 and 1.16.5 would not compile under the probe.
+- B116: java-oracle-input.txt by bits on 1.21.5, 1.21.11 and 26.3. Limit: vanilla has no analog input path, and before 1.21.5 it is float multiplication only, with no jar check.
+- B070: Mergers and optimize ported; OracleUnion holds ordered boxes and moves before and after optimize on 1.14.4, 1.16.5, 1.17.1, 1.18.2, 1.21.11 and 26.3. Limits: 1.13.2 has no entry in that oracle, and union is still called only by tests.
+- B103: Matrix complete and stepwise with phases clean on all 50. Left: the 19 adapter differences under B113.
+- B113: 1.18.2 clean, spin and rocket ticks included, clone and resume work. Left: f_elytra_rocket_hits_a_mob and f_elytra_wall_hit_rocket differ in the adapter layer on 1.14.4 to 1.16.5; stepwise matches, cause unknown.
+- B119: A vehicle's hurtClient is true, and the hit tick matches. Left: pl_attack_sprint_boat, pl_attack_walk_boat and pl_attack_sprint_cow differ on later contact ticks on 1.14.4 to 1.16.5 in the adapter and on 1.15 and 1.15.2 stepwise; cause unknown.
+- B120: Eyes one double from the surface recorded on all releases. Left: an unloaded adjacent column, which needs a forget-chunk server op in the mod.
+- B083: docs/entity-move-phases.md maps 15 eras with 35 differs or unmapped items, read only. Three implementations of move: the tick, move_entity and move_vehicle_among.
+- B161: pl_nb_*, pl_inside_* and pl_step_anvil_* match. Left: neighbour cases do not run on 1.8.8, and legacy connection states are sampled, not every permutation.
+- B104: state.clone() calls cloneState once the engine has ticked the state. Left: a state never ticked, ridden ticks before 1.19.3, mineflayer-replay not run.
+
+## Movement constants, suspected bugs and the 1.14 to 1.16 differences
+
+Commits: bf92e173 99fa6db3 99b234dd d274ab76 891155a7 fe4ec12b.
+
+- B113: Three causes, none in the engine or the adapter path. The adapter replay seeded velocity from tickStart, counting a push twice for an entity that ticks before the player; it now seeds from row.pre as engine.ts does. seed.ts took a firework rocket for a mob where minecraft-data says UNKNOWN on 1.15 to 1.16.5. The two flight cases now match on all ten releases from 1.13.2 to 1.17.1.
+- B103: Held open only by the 19 adapter differences of B113, which are gone. docs/player-parity-matrix.md still shows the old rows until parity-report reruns.
+- B316: Each item checked against the source. Fixed with tests: inLava from 1.14 to 1.16.1, a riding hook's box from 1.15 to 1.16.5, pearl_lost's wonGame from 1.21.9, the pearl game rule from 1.20.2, minecart inventory refused on a non-hopper, three doc comments, four unused adapter fields, off-hand riptide, and the legacy eye as a float. Struck: the pre-1.11 hook (1.8.9 FishingBobberEntity.java:203-206) and the boots fallback (the fork always sets the field). Lava and hook fixes rest on source and unit tests until the top-up recordings.
+- B119: Stale recordings: the boat or cow pushes twice in one tick on 1.15 pl_attack_sprint_boat, pl_attack_sprint_cow, pl_attack_walk_boat and 1.15.2 pl_attack_sprint_boat. Re-recorded at HEAD, 7 of 7 in both layers. Left: the top-up replaces them. The link to 6419fbd8 rests on timing and the clean re-record, not a reproduction.
+- B046: generated/movement-sites.json lists 1714 literal rows with rustc's types: 679 extracted, 322 module, 573 structural, 111 reviewed, 29 open; a new literal with no row fails a test. Left: whole-number constants are not inventoried, 322 module rows are not tied to a site, 29 open sites, 150 gate uses with no release named.
+
+## Unloaded column
+
+Commits: e5527f5b.
+
+- B120: A forgetChunk server op, with CompatChunks per packet era, and physrec/ul_water_across_the_column: recorded with verify and replayed on 13 releases from 1.8.8 to 26.3, adapter on 7, 0 unexpected; with the forget packets stripped on 26.3, 16 of 47 ticks diverge. 8 existing cases on 1.21.5 compare the same across the change. compileJava passed on 23 releases; the releases between overlay edges, and the 1.9.4 resend at runtime, are not checked until the top-up records them.
+
+## Shapes lane
+
+Commits: d4377d0e ff7afaf4 5b653751 75583c2a 97675187.
+
+- B043: generated/primitive-map.json maps all 50 releases, the six legacy by their own classes; 28 walk, join and clip methods keep branches, shape calls and tolerances in source order per era, and each optimize call site is listed. OracleEdgeCollide: 7,399 fixture lines on 1.8.8, 1.12.2, 1.13.2, 1.14.4, 1.18.2, 1.21.11 and 26.3 for touching planes, gaps around 1.0E-7, negative cells and axis order all match; reversing x and z in native fails the test. Limits: 1.18.1 Shapes.java is empty in the source cache and listed unread; before 1.14 axis order has no whole-move jar fixture.
+- B152: LegacyNeighbourDump on 1.8.8 to 1.12.2: 1.4M to 2.7M comparisons per release, no collision difference; position, entity and real moving-block contexts on all 44 modern jars, no difference. Left: no jar fixture for moving blocks on the six legacy releases, and shulker boxes are outside OracleContext.
+- B073: docs/adapter-audit.json covers all 50 releases: 1,034,494 modern states with 0 actual differences on six channels, 3,371 masked data defects kept apart, 622,860 contextual answers. Left: redstone wire and vine outlines before 1.13 ignore neighbours, a falling block with its feet in powder snow, and B152's legacy gaps.
+
+## Generic gates lane
+
+Commits: 3b93ad82 155563e8 6fe9d404 9e0cf54f e0cdcf4f 26ec85eb 738f9a2e d38bdb51 5bfe07ef.
+
+- B214: Dead and duplicate gates removed. A copy of the final engine with them put back against it: 216 world runs on each of 50 releases, 10,800 in all, plus knockback and capabilities, 0 of 50 differ and 0 refused; moving a kept gate shows, so the battery is not blind. It does not see the player's 1.18 border gate moved, which rests on reading. docs/version-gates.md records each removal.
+- B012: All 25 findings replayed on the final engine with --json and addon identity; everything matches, and M14 has both sides. A trace is shown to reach the finding's branch for M03, M07, M14 and M24; M15, M19, M21, M23 and M25 run their gate but match with it flipped, so their proof stays the unit test; the other 16 are not one gate that can be flipped, and are not shown either way. docs/finding-ledger.md says so.
+- B007: Projectile names outside the table are refused. Left: 100 of 294 gated functions unverified in generated/shared-gates.json, 126 of 746 gates cite no source, entityTravelSupport says unknown and travels as living.
+- B016: Not worked directly. Left: a method and behaviour matrix by release, comparing vehicle phases, B189, recordings below 1.19.3 beyond subsets, source comparison for the 100 functions of B007.
+- B290: Sweep of 746 gates on the final engine: 355 noticed on both sides, 160 on one, 155 ran with nothing noticing, 76 never ran. Sampled: replays capped at 40 per gate, every third recording from 1.19.3 on, and generation-integrity.test.cjs gave no hits. Left: evidence for 231 gates, with the top-up's older recordings in the sweep.
+
+## Moves lane
+
+Commits: 17067566 0aba2bf6 f7e3b26e 8e2d8ac6 3e97b125.
+
+- B046: Whole numbers inventoried too: 3359 rows, 1110 extracted, 399 module, 312 reviewed, 1538 structural, 0 open (was 29). Adapter 1e-5 comparisons f32 (1.21.5 ClientInput.java:24), jump probe 0.5000001 before 1.20 (1.19.4 Entity.java:771), dead effects_in_bounds and Pose::dimensions removed, piston ceiling extracted on 1.16.5 PistonMovingBlockEntity.java:190 and 1.20 :191. Left: the 399 module rows tied to one site each, 53 of 624 gate uses with no release named.
+- B007: All 44 modern jars through pinned Vineflower 1.12.0 into E:/mc-physics-demo-wt/compare-cache; scripts/compare-gate-sources.cjs and generated/gate-sources.json drive shared-gates. 218 uncited gates read on both sides: 209 right, 9 wrong; flying mob ground cell before 1.20 and move_towards_closest_space at 1.11 fixed. Left: 7 of 294 functions unverified (minecart attack@1.20.3, clip_blocks_between@1.13 wrong; in_end_portal@1.17, player_pose_size@1.17, ridden_mob_state@1.20.5, fall_damage_resetting_boxes@1.21.9, ridden dimensions@1.9,1.14 change only a field), and the gates the review found wrong.
+
+## Review findings lane
+
+Commits: 47e7d75f 61cea3d4 5e57e5ee 9c2790b4 b9a518e7.
+
+- B007: Six gates the review found wrong fixed, each checked in source with a test: creative hit on a named cart before 1.20.3 (1.20.2 AbstractMinecart.java:232-239), no spectator candidates in any release (1.13.2 EntityGetter.java:18-20), lava push in water from 1.16.2 (Entity.java:1064-1070), the 1.13.2 ray trace on the outline with the old walk (Level.java:719-878), cauldron inside shapes from 1.21.6, the block-effects guard after travel from 1.21.2 (LivingEntity.java:2817). Field, constant and constructor gates are now compared by declaration: 296 of 296 gated functions source-compared, 0 unverified. Left: boundary recordings (pj_* on 1.13.2 to 1.16.2 are stale), recount of gates with no citation, entityTravelSupport unknown.
+- B046: Module rows 397 (extracted 1112), 0 open. Left: module rows tied to one site each, gate uses with no release named.
+
+## Shapes lane (player worktree)
+
+Commits: 62ff56d0 3d405304 8463eaeb 06346dcd ef5dfe98 8449ae24 baec4d47.
+
+- B073: Redstone wire (1.9-1.12) and vine (1.8-1.12) outlines read their neighbours from tables LegacyNeighbourDump measures against each jar (src/mineflayer/legacy-outline-neighbours.json); test/legacy-neighbours.test.cjs has no exceptions left, 0 outline differences on every release. Powder snow holds a falling block wherever its feet are (1.17 PowderSnowBlock.java:90-96, 26.3 :98-104), falling rows compared at every height on all 44 modern releases. Audit: 1,034,494 modern states, 0 differences on six channels, 645,612 contextual answers.
+- B152: Moving blocks on the six legacy releases: LegacyNeighbourDump entities mode places a real moving-piston block entity, test/legacy-block-entities.test.cjs compares 3,600-4,464 cases per release against the trackers and NativeWorldSync, 0 differences after fixing 1.9-1.10 push box as outline, 1.11-1.12 short arm on the block entity, 1.8 moved base as full cube, zero-height boxes before 1.13. Shulker boxes in OracleContext with every lid step and facing: all 44 modern releases match; legacy dump covers 1.11.2-1.13.2. Limit: on 1.8 the jar's moving box for blocks without a collision override depends on the bounds last set; the fixture sets them from the block's own state.
+- B161: Legacy connection states drawn at random at every cell a block reads, 50,924 draws on 1.8.8 and 64,336 on 1.9.4-1.12.2, 0 differences; pl_nb_* now run on 1.8.8. Left: record and replay the 26 pl_nb_* cases on 1.8.8.
+
+## Citations lane
+
+Commits: d16f303f c5ea8db7 de4c499e b7d98676 e4d64913.
+
+- B046: 3448 movement sites (scripts/movement-sites.cjs had read nothing after a test module in the middle of a file): 1397 extracted, 443 reviewed, 1608 structural, 0 module (was 397), 0 open. Each former module row is tied in audit/movement-site-reviews.json to the vanilla line that holds the number at the site's type (proved by the generator, badSiteReviews empty) or named as the engine's own with its expression; friction table, default friction and dragon fly speed are dispositions. Gate uses with no release named: 0 of 629.
+- B007: Gates citing no line of a release either side: 0 of 752 (scripts/gate-citations.cjs, test/gate-citations.test.cjs; 155 of 750 at the start). Five more gates fixed with tests: rocket collision boost at 1.16.4 (FireworkRocketEntity.java:155), item in lava thrown only until 1.15.2 (1.16 ItemEntity.java:136-137), cart fire cells by Mth.ceil from 1.9 (1.9.4 Level.java:1582-1588), hopper cart past its first item from 1.19.4 (MinecartHopper.java:92-97), boat in water not pushed by lava in 1.16 and 1.16.1 (1.16 Entity.java:1041-1044). entityTravelSupport has no unknown kind; dragon routed to its own tick, shulker unsupported. Left: pj_* recordings on 1.13.2 to 1.16.2 (stale or absent), being re-recorded.
+
+## Fields and input lane (player worktree)
+
+Commits: 4e35374d f9916f57.
+
+- B271: Evidence reads the six legacy trees through the recorder mappings and follows members by Fabric intermediary id (E:/mc-physics-demo-wt/intermediary): rows with an unchecked lower bound 735 to 11; 182 rows carry the member's own range back to 1.8.8. test/field-evidence.test.cjs reads back all 968 recorded places as declarations, all 299 binding rows and all 61 why citations; four anchors that matched an unrelated use corrected; depthStrider rows now run to 26.3; the kept column is measured on the addon at generation and checked both ways. Left: 11 rows the mappings cannot follow (26.2 members, Entity.getPose and HitResult.getLocation at 1.13.2, three Boat overrides) and MECHANIC_ANCHORS kept as a tested hand list.
+- B104: A state never ticked clones through cloneState (test/from-bot.test.cjs). Ridden ticks before 1.19.3: 233 recordings, 2186 ridden ticks on 1.9.4-1.19.2 and 9 new ridden cases on 1.8.8 (587 ticks) match through the adapter. mineflayer-replay with REPLAY_ENGINE=native on 30 versions: every engine case passes once the harness puts recorded equipment in the bot's inventory (branch player-replay-equipment 2f9952f in E:/mc-physics-demo). Left: bot-layer differences, sneak release x off by one ulp on 1.9.4-1.16.5, b_powder_snow_sneak_inside vel.z on 1.19.2/1.21.3/1.21.4, v_horse_step_up_block yaw -90 against 270 on 1.18.2; merge the harness branch.
+
+## Entity.move lane
+
+Commits: d3bc85d2 d22dc591 d1d93330 52c47661 deb34c8f a2fc2481 6d586fb4.
+
+- B083: One Entity.move for the player (simulation.rs entity_move, called by the tick, the riptide lift and piston/shulker pushes with a MoverType); every other entity's run_vehicle_move shares reset_fall_on_clip, move_without_physics and refreshes_vertical_collision and counts the fall inside the move. Of the 35 items in docs/entity-move-phases.md: 16 fixed with tests in native/src/entity_move_tests.rs, 2 fixed before, 8 proved unreachable with the source cited, 8 no-op, D17 in part; all 44 modern releases placed by hashing move in the compare-cache trees (the fall-reset clip arrives in 1.18.2). Replays of mv, me, mc, v, b, n, su, sb, es, q_riptide, pj on 11 releases: 11502 recordings, 11492 match, 3 unsupported, 7 fail identically on the previous tip (n_walk_into_minecart on 1.8.8-1.16, pj_fishing_hook_on_ground 1.8.8, pj_firework_climbs_into_wall and pj_fishing_hook_hits_target 1.16). Left: D17 a piston push kept in the entity's movement list until its next tick, D19 the 26.3 interpolation target of an entity the client does not simulate, the 7 failing replays, vanilla fixtures and first-divergence traces.
+
+## Minecart lane
+
+Commits: 9858b659 8a3e3458 066a5948 f6306c77 87e86c14 5e62467e.
+
+- B189: Engine: TNT cart blast on nearby entities (ServerExplosion.hurtEntities, Explosion.explode before 1.21.2, with float roots before 1.17, whole-number hurt to 1.20.2, outlines before 1.16, zero-length direction from 1.21.9 and the other gates cited), end gateways (block entity tick before 1.21 with its 1.11, 1.16 and 1.16.2 changes, portal entry from 1.21; an undecided pick is reported, not guessed), spawner cart countdown (spawnerBlocksEnabled from 1.21.9; the spawn itself is the server's), hopper cart taking from the recorded container. The mod records container, spawner, gateways and portal fields server-side. 14 Rust, 2 N-API and 3 replay tests; mc_* and mx_* replays on 26.3, 1.21.5, 1.21.2, 1.20.4, 1.13.2, 1.12.2, 1.8.8 all match. Left: record mc_hopper_from_chest, mc_hopper_under_chest_rolling, mc_tnt_blast_on_carts, mc_spawner_counts_down, mc_spawner_out_of_range, mc_end_gateway and their mx_ twins plus mx_hurt_*, and re-record mc_/mx_ for the new fields; item pushes and blast resistance not modelled.
+
+## Replay failures lane
+
+Commits: 58069b11 c158d214 839ac750 43fbe6da 39283bc7 abb3046a 2e1797f2 1ccfcaed 3b4370f8.
+
+- B083: D17: a shulker box push waits in the entity's movement list until its next tick from 1.21.5 (26.3 ShulkerBoxBlockEntity.java:133, Entity.java:807, :960-963), carried as SimulationState.pending_movement; the piston's own push is removed by removeLatestMovementRecording (1.21.5 PistonMovingBlockEntity.java:182-183). D19 has no engine output: the only interpolated entity the engine keeps is a client minecart, and the stepwise replay reseeds the recorded target (docs/entity-move-phases.md). The seven replays failing on the previous tip pass: the player pushes a cart from its own server tick (1.8.8 ServerGamePacketListenerImpl.java:290-291), drops negligible velocity and takes the box middle before 1.17; a fishing hook's box is remade by setPos before 1.17; a rocket out of the area's box is out of view. Replays on all 41 recorded releases: n_, mc_, pj_ 9069 of 9069 stepwise, pj_ --projectiles 4622 of 4622.
+- B007: A 1.13.2 fireball meets the cells past the world border with a one-block margin chosen by its isOutsideWorldBorder flag (1.13.2 ProjectileUtil.java:27, LevelReader.java:113-155), from 1.14 only a box meeting the edge from inside (1.14.4 LevelReader.java:147-157). Left: pj_* recordings on 1.13.2 to 1.16.2 are being re-recorded.
+
+## Platform scope: one validated platform
+
+Commits: none (todo and backlog only).
+
+- B048: Narrowed to one host (Windows): equal output for worker counts one and eight, a relocated root, an interrupted run left intact, cached and fresh modes reported apart. The cross-OS part moved to todo.md Platform-specific (lowest priority).
+
+Scope change: one validated platform completes a backlog item, and Windows is the validated platform. B010, B258, B264 and B275 only add another operating system, so they left the backlog for deferred/ (python move-to-deferred.py). Their todo.md lines stay unchecked under the new section Platform-specific (lowest priority), with what Windows and Linux already showed. macOS, ARM and browser hosts stay in todo only.
+
+## Exact data for six releases (lane moves)
+
+Commits: 55c08564 a481702d 90b9f6b9 7aba7318 7989e706; minecraft-data bc37177 (inner 8ca30d50); minecraft-data-generator 0c1154c.
+
+- B302: 1.19.1, 1.21.2, 1.21.7, 1.21.10, 26.1.1 and 26.1.2 run on their own registries; the runtime aliases (dataReleaseOf, the bot special case, the recorder's SAME_DATA) are gone and the alias proof lives in generated/data-aliases.json. Protocol and data versions match each jar's version.json. Every final-pass recording of the six replays stepwise, continuous, projectiles, adapter --motion and carts with only failures the pair release shares; --bot on 1.19.1: 3151 match, the other 131 fail the same way on 1.19.2. The 1.21.7 recipe generator bug (295 shapeless recipes without ingredients) is fixed in minecraft-data-generator 0c1154c; 1.21.5 and 1.21.6 have the same generator bug but correct tables.
+- B209: The adapter-against-binding tests run on all 50 releases, the six included, and the filter that dropped refused registries is gone. Non-player refusals (horse, ridden mob, boat, projectile, arrow, trident, moving entity, entity push, moving piston, entity descriptor) name the field, value and rule. guardNativeBinding checks bindings passed through options.binding, NativeWorldSync or ShulkerBoxTracker; a raw addon called outside the package stays unchecked. The world round trips that ran only on 26.3 run on every release with its own stateVersion and last state id.
+
+scripts/source-pins.cjs pins minecraft-data bc37177, which must be pushed to mc-zuri/minecraft-data-node before a fresh bootstrap clone works. Shared failures worth a re-record: m_dimension and uw_* on 1.21.10 and 26.1.x.
+
+## Bot layer lane (player worktree)
+
+Commits: 683dc0eb 889f4d74 882d5af6 224e852a 1ec3c533 eebbeb1c.
+
+- B271: No catalogue row keeps an unchecked lower bound (was 12 on 8 anchors): each edge the mappings cannot follow is read in the tree of the release before it (scripts/field-read-edges.cjs), checked when docs/field-evidence.json is written; 26.2 members Block.getBounceRestitution and Entity.getAirDrag are mechanic anchors. test/field-evidence.test.cjs fails on any unchecked row. MECHANIC_ANCHORS stays a hand list tested against real identity boundaries; deriving it from gates or row text did not hold, and the ticket's criteria do not ask for it. Entity.Movement read at 1.21.1 and 1.21.2 (scripts/field-read-edges.cjs).
+- B104: Sneak release one ulp off on 1.9.4-1.16.5 fixed: the box the end-of-tick size update refits is sent to the engine before the pushes after the tick (1.12.2 Player.java:324,386-392, Entity.java:382-394). Harness: the bot starts with the synced frozen ticks (1.17 LivingEntity.java:499-520), branch player-replay-equipment c992f0f on 2f9952f in E:/mc-physics-demo. mineflayer-replay with REPLAY_ENGINE=native: 41 of 42 runs pass on 30 versions. The 1.18.2 v_horse_step_up_block case passes: a passenger start primes the bot with the look it holds, as a passenger sends its look every tick without updating the last-sent field (1.18.2 LocalPlayer.java:186-187); harness commit 81c0d6c. mineflayer-replay on 1.18.2: native 3659 and default 3659 pass, 0 fail; the other 41 runs passed before.
+
+## Build reproducibility lane (Windows)
+
+Commits: 7d79d181 7a810b19 21ac9f1f 22861e60 31931941.
+
+- B048: Windows only, as the user scoped it. With pinned jar inputs (scripts/fetch-jar-inputs.cjs, sha1 from piston-meta, named jars by sha256) generate-all with GENERATOR_WORKERS=8 (49 min) and GENERATOR_WORKERS=1 in a second checkout at E:/mc-physics-demo-wt/reloc/a/b/minecraft-physics-native with every location explicit (60 min) give equal scripts/generated-hashes.cjs inventories, 150 of 150 files, equal to the commit. generate-all keeps a journal: a run killed in its third stage was restored by --recover with 0 of 150 different, and test/generation-integrity.test.cjs kills a run after a stage half-writes a table and has the next run restore it. Each run ends generation: fresh or cached with the inputs it kept. Fixed: block-shapes.json recorded the host's missing libraries; the legacy named jar was chosen by mtime in one generator and by a path hash in another; a legacy release's entity data silently became unavailable without its jar. The cross-OS part is in todo.md Platform-specific.
+
+Linux notes (WSL Ubuntu 26.04, Temurin 25.0.3+9, node 24.15.0, rustc 1.95.0): every Mojang input fetched and verified by sha1 and every named jar by sha256, bootstrap-inputs passed with sources at other roots; no Linux generation finished. Unimined names a legacy jar's folder after the mapping file's bytes as checked out, so Linux and Windows look in different folders; minecraft-data bc37177 and data 8ca30d50 are not on GitHub (MC_MINECRAFT_DATA_SOURCE, MC_MINECRAFT_DATA_SUBMODULE_SOURCE); source trees must sit on the Linux file system, not /mnt. See docs/release-build.md.
+
+## Thin and connected blocks on 1.8.8
+
+Commits: recordings only (local final pass at 389d7bff), replayed at 0a7e236c.
+
+- B161: The last gap, the 26 pl_nb_* cases on 1.8.8, is recorded (verify 0 different) and replays 26 of 26 stepwise, 26 of 26 through the adapter and 26 of 26 continuous at 0a7e236c. With the 50,924 and 64,336 random connection-state draws (0 differences) and the shape lanes' per-state geometry, every family's geometry, approaches, corners, step-up/down, waterlogged and edge cases are covered on all releases.
+
+## Minecart blast resistance and item blasts (lane carts)
+
+Commits: d11b5d64.
+
+- B189: TNT cart rays by block resistance per release (1352 rays, Material.AIR before 1.13, fluid resistance from 1.13, level bounds from 1.17, rails spared), returning certain and possible blocks or the exact list with levelRandom; the blast hurts and pushes item entities (whole-number health, blast-proof stacks, the 1.21.2-1.21.5 water check); a cart's own move pushes no item (ItemEntity is not pushable). Fresh recordings at 0a7e236c: mc_* all match on 1.8.8, 1.12.2, 1.13.2, 1.16.5, 1.20.4, 1.21.1, 1.21.2, 1.21.5; mx_* 93 of 94 on 1.21.2 and 1.21.5. Left: mx_end_gateway y after the gateway exit (t=38, 100.0225 against 99.96) on the improved path; record mc_/mx_tnt_blast_on_items, _on_items_new and _by_obsidian.
+
+## Trig target per declared JVM (lane moves)
+
+Commits: 96318692 985635d9.
+
+- B315: Each release follows the Math of the Java version its version json declares (math::declared_java_major): Java 8 up to 1.16.5, 16, 17, 21, 25. trig::java8 ports fdlibm 5.3 and models x87 fsin/fcos within pi/4. Direct Math.sin/cos sites (1.8.8 boat seat and paddle, cart push to 1.13.2, glide, 1.20.2-1.20.4 passenger) and Mth.atan2's COS_TAB use it. Measured on Temurin 1.8.0_512: past pi/4 0 of 14.27M call-site values differ; within pi/4 9 of 1,593,644 differ, listed in docs/limitations.md with the untested Java 8 mode (the recorder runs Java 21/25, so replays set Java 21 via setMathJava). Gate: cargo 1458, JS 2281, recorder 267, 0 failed.
+
+## Source inputs from pins (lane repro, Windows)
+
+Commits: 64863f06 f4aed681 93af249b.
+
+- B293: On a fresh clone on Windows: fetch-jar-inputs --check (3112 files at pins), materialize-sources rebuilt all 52 Mojang-named trees (26.2/26.3 from pinned mc-source commits, six legacy decompiles through Vineflower 1.12.0) equal to their hash pins, bootstrap-inputs --check passed, release-build --data full ended 'generation: fresh' with 151 of 151 generated files equal to the commit, and consumer-check on the tarball passed with its deliberate failures failing. A second clone made the same 52 trees, and compare-builds agreed with the first on all 7 inputs, the toolchain and all 66 shipped files. Missing, wrong-release and edited trees fail with a message naming the tree. The 30 yarn-named trees are supplied and held by hash only (B038). Linux and macOS deferred (platform scope).
+- B038: Every tree read is now pinned by hash (scripts/source-tree-pins.json, 82 trees) and bad trees fail by name. Left: the 24 modern and 6 legacy yarn-named trees under E:/pr/mc-decompiled cannot be made by a script (no record of the yarn build or decompiler); port the generators that read them to the Mojang-named trees. The 27 releases from extracted_minecraft_data are pinned commits, not decompiled from jars.
+- B291: Two clean runs give equal content; network and oracle inventory entries record pin and detect; generate-mojang-releases holds version json sha1s and refuses a moved pin (Mojang's list now gives new sha1s for all 26 releases 1.19.3-26.3; pins unchanged). Left: no change detection for generated/gate-mutation.json, the tag-audit-dispositions input, data-aliases.json's jar identity and movement-literal-types.json; network and oracle outputs need live inputs.
+
+## Hopper cart containers and TNT replays (lane carts, round 2)
+
+Commits: b2df5284.
+
+- B189: The mod records a hopper cart's containers (the 26 cells around the one above the hopper, via HopperBlockEntity.getContainerAt), so the arrival tick has its input; mc_/mx_hopper_from_chest and _under_chest_rolling re-recorded on all releases and matching. TNT recordings at c49b9f8a: mc_tnt_blast_* match on 50 of 50 releases, mx_tnt_blast_* on 15 of 15. The adapter's simulateScene syncs the world at gateway exits. Left: mx_end_gateway and the 1.21.x portal cooldowns and mx_top_speed on 1.21.11 are fixed on lane/player (5ec3d818, e9c55c4e, 6e431b2e) and need that merge plus a 1.21.11 mx_top_speed re-record; a boat ticking ahead of a cart and mob order have no recording; team rules are not modelled; armor stands and bats are treated as ordinary pushers.
+
+## Generators off the yarn trees; change detection (lane repro, second pass)
+
+Commits: 596fdd08 80d3a0a3 02da1024 f300bb73.
+
+- B291: Every generated artifact either has a documented pinned step or is a captured input marked `capture` in generated-inventory.cjs, and the check fails on any entry with detection 'none'. gate-mutation.json is pinned to the commit it names (gate-report --commit refuses a sweep of other gates); the tag-audit input is held by sha256 and its client jars by sha1 (--accept-audit to override), reproducing the committed file byte for byte; data-aliases checks each jar's identity (client and server sha1, intermediary sha256); movement-literal-types records a code hash of native/src and rustc, recomputed by a test. Pinned: shared-gates, gate-sources, release-aliases, data-aliases, flow-blockers (--check), vehicle-versions, gen-java, movement-literal-types. Captured at a pin: mojang-releases, runtime-registries, conformance-evidence, gate-mutation, tag-audit. generate-all --check: exit 0, generation fresh. Windows.
+- B038: Every generated table now reads Mojang-named trees made from pins; the six legacy releases are decompiled from their own jars remapped by recorder/mod/mappings (1.8.8 no longer read as 1.8.9; 1.8.8-1.13.2 now exact). Block-by-block equal to the yarn output apart from names; real data changes explained (fluid-tables gains 1.8.8 and the missing water/lava tags; flow-blockers forces shulker boxes solid for 1.21.5-1.21.11 and 26.2). Left: code comments in native/src, src/mineflayer and field-contracts cite yarn files and lines, which generate-movement-sites checks, so the 30 yarn trees stay pinned for that one use.
+
+## Minecart team rules, armor stands, bats and order (lane carts, round 3)
+
+Commits: d231bdfc.
+
+- B189: Team collision rules (EntitySelector.pushableBy from 1.9) at every vanilla call site; the mod records each server entity's team; bats are not pushable and push nothing; armor stands are not pushable and push only nearby rideable carts (picking themselves up before 1.10). New cases team_*, armor_stand_beside, into_an_armor_stand, into_a_bat, bat_beside, boat_ahead and mobs_either_side match on all 50 releases (mc_) and 15 (mx_); without the new inputs about half fail. Criteria 1-4 met. Left: criterion 5 (1.21.2 worlds with the experiment toggled) needs lane/player's mx_end_gateway and mx_top_speed fixes merged and replayed clean.
+
+## Phantom determinism on 1.13.2
+
+Commits: none (evidence only).
+
+- B314: 12 local runs of physrec/me_mob_phantom_circles on 1.13.2, each with --verify: every pair identical, and run 1 identical to each of runs 2-12 (compare-runs). Mechanism (1.13.2 Phantom.java): every draw is the phantom's own Entity.random, seeded by EntityRandomMixin from the case seed and creation count reset by ALIGN; with no finalizeSpawn its anchor is its own block, and the invulnerable recorder player is never targeted (TargetGoal.java:127), so the flight depends only on seed, summon tick and terrain. The earlier difference fits the lockstep hold fixed in 2195dbb1 (a summon task at a tick's start could land a round apart); 6419fbd8's mixin does not apply to 1.13.2. known-failures.json empty, nothing loosened.
+
+## Final replay matrix (lane player)
+
+Commits: 059c6bd5 eb5ab263 6e431b2e 5ec3d818 e9c55c4e 8315854d 0163e118 3779380a b6264365 591c8624 1a5789ee 6db88b88 7c0d2295 249791db b15772f8 41910767 69979eb1 205a685b dbb45eb4 5f1f7ad6 8f4bb62f 095adf97 d33d8da0 ecad0af7 a8150996 d97921d2 a5fd0999.
+
+- B013: All 50 releases have a recorded corpus with build and provenance identities (corpus/<v>/builds); the strict gate refuses a missing corpus, an empty selection or zero comparisons; goldens keep their identities. Final matrix over 50 releases in 9 modes, scratchpad final-replay/matrix.md.
+- B140: Fluid parity matrix on the final corpus: 778 cells matched, 0 mismatched, each with per-result identities (final-replay/fluid-parity-matrix.md). The 5 bubble-column cells before 1.13 are n/a (no bubble columns); 1.19's aquatic cell has no recording.
+- B224: recorder/corpus/<v>.json pins every recording of all 50 releases (sha256, rows, scenario hash, build); pinning refuses stale recordings; corpus-manifest.test.ts runs in the gate and conformance-cli check holds the digests. Recordings not yet pinned (1.19.1-1.20.1 gaps, 1.21.11 mx_top_speed, the new cart push cases) are reported as unpinned until re-recorded and re-pinned.
+- B240: Coverage matrix over all 50 releases: 709 rows ok, 41 GAP, every GAP a movement mode the release lacks (named, not compiled); Riptide in rain only and Slow Falling across zero covered where present.
+- B241: Coverage matrix: 337 rows ok, 13 GAP, all features absent in that release (waterlogging, fences in old releases); native and adapter layers both clean.
+- B026: 1.14.4, 1.15.2 and 1.16.5 are clean in stepwise phases, continuous and both adapter modes. Left: bot mode (113, 111, 128 failures, from the mineflayer fork) and the moving server-boat pushes.
+- B219: Outcomes published for every release; repeat captures across shard orders not run.
+- B235: Two reproducible captures per adapter not yet run.
+- B282: Remaining mismatches are explained but unfixed: bot mode (fork: 1.21.2 gating, entity_action ids on 1.15-1.18.1, passenger travel, seats, shulker lids, click mount), moving server boats get no neighbour or hurt, fishing after the bite (synchronised random), 1.8.8 anvil bounds (crosshair-dependent shared Block bounds), boat lerp on 1.21.2-1.21.4 (f_elytra_mounted_mid_glide), 1.18/1.18.1 client falling blocks (wall clock), ph_slime_*_front continuous on 1.9.4/1.10.2.
+- B283: Continuous has 15 unexpected (same set as B282's non-bot items); a repeated-run determinism check not run.
+- B189: mx_end_gateway, the 1.21.x portal cooldown and mx_top_speed's 1.21.11 gamerule are now on recorder; left: re-record 1.21.11 mx_top_speed and replay mx_ clean.
+
+## Minecart experiment worlds (B189 close)
+
+Commits: 5ec3d818 e9c55c4e 6e431b2e b2df5284 d231bdfc.
+
+- B189: Criteria 1-4 met in the carts lanes (executable engine and subtypes, experiment chosen by flag, server simulation apart from client interpolation, rails, water, collisions, speed, team rules, armor stands, bats, order). Criterion 5: with lane/player merged and 1.21.11 mx_top_speed re-recorded at c5e75b8f (verify identical), every mx_ recording matches stepwise with phases on 1.21.5, 1.21.11 and 26.3 (106 of 106 each), and mx_top_speed matches continuously. Not compared: the exact blown block list (level random not recorded) and item velocity after a blast.
+
+## Engine citations on the Mojang-named trees (lane repro, B038)
+
+Commits: 617955f3 58939736 b5380e60.
+
+- B038: Every source tree the build reads is now made by script from pinned inputs and held to a hash pin; the 30 hand-supplied yarn trees are removed from bootstrap-inputs, source-tree-pins, tree-pins, generated-inventory and materialize-sources. The engine's citations in native/src, src/mineflayer, field-contracts and the site reviews now cite registered releases' Mojang-named trees (1.8.9 as 1.8.8, 1.14 as 1.14.4); a comment-stripped compare shows no code change. Movement sites against the yarn run: 3621 sites, 3560 the same, 30 better, 1 worse, no new open site. Accepted exception: simulation.rs back_off_from_edge 1.0e-5_f32 (1.20.5-1.21.4) proves at file level only, as every Mojang-named decompile prints it widened. Gate: cargo 1458, JS 2291, recorder 267, 0 failed.
+
+## Repeat captures (lane player, round 2)
+
+Commits: evidence only (captures in E:/mc-physics-demo-wt/determinism).
+
+- B219: 200 cases from 66 families on 1.8.8, 1.12.2, 1.16.5, 1.20.4, 1.21.5 and 26.3, captured three times (2 shards; 3 shards; 3 shards shuffled verify). compare-runs differs on 2-5 cases per release, and row by row every such difference is server packet timing (chat, chunks) outside the physics rows: pre, post, phases and server state are identical. Continuous and stepwise-with-phases replay match 200 of 200 on every capture and release. Logs: scratchpad determinism/.
+- B235: Same repeat captures as B219: two reproducible captures per adapter, with different shard counts and orders, give identical physics; only packet timing differs; replay of every capture matches 200 of 200.
+- B283: Repeat captures deterministic in physics (B219). Left: item age off by one after a merge (documented limit), tnt_blast_on_items item position, and the bot part (fork lane).
+
+## Mineflayer fork bot fixes (lane plugin, fork commits bfbf7574 4c0d173a f2803831 b849a7b7 9be0b52e; fast-forwarded into the fork's mc-physics-demo branch, not pushed)
+
+Commits: 43c239ae 537240b8.
+
+- B026: Bot mode on the corpus, different/matching, matrix to now: 1.21.2 3741/0 to 79/3682, 1.15 899/2236 to 61/3108, 1.18.1 970/2330 to 66/3268, 1.20.4 132/3270 to 59/3353, 26.3 112/3683 to 88/3731. Fixed in the fork: 1.21.2 tick_end and player_input, entity_action ids on 1.15-1.18.1, passenger travel (under water from 1.19.3, slow falling, levitation, bubble columns, cobweb, lava, the water current from 1.13), the chest boat seat before 1.20.5, shulker lids. Harness: mounts seeded as summoned, equipment enchantments kept, keys the bot cannot press listed in docs/limitations.md. Left: the boat's own bubble column under water, bf_under_falling x, seats (chest boat float turn before 1.20.5, strider, two passengers, scaled horse), click-mounted pig and strider, piston-lifted rides, mv_sup_*_edge before 1.14, q_rain, elytra rocket timing, pl_attack knockback, v_boat_into_*, strider cases. minecraft-data follow-up: newPlayerInputPacket from 1.21.2; entity_action actionId mapper on pc 1.15-1.18.
+- B282: Bot part as B026.
+
+## Shared gates source-compared (lane repro, B007)
+
+Commits: d9d1b66e 6041dcf4.
+
+- B007: Every gated function in generated/shared-gates.json has a source finding at each of its boundaries: 322 of 322 (321 before), gates with no finding 0 (4 before), stale reviews 0. The last, math.rs#declared_java_major at 1.17, 1.18, 1.20.5 and 26.1, is now compared through a versionJson gate review that reads each release's pinned version json (sha1 checked against generated/mojang-releases.json). entityTravelSupport returns unknown only for a name that is no game kind, and every player, mob and ridden tick refuses it; generic living travel runs only for the explicit living kind. No engine gate was found wrong. Gate: cargo 1462, JS 2294, recorder 320.
+
+## Moving replay round 3 (lane player)
+
+Commits: 48fd9bfe 04426a20 778a9031 d5053dc8 22c2242c 44d32c65 7ee28d35 d0742054 f40ea3c5 0793ece8 620237cc 91b5585a.
+
+- B282: Non-bot: moving-server failures 705 to 94 over the corpus. Fixed: server boats pushed by the player, entities and hits (Boat.push rules); ph_slime_*_front on 1.9/1.10; boat lerp on 1.21.2-1.21.4 (engine tick_lerp plus mod capture); 1.8.8 anvil shared bounds pinned in the mod (re-recorded); arrows stuck before 1.13; armor stands (NoAI is Mob's); skeleton horse and strider after dismount; TNT blast on items; -0 pulled by Vec3.add gravity from 1.14 (engine). Left: server player movement (1.8 tickPlayer per move packet; 1.14.4-1.15.2 playerTick) for the 1.8.8 server boat and pl_passenger_tunnel_dismount_boat; item age after a merge (m_flow_equip, shears). Bot part: fork lane.
+- B283: Continuous and repeat captures clean (B219, B235). Left: item age after a merge in the moving replay, and the bot part.
+
+## Moving replay round 4 (lane player)
+
+Commits: 55588185.
+
+- B282: Moving-server replay of the whole corpus: 0 failures over 169,613 replays on all 50 releases (94 before). Item merges follow the level's id order, tryToMerge's survivor rule and merge's age and pickupDelay; the server player's own tick is modelled (1.8 tickPlayer per move packet before the move; from 1.9 in the connection tick), fixing the 1.8.8 server boats and pl_passenger_tunnel_dismount_boat. Left: the bot part (fork lane).
+- B283: Non-bot part done: repeat captures deterministic, item age modelled, remaining limits (fishing bite, 1.18/1.18.1 client falling blocks) explained from source in docs/limitations.md. Left: the bot part (fork lane).
+
+## Item use and attack penalties (lane player, B119)
+
+Commits: 4d9998e2 10a8bbd2 c114ad09.
+
+- B119: The mod can summon a remote player target (FakeTarget, seven constructor eras, all 50 overlays compile), so a recorded attack hits a living target whose client hurt is true. New cases pl_attack_sprint_player, pl_attack_walk_player, pl_attack_walk_player_knockback, q_eat_riding_horse, q_shield_riding_horse (from 1.9) and q_eat_speed_zero (from 1.21.11) recorded on 1.8.8, 1.9.4, 1.16.5, 1.20.4, 1.21.11 and 26.3; all match stepwise, continuous, adapter --motion and moving. Criteria: use start/end (q_eat_until_done, q_use_in_air, q_bow_draw_*), shield vs other item (q_shield_walk, q_eat_walk), diagonal (ie_eat_diagonal, pl_attack_use_diagonal_shield), use plus sneak (q_shield_sneak, ie_*_sneak_diagonal), speed zero (q_eat_speed_zero), passenger (riding horse: no use slowdown, LocalPlayer.java:695), attack success (boats, remote player) and failure (air, cow). Spear stabs are server-only (MultiPlayerGameMode.piercingAttack sends STAB; PiercingWeapon.attack runs in the server's handler), so no client recoil. pl_attack_* on 1.14.4-1.16.5 match in every mode. Remaining 44 releases are being recorded for the corpus.
+
+## Completion-gate audit (lane player)
+
+Commits: 2276583c 171715c9.
+
+- B276: All 50 releases exact in src/release-status.json; test/source-admission.test.cjs fails a wrong embedded identity, missing mappings and changed hashes; scripts/tree-pins.cjs --check re-hashed all 52 source trees against their pins (exit 0); test/clean-build.test.cjs holds each tree to its pinned bytes.
+- B277: Data dimension complete for all 50: admission compares each table with the running-client registry dump and names missing blocks; test/generation-integrity.test.cjs covers a lost block family, a dropped inherited property and missing or experimental tags and regenerates to the same bytes; release-data and block-tag tests cover state domains, fluids and tags. The 6 legacy releases are held to their remapped jars (no running-client dump).
+- B278: test/version-registry.test.cjs checks each release's module name, VERSION and dispatch arm; tick_conforming refuses a profile whose release or contract does not match, covered for all 50 by the Rust contract test; docs/release-status.md reports registered and admitted apart.
+- B279: test/registry-release.test.cjs rejects mismatched registry/release pairs before the binding is read across every constructor and checks generic, fixed and factory engines tick alike; test/from-bot.test.cjs checks the exact engine on both sides of a boundary; test/physics-features.test.cjs checks per-release feature answers.
+- B284: The gate builds a fresh addon and runs all JS tests on it; a validation record (commit dd35efdb, engine 5a9661a8) of the package, declarations, build-provenance, from-bot, registry-release, state-roundtrip and field-boundaries tests exited 0; stale declaration/loader pairs are refused; zero/false/absent values covered; the packed tarball loads.
+- B286: Benchmarks re-run on dd35efdb against the 2026-11-06 baseline on the same machine: allocation counts equal on every release tested, 0 bytes retained over 5000 ticks (native/tests/allocations.rs repaired and now in the gate), memory flat across rounds, CPU medians 0.64-0.72 of baseline; outcome digests changed only for 26.2/26.3 scenes from an engine change since the baseline, and every 26.2/26.3 corpus recording replays clean. docs/benchmarks.md and docs/benchmarks/*-20261109-win32.json.
+- B280: All 323 gated functions source-compared and generic dispatch refuses unknown families. Left: an equivalence claim for each shared function with no at_least gate and for profile-rule gates (docs/shared-code-audit.md, Not covered).
+- B281: Left: regenerate the subsystem matrix from current runs (B016) and the bot (B026).
+- B287: Stale claims corrected. Left: completion claims cite current pins (B288) and a regenerated recorder-coverage page.
+- B288: Source, data and implementation complete for all 50. Left: conformance pins on the current engine from the pinned corpus.
+- B289: Same as B281.
+- B290: Left: re-run scripts/gate-mutants.cjs against the full corpus and add fixtures for gates no case notices (155 unnoticed, 76 never ran before the corpus covered every release).
+- B292: Left: a defined matrix (replay modes over the corpus, fuzz, long-run, allocations and benches, package targets) on one pinned candidate with a retained record; the bot mode (B026).
+- B295: Left: final pass result, pins and a named tarball.
+
+## Mineflayer fork round 3 (fork eee17c03 d0d6bde1; fork mc-physics-demo fast-forwarded, not pushed)
+
+Commits: fa0af1f1.
+
+- B026: Bot, different recordings, before to after: 1.15 61 to 49, 1.18.1 66 to 46, 1.20.4 59 to 40, 1.21.2 79 to 44, 26.3 88 to 66. Fixed: chest boat float seat turn on 1.20.2-1.20.4, two-passenger boats, scaled horses, strider seat and suffocating speed; the steered boat takes the server's motion; bubble column push order and box per release; aiStep cutoff for passengers; crouched passengers 1.15-1.20.1; piston pushes of ridden vehicles (adapter pushEntityByMovingPistons, movingBlocksFrom); the native engine no longer stops boat physics after three corrections. Left: interpolation ulps in pm_ride_minecart_lifted (1.18.1) and pm_ride_pig_lifted (26.3); click-mounted pig on the click tick; strider walk animation in water; mv_sup_*_edge before 1.14; q_rain, elytra rocket timing, pl_attack, v_boat_into_*.
+- B282: Bot part as B026.
+
+## Subsystem matrix (lane/repro df8fe2d2; minecraft-data fe40d4c0, data b483a458, not pushed)
+
+Commits: 79a4bdfa b75afe22 7efeaeea.
+
+- B016: docs/subsystem-matrix.md on full replays of every mode on all 50 releases (run2 on 79a4bdfa, run3 on d18655e5 for the 255 B119 cases and the adapter modes). Verified on 50/50: travel, collision, effects, vehicle. entity is blocked only by the fishing bite (m_fishing, m_flow_fish: random state not recorded, docs/limitations.md). prediction is incomplete: the bot (B026) and the 1.18/1.18.1 falling-block client landing (B283). Fixed the 1.19 entity metadata decoding (pc/1.19 types 19-22) in minecraft-data.
+- B283: Moving client: only the 1.18 and 1.18.1 falling blocks (me_falling_*, m_c_dig_gravel_falls) stop short of the server's landing. Moving server: 0 failures on all 50.
+
+## Falling blocks held on the 1.18 client (lane/repro 3b4c6629)
+
+Commits: 76d49bcb 73ba191b.
+
+- B283: Moving client: 0 failures on all 50 releases (7778 ok). 1.18 and 1.18.1 keep a removed falling block for 50 ms (FallingBlockEntity.java:105-109, 213-221; ClientLevel.shouldDelayFallingBlockEntityRemoval); the replay holds it with tickCount + 1. Left: the bot part (B026).
+- B016: prediction now waits only on the bot and bot-carts (B026); entity stays blocked by the fishing bite.
+
+## Shared-equivalence claims and the whole-corpus gate sweep (lane/player b01c3536)
+
+Commits: 94a7744a b01c3536.
+
+- B280: scripts/shared-equivalence.cjs writes generated/shared-equivalence.json, held by test/shared-equivalence.test.cjs. Profile rules: 24 of 24 agree with every release's source. Ungated functions: 949; 3 hold from source, 292 cite a method that changes at some boundary (2,245 function-boundaries) and need a review in audit/shared-equivalence-reviews.json, 33 cite methods in no tree, 621 cite nothing (130 binding glue).
+- B290: 781 gates swept against every pinned recording of all 50 releases (gate-sweep.ts --wide, cap 300): 489 caught on both sides, 136 on one, 132 never caught, 24 never run. 292 gates need a fixture or a behaviour-neutral source reason. Sweep data in E:/mc-physics-demo-wt/gate-sweep-b290.
+
+## Requested subsystems in the matrix, fishing exclusion (lane/repro eefee44d)
+
+Commits: b00a236e 5b20882a eefee44d.
+
+- B281: Every requested subsystem has its own matrix family (travel, collision, effects, entity, vehicle, fluid, projectiles, attributes, poses, tick-order), replay-verified on 50/50 releases with 0 unexplained differences. The fishing bite and retrieve are an explicit exclusion (docs/limitations.md); the hook is compared up to the bite. Left: 46 findings in docs/parity-dispositions.json (41 active, 5 fixed-unvalidated) keep all ten families incomplete; split over the repro, findb and findc lanes.
+- B289: Cells: all 500 requested cells verified with their own cases; docs agree with the matrix (release-status and authority corrected). Left: the open findings as B281, and the prediction cells waiting on the bot (B026).
+
+## Mineflayer fork round 4 (fork 217abd57 fd496fc2; fork mc-physics-demo fast-forwarded, not pushed)
+
+Commits: 9b3d2d00 865e7b32 01a2bfcf.
+
+- B026: Bot, all 50 releases: 169,868 recordings, 167,113 matching, 2,591 different (1.8.8 170 to 1.20.3/1.20.4 33; 26.3 55). Five-release, round 3 to now: 1.15 49 to 43, 1.18.1 46 to 44, 1.20.4 40 to 33, 1.21.2 44 to 39, 26.3 66 to 55. Fixed: entities spawn off the ground (click-mounted pig and strider), a hurt mount's walk animation (strider seat), the lava current on passengers (26.1 move push), Swift Sneak 1.19-1.20.1, scaled strider seat 1.20.5+, kept box before 1.14 (all mv_sup_* on 1.12.2). Left: m_c_open_*/m_c_dig_*/m_hotbar/m_bed/q_rain_* (client key handling the harness does not drive), pl_attack_* sprint re-set, v_boat_into_* (stops at 4.0, vanilla 4.19), f_elytra_rocket_*, m_c_mount_click_* before 1.13 (missing look), interpolation ulps (pm_ride_pig_lifted 26.3, pm_ride_minecart_lifted 1.18.1), c_ride_oak*, v_horse_*, v_swim_*, v_pig_*, the 1.21.4-1.21.8 bump, 1.8.8.
+- B282: Bot part as B026.
+- B283: Bot part as B026.
+- B221: Bot packet replay runs on all 50 releases; differences as B026.
+
+## Gate fixtures for the entity files (lane/gates2 4121db82)
+
+Commits: 943f01bc 06aa4518 05e1c497 3cfb4168 a7107021 4a19cbd9 09ee3b7f 67b5b34e.
+
+- B290: minecart, ridden, moving_entity, projectile, projectile_hits, vehicle and piston: 178 of 181 open gates closed by Rust fixtures (rechecked with gate-mutants recheck) or reviewed reasons in audit/gate-reviews.json; gate-report gains a justified column. Engine: 627 both, 30 justified, 52 one, 48 none, 24 not run. Left in these files: minecart 126 (1.21.4 side), ridden 409 (engine bug: fluid_jump_threshold before 1.20.5 ignores eye height < 0.4, 1.20.4 Entity.java:3148), vehicle 740 (1.17.1 side); possible walk_axis moving-piston edge deviation 1.14.4-1.17.1 (Shapes.java:224-270). Remaining files and the 24 never-run gates: lane/player.
+
+## Gate fixtures for the player files and never-run gates (lane/player cd0663b6)
+
+Commits: 4b8290b2 cd0663b6.
+
+- B290: Engine: 781 gates, 726 both, 47 justified (audit/gate-reviews.json), 6 one, 2 none, 0 not run (was 489/136/132/24). Player lane: 76 fixtures (gate_fixtures_tests.rs and five *_gate_tests.rs) and 17 reviews; no engine bugs. Left: 500 entity_eyes_in_fluid 26.1, 618 collide_with_world 1.13, 762 fluid_contact 26.1 (after side); 623 collide_with_world 1.18 and 646 update_auto_jump 1.14 (neither side); 126, 409, 740 (gates2 follow-up).
+
+## Parity findings: collision/fluid/landing (lane/findb) and player/travel (lane/repro 13e8e28c); player-lane last gates (3275d264)
+
+Commits: 662505c2 1064873d 17be20fb 377f5b80 47eb57cc 3275d264.
+
+- B281: Findings: findb settled all 17 (D-165 D-166 D-173 D-183 D-191 D-204 D-206 D-207 D-219 D-220 D-225 fixed; D-174 D-184 D-187 D-190 D-202 D-212 already fixed, now validated); repro settled 16 of 18 (D-192 D-194 D-195 D-196 D-197 D-215 D-228 fixed; D-161 D-167 D-186 D-189 D-211 D-216 D-218 D-221 D-229 validated). Left: D-214 (riptide launch order), D-222 (1.11.2 rocket boost along yHeadRot), and the findc set (merging).
+- B290: Engine: 731 both, 48 justified, 2 one (126 now caught; 740 waits on the walk_axis fix), 0 none, 0 not run.
+
+## Riptide launch order and the 1.11 rocket head yaw (lane/repro 19cf6973)
+
+Commits: 4a5f2989 9aa1af97.
+
+- B281: D-214 (riptide release before the entities' ticks, versioned::release_riptide) and D-222 (1.11.x rocket boost along yHeadRot, head_look input, packed layout v3) fixed with regressions; all 18 player/travel findings settled; tick-order verified. Left: the findc findings (D-172 D-175 D-177 D-179 D-180 D-200 D-208 D-209 D-210 D-227 active, D-226 unvalidated; merging) and six unverified gates from the merged lanes (simulation apply_fluid_travel_vertical 1.13/1.14, apply_block_effects 1.15; vehicle tick_boat_in_world 1.21.2, count_boat_fall 1.9, water_level_above 1.13/1.14; world contains_any_liquid 26.3).
+
+## Source-compared gates of the merged lanes (lane/repro 419e362b)
+
+Commits: d81b979e 419e362b.
+
+- B281: All gates source-compared (8 new reviews); attributes, poses and tick-order verified on 50/50. Travel, collision, effects, entity, vehicle, fluid and projectiles are replay-verified on 50/50 with every gate compared, incomplete only on the findc findings (D-172 D-175 D-177 D-179 D-180 D-200 D-208 D-209 D-210 D-226 D-227), settled on lane/findc and merging.
+- B289: As B281; prediction waits on the bot (B026).
+
+## Engine fixes from the gate work (lane/gates2)
+
+Commits: 36f32867 e98fdc51 5fa8ccaa 1cdd9490 7adb428d.
+
+- B290: walk_axis counts moving pistons in edge cells 1.14-1.17.1 (1.17.1 Shapes.java:268) and the 1.11-1.12 legacy walk adds the layer-under edge cell (1.12.2 Level.java:1124-1128); recording pm_fence_pushed_from_under pinned and matching on all 50. fluid_jump_threshold gated at 1.16 (409); 740 caught by a fixture; 1.13 vehicle obstacle scan widened; shulker-box pushes kept as separate batches from 1.21.5 (pendingMovements); unsaddled strider speed from 1.19.4. New gates renumber the sweep: a fresh sweep is due once engine work settles.
+
+## findc, mcbugs, carts2, bot round 5, release tooling; temp-folder leak fixed (recorder 2d192d90)
+
+Commits: 43b8db3 c6a46e85 1c2b3966 d05ad461 c6d1fe4e 4d1654e8 2ffa8074 effc3f68 bc50143d dd639511 8ff3912e.
+
+- B281: All 69 findings settled (67 fixed-validated, 2 duplicate): findc D-172 D-175 D-177 D-179 D-180 D-200 D-208 D-209 D-210 D-226 D-227. Projectiles: honey slide, hook and rocket block effects, cobweb stuck speed; pre-1.13 full_cube from the jars (legacy-full-cubes.json). mcbugs: 8 minecart bugs fixed with 65 new pinned recordings (creative hit on invulnerable cart, removed cart stops its loop from 1.21.2, boarding cooldown from 1.9, no self-rider push, portal/gateway riders from 1.21, blast NaN/zero/friendly-fire/ignition, comparator 99 from 1.20.5, adjust_to_rails ulp).
+- B026: Bot, 50 releases: carts2 drives keys, screen clicks, trades, anvil, enchanting; m_c_open/m_c_dig/m_hotbar/m_bed/pl_impulse_sleeping/q_rain match on all 50; past-the-hands and codec 0. Round 5: pl_attack, v_boat_into, 1.21.4-1.21.8 bump fixed. Different down from 2,591 to about 1,500. Left: f_elytra_rocket, mount clicks before 1.13, v_horse/v_pig/v_swim/c_ride, j_walk_yaw, ph_slime_down, mx_ride, 1.8.8, interpolation ulps.
+- B292: scripts/release-matrix.cjs (never green on nothing, retained record, --resume), release-evidence.cjs (B288 rows), release-notes.cjs (B295); conformance complete on 1.8.8, 1.20.4, 26.3 after modelling ridden mob interpolation (mob-lerp.ts); bench acceptance audit/bench-acceptance.json; fuzz job proven on 1.20.4.
+- B288: Evidence rows generated; 0 of 50 complete until the final pass.
+
+## Bot client actions, round 2 (lane/carts2 4648ed29)
+
+Commits: c9d6147b 489ff814.
+
+- B026: Bot, 50 releases at 656a776f: 1,517 to 1,136 different. Now matching: m_click2_boat_paddle, v_boat_into_oak_boat/minecart, pl_attack_sprint_*, two f_elytra_rocket yaw cases, m_c_use_lectern_sneak, m_c_use_entity_horse_saddle, several mount clicks. The pl_attack_sprint_boat_weak regression was a merge (a7b90ae4) that lost the miss reset of the attack strength (Minecraft.startAttack MISS, 1.20.4 Minecraft.java:1702-1707); restored. minecraft-data d0658d9/e0313e69 adds 26.3's dappled_forest.
+
+## Shared-equivalence closed (lane/equiv 04f8691c)
+
+Commits: 435a7407 0542afc1 0c3d09b0 744d02f4 65e7c249 255051e5 d3775e13 75be38b6 22572a3f 327ede9f aaa03239 d15ce654.
+
+- B280: generated/shared-equivalence.json: 0 functions in review, 0 uncited, 0 unresolved, 0 open function-boundaries (3052: 2777 reviewed, 84 mechanical, 191 unreached each with a source-backed reason); profile rules 24/24. Reach re-probed at 0c3d09b0 with the fixed probe (old probe misplaced 249 of 1489 hits). Engine fixes: 1.21.5 bubble-column -0 push; set_pose_height squared from the corner with the float width; minecart jockeys from 1.9; legacy vehicle border stone before 1.13; shulkerBoxBlockEvent per release; concrete powder trace before and from 1.14; 26.2 mob landing bounce gravity and air drag; shouldDiscardFriction from 1.17; the shared empty chunk before 1.14 (MCPNWLD3); border stone and bedrock without a loaded chunk before 1.14. Left: the final sweep and release pass to certify on one candidate; 1.9.4 pm_ride_pig_lifted (vehicle y 101.0099 vs 101 at t3) under investigation.
+
+## Ridden pig before 1.11 (lane/player 22c3f3de)
+
+Commits: 52e3b9f6.
+
+- B283: pm_ride_pig_lifted on 1.9.4/1.10.2: before 1.11 a ridden mob's controller is its first passenger (1.10.2 Entity.java:2285-2288, Pig.java:73-75), so the client travels an unsteered pig itself; the replay now ticks it as unsteered. All 341 ride cases on 1.8.8-1.10.2 match. Conformance on 1.9.4/1.10.2 still blocked by scenarios compiled but not pinned, and 1.9.4 mc_hurt_invulnerable_by_creative (removed expected true at t1).
+
+## Client key handling, moving-piston pose, minecart improvements (lane/carts2 550aabe1)
+
+Commits: d7cb0996 e327e3f0 50923951 550aabe1. Fork: lane/plugin merged into lane/plugin2 (efe80650), mc-physics-demo fast-forwarded to it.
+
+- B221/B282: j_walk_yaw (1.8.8-1.19.2): vanilla sends a rotation whenever yRot - yRotLast != 0, with the held degrees (1.16.5 LocalPlayer.java:229-243); the harness turns on bot.physics.vanillaYaw. Fixed on 24 releases.
+- B221/B282: ph_slime_down_on_head (1.14.4-26.3): the pose check (canEnterPose -> noCollision) meets the block a piston is still moving (MovingPistonBlock.getCollisionShape via PistonMovingBlockEntity). NativeWorld.setMovingBlock returns the shifted boxes; the adapter's isFree reads them, including edge cells from 1.14.4. Fixed on 44 releases; test in test/mineflayer.test.cjs.
+- B221/B282: mx_ride_* (1.21.2+): the harness skips the configuration phase, so the tracker now takes minecart_improvements from the recording header's features (NewMinecartBehavior.lerpClientPositionAndRotation, lerp delay 3). Fixed on 15 releases.
+- 50-release --bot: failing cases 1136 -> 579, none new. Gate: Rust 1752+1, node 2333+328 passed.
+
+## Generic gates proven (lane/gates2 92418a4a) and bot round 6 (lane/carts-rebased 936ad25c)
+
+Commits: 8925f9d6 2e320a3f 086fec73 a473e477 9284e25b 92418a4a 66447c7c cd4ea4f7.
+
+- B290: final sweep of 105c19da over every pinned recording of all 50 releases (gate-sweep-final, engine and adapter phases): 856 gates, 800 caught on both sides of their boundary, 56 justified with vanilla lines on both sides (audit/gate-reviews.json), 0 one-side, 0 none, 0 not run, 856/856 cited (docs/version-gates.md, generated/gate-mutation.json). 28 new fixtures each flipped with gate-mutants recheck and caught; no engine bugs. Gate OK on recorder cd4ea4f7 (Rust 1774+1, node 2333+328).
+- B221: bot round 6: rocket/elytra (unsent spawns seeded; eye 0.4 while gliding before 1.14), pig/strider spawn boost (riddenSeed), vanillaYaw. 50-release --bot FAIL 1789 -> 553, BAD 228 -> 0. Horse random rear (Mob.baseTick ambient sound, client-only Random; 1.16.5 AbstractHorse.java:395-399,714-718) documented in docs/limitations.md. Left: f_elytra_mounted_mid_glide (1.21.2 boat lerp target), 1.9.4/1.10.2 mount clicks, boat/chest-boat dismount, cf_ride_horse_stops_in_web, pl_mod_mix_walk_b, pl_attack_sprint_boat, 1.8.8 v_boat_*, interpolation ulps.
+- B282: see B221: bot-layer differences now 2-17 per release (fewer on 1.19.4-1.21.x), only horse random rear is a documented limitation.
+
+## Conformance on all 50 releases (lane/repro 258cc084), client key handling round 2 (lane/carts2 21cd6e1b), bot round 7 (lane/carts-rebased 647fdab8)
+
+Commits: 11cbc028 54389775 258cc084 004f2f27 3b8be0b5 32ce048c(fork) 056dcc02(fork) d3b53aa8 aaab1f9e f4414dd9 21cd6e1b bf2a9a1f(fork) 647fdab8 fa3b3203 08bcfcd6.
+
+- B283: lane/repro: 783 more compiled scenarios recorded with --verify on the recorder host and pinned (identical in both runs); 1566/1566 phase and continuous replays match. 54389775: the unsteered ridden-mob path starts at 1.9, since 1.8.8 has no controlling passenger (getControllingPassenger first in 1.9.4 Entity.java:2175, :2243). Conformance --phases --continuous is complete on all 50 releases.
+- B289: subsystem matrix: travel, collision, effects, entity, vehicle, fluid, projectiles, attributes, poses and tick-order verified on 50/50 releases with 0 unexplained differences; every version gate source-compared (shulker box push at 1.11, shulker bullet at 1.21.5 added). Prediction stays incomplete on B026.
+- B221: lane/carts2: 1.16-1.16.1 strider rider offset and lava flag, pre-1.14 unloaded-chunk ticking (corrects fork a8523de3), chunk check on unticked rows, 1.21.11+ spear stab, attribute modifiers in the server's order; 579 -> 463 on its base. Bot round 7: m_flow_trade_legacy (merchant offers fed to the fork, pre-1.11 zero-count shift-click), f_elytra_mounted_mid_glide 1.21.2-26.2 (boat lerp target, pose-dependent seat, passenger glide), 1.8.8 pig click; 553 -> 347 on its base, 0 BAD, none new. Both merged in fa3b3203; the combined count was not re-measured. Left: q_eat_speed_zero 1.21.11+ (recorder must save item components, then re-record), eo_cow_before_player_after_respawn 1.11.2-1.13.2 (pre-1.14 entitySlots in mineflayer-physics-utils), boat/chest-boat dismount 1.21.2+ and pl_attack_sprint_boat, 1.9.4/1.10.2 horse mount clicks, cf_ride_horse_stops_in_web, f_elytra_mounted_mid_glide on 26.3, pm_ride_minecart_lifted, pm_step_moving_slab_d3 (1 ulp), interpolation ulps, small groups listed in docs/backlog-progress.md.
+- B282: see B221: at most 347 bot-layer differences remain across 50 releases, each in a named group; the horse random rear is the only documented limitation so far. Not closed: the remaining groups are not yet fixed or source-explained.

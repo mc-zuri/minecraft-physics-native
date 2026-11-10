@@ -51,7 +51,7 @@ function stateOf(status, pass, failing) {
   if (failing > 0) return `known failing: ${failing}`;
   if (status.data.status !== "complete" || status.implementation.status !== "complete") return "incomplete";
   if (status.admitted) return "admitted";
-  return pass.notOk === "none" ? "untested: no current replay" : "untested: no current replay, recordings short";
+  return pass.notOk === "none" ? "unpinned: no conformance pin" : "unpinned: no conformance pin, recordings short";
 }
 
 function collect() {
@@ -61,7 +61,6 @@ function collect() {
     status: json("src/release-status.json").releases,
     manifest: json("generated/release-manifest.json").releases,
     pins: json("generated/conformance-evidence.json").releases,
-    dataAliases: json("src/mineflayer/data-aliases.json").aliases,
     knownFailures: json("recorder/known-failures.json").native,
     pass: passRows(fs.readFileSync(path.join(root, "docs", "recorder-coverage.md"), "utf8").replace(/\r\n/g, "\n"), releases),
     adapter: (release) => fs.existsSync(path.join(root, "recorder", "mod", "mc", release)),
@@ -80,7 +79,7 @@ function grouped(releases, valueOf) {
 }
 
 function render(data, generatedLine) {
-  const { releases, status, manifest, pins, dataAliases, knownFailures, pass, adapter } = data;
+  const { releases, status, manifest, pins, knownFailures, pass, adapter } = data;
   const failing = (release) => Object.keys(knownFailures).filter((key) => key.startsWith(`${release}/`)).length;
   const required = (release) => INTERACTIONS.filter((interaction) => available(interaction, release));
   const pinCount = (release) => Object.keys(pins[release] ?? {}).length;
@@ -93,9 +92,8 @@ function render(data, generatedLine) {
     const entry = status[release];
     const state = stateOf(entry, pass.get(release), failing(release));
     states[state] = (states[state] ?? 0) + 1;
-    const aliased = dataAliases[release] ? `, data of ${dataAliases[release].data}` : "";
     const { scenarios, notOk } = pass.get(release);
-    return `| ${release} | ${sourceCell(entry.source, manifest[release])} | ${entry.data.status}${aliased} | ${entry.implementation.status} | ${required(release).length} | ${pinCount(release)} | ${adapter(release) ? "yes" : "no"} | ${scenarios}, ${notOk === "none" ? "all ok" : notOk} | ${entry.admitted ? "yes" : "no"} | ${state} |`;
+    return `| ${release} | ${sourceCell(entry.source, manifest[release])} | ${entry.data.status} | ${entry.implementation.status} | ${required(release).length} | ${pinCount(release)} | ${adapter(release) ? "yes" : "no"} | ${scenarios}, ${notOk === "none" ? "all ok" : notOk} | ${entry.admitted ? "yes" : "no"} | ${state} |`;
   });
   const families = [...new Set(INTERACTIONS.map((interaction) => interaction.family))];
   const familyRows = grouped(releases, (release) => families.map((family) => required(release).filter((item) => item.family === family).length).join(" | "));
@@ -108,7 +106,7 @@ function render(data, generatedLine) {
     "## How to read a row", "",
     "| column | says | read from |", "|---|---|---|",
     "| source | whether the vanilla source can be cited: `exact`, `alias` (a proved alias), `blocked` (not reproducible), with its identity | `src/release-status.json`, `generated/release-manifest.json` |",
-    "| data | whether the generated tables are the ones joined. `data of` names a proved data alias of the adapter | `src/release-status.json`, `src/mineflayer/data-aliases.json` |",
+    "| data | whether the generated tables are the ones joined | `src/release-status.json` |",
     "| implementation | every interaction of the contract has its entry points and no declared gap. This is no statement of parity | `src/release-status.json` |",
     "| cells | contract cells the release must verify: interactions it has in the game | `scripts/parity-contract.cjs` |",
     "| pins | cells with a pin on record, current or not | `generated/conformance-evidence.json` |",
@@ -128,17 +126,15 @@ function render(data, generatedLine) {
     `| releases | ${families.join(" | ")} |`, `|---|${families.map(() => "---:").join("|")}|`,
     ...familyRows.map(([range, value]) => `| ${range} | ${value} |`), "",
     "## Source gaps", "",
-    "- 1.8.8 has no source of its own here. It is served from 1.8.9, proved by `generated/release-aliases.json` (21 of 2541 classes differ, each reviewed), for the scope in its record.",
-    "- 1.9.4, 1.10.2, 1.11.2, 1.12.2 and 1.13.2 are blocked: the decompiled tree is pinned by hash, and its decompiler and yarn build are not recorded (`docs/source-records.md`).",
+    "- 1.8.8 to 1.13.2 come from each release's own client jar, remapped by the recorder's mapping and decompiled by vineflower 1.12.0, each held to its tree hash (`docs/source-records.md`). None is an alias or blocked.",
     "- 1.16.4 keeps `rejectedRef`: `origin/client1.16.4` embeds 20w45a and is never read. Its record comes from the client jar.",
     "- 26.1.2 comes from its client jar with vineflower 1.12.0. Its record has no remapped jar hash, as 26.x is unobfuscated.",
-    "- 26.1.1 and 26.1.2 use the data of 26.1 in the adapter. 1.19.1, 1.21.2, 1.21.7 and 1.21.10 use the data of a neighbour, proved byte-identical (`docs/registry-release-contract.md`).", "",
+    "- 1.19.1, 1.21.2, 1.21.7, 1.21.10, 26.1.1 and 26.1.2 are exact releases of minecraft-data. Their tables, but the version and 1.19.1's language, are those of the release of the same protocol, proved identical in `generated/data-aliases.json` (`docs/registry-release-contract.md`).", "",
     "## What is open", "",
     "| what | ticket |", "|---|---|",
-    "| A clean final pass, and pins on that engine | B219, B224, B235 |",
+    "| Pins on the current engine, from the pinned corpus | B288 |",
     "| Every release through its completion gate | B288 |",
     "| Differential traces with no unexplained mismatch | B282 |",
-    "| The blocked sources, and fingerprints of all required source | B276 |",
     "| Exact registry data for the four aliased releases | B302 |",
     "| 1.13.2 `me_mob_phantom_circles`, intermittently not deterministic | B314 |",
     "| Linux, macOS and platform packaging | B264, B275 |", "",
@@ -148,8 +144,8 @@ function render(data, generatedLine) {
 
 function stateMeaning(state) {
   if (state.startsWith("blocked")) return "The source cannot be cited, so the release cannot be admitted whatever its traces show.";
-  if (state === "untested: no current replay") return "The source and data pass. No pin covers the release on the current engine.";
-  if (state.startsWith("untested")) return "As above, and the last pass left scenarios of the release unrecorded.";
+  if (state === "unpinned: no conformance pin") return "The source and data pass. No conformance pin covers the release on the current engine; what its current replays show is docs/subsystem-matrix.md.";
+  if (state.startsWith("unpinned")) return "As above, and the last recording pass left scenarios of the release unrecorded.";
   if (state.startsWith("known failing")) return "`recorder/known-failures.json` lists recordings of the release.";
   if (state === "admitted") return "All four dimensions pass.";
   return "A dimension other than conformance fails.";

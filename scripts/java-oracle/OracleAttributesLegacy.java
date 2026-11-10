@@ -5,13 +5,17 @@ import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.RangedAttribute;
 
 /**
- * OracleAttributes for 1.14 and 1.15, which have no attribute registry: SharedMonsterAttributes holds them as static
+ * OracleAttributes from 1.8.8 to 1.15, which have no attribute registry: SharedMonsterAttributes holds them as static
  * fields, each named by its own getName. Same line: `release key default min max playerBase zombieBase`. The bases come
  * from each entity's own registerAttributes, run on an instance allocated without its constructor, whose attribute map
  * is built on first use: the instance has no level, and nothing else of it is touched.
  *
  * javac -cp JARS -d out scripts/java-oracle/OracleAttributesLegacy.java
  * java -cp "out;JARS" OracleAttributesLegacy RELEASE >> test/fixtures/attributes.tsv
+ *
+ * Before 1.14 the jar carries recorder/mod/mappings' names (classpath.cjs). A class the mapping left in another package
+ * fails the verifier on a protected read, though the bytecode is Mojang's: up to 1.12.2 add
+ * -XX:+UnlockDiagnosticVMOptions -XX:-BytecodeVerificationRemote.
  */
 public final class OracleAttributesLegacy {
     private static Object allocated(String name) throws ReflectiveOperationException {

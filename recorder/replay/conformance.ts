@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { idMatcher } from '../scenarios/build.ts';
-import { inRange } from '../scenarios/dsl/names.ts';
+import { inRange, versionAtLeast } from '../scenarios/dsl/names.ts';
 import { NATIVE_SIM, PLAYER_FIELDS } from '../schema/fields.ts';
 import type { Recording } from '../schema/recording.ts';
 import type { ReplayResult } from './engine.ts';
@@ -59,7 +59,7 @@ export function pinCorpus(root: string, version: string, exclusions: readonly De
     for (const file of files) {
         try {
             const recording = loadRecording(file.file);
-            problems.push(...validateRecording(recording, version, file.id).map(p => `${file.id}: ${p}`));
+            problems.push(...validateRecording(recording, version, file.id, true).map(p => `${file.id}: ${p}`));
             protocol ??= recording.header.protocol;
             entries.push(entryOf(file, recording, readFileSync(file.file)));
         } catch (e) {
@@ -72,6 +72,36 @@ export function pinCorpus(root: string, version: string, exclusions: readonly De
 
 export function readManifest(file: string): CorpusManifest | undefined {
     return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) as CorpusManifest : undefined;
+}
+
+/**
+ * What is wrong with a manifest by itself: its schema, its release, a recording pinned twice or with no digest, an exclusion
+ * of nothing or with no reason, and, given the scenarios compiled for the release (id to hash), an entry recorded from a
+ * scenario that has changed since or that the release no longer has. A compiled scenario the manifest does not pin is the
+ * gate's to block (decide), not a fault of the manifest.
+ */
+export function manifestProblems(manifest: CorpusManifest, version: string, compiled?: ReadonlyMap<string, string>): string[] {
+    const problems: string[] = [];
+    if (manifest.schema !== 1) problems.push(`unknown manifest schema ${String(manifest.schema)}`);
+    if (manifest.version !== version) problems.push(`the manifest is of ${manifest.version}, not ${version}`);
+    if (!Number.isInteger(manifest.protocol)) problems.push('no protocol');
+    if (manifest.entries.length === 0) problems.push('the manifest pins nothing');
+    const seen = new Set<string>();
+    for (const entry of manifest.entries) {
+        if (seen.has(entry.id)) problems.push(`${entry.id} is pinned twice`);
+        seen.add(entry.id);
+        if (!/^[0-9a-f]{64}$/.test(entry.sha256)) problems.push(`${entry.id}: no sha256`);
+        if (!Number.isInteger(entry.rows) || entry.rows <= 0) problems.push(`${entry.id}: ${entry.rows} rows`);
+        if (!compiled) continue;
+        const hash = compiled.get(entry.id);
+        if (hash === undefined) problems.push(`${entry.id}: no compiled scenario of ${version} has this id`);
+        else if (hash !== entry.scenario) problems.push(`${entry.id}: recorded from another version of its scenario`);
+    }
+    for (const { id, reason } of manifest.exclusions) {
+        if (!seen.has(id)) problems.push(`${id} is excluded, and not in the manifest`);
+        if (reason.trim() === '') problems.push(`${id} is excluded with no reason`);
+    }
+    return problems;
 }
 
 /** The entries of a selection, from the manifest and not from what lies on disk: a selected case that is gone stays selected. */
@@ -140,6 +170,16 @@ export const OMITTED_FIELDS: Readonly<Record<string, string>> = {
     look: 'the engine takes the look as it is given: before 1.12 it follows the head, which a mount turns during the tick (engine.ts)',
 };
 
+/**
+ * Fields an output of the tick only from a release: before it the release's tick has no such output to compare, which no
+ * selection of cases changes. movingSlowly: LocalPlayer.isMovingSlowly is new in 1.14 (1.13.2 LocalPlayer.java:213 reads
+ * isSneaking), and in 1.14 and 1.15 the tick moves it after the input read it (1.15.2 LocalPlayer.java:598, 631), so the
+ * replay gives it back as the input it started from (engine.ts); from 1.16 it is compared on every tick.
+ */
+export const OUTPUT_FROM: Readonly<Record<string, string>> = {
+    movingSlowly: '1.16',
+};
+
 /** The recorded fields the native layer must have compared on `version`: every one the registry maps that the release has. */
 export function requiredFields(version: string): string[] {
     const specs = PLAYER_FIELDS as Record<string, { versions?: string }>;
@@ -147,6 +187,7 @@ export function requiredFields(version: string): string[] {
         if (!('from' in map) || typeof map.from !== 'string' || ('input' in map && map.input)) return [];
         const field = map.from;
         if (field in OMITTED_FIELDS || (specs[field] && !inRange(version, specs[field].versions))) return [];
+        if (OUTPUT_FROM[field] && !versionAtLeast(version, OUTPUT_FROM[field]!)) return [];
         return [field];
     });
 }

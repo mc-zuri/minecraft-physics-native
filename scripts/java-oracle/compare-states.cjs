@@ -9,8 +9,7 @@ const path = require('node:path');
 
 const [release, statesFile, distinctFile] = process.argv.slice(2);
 const { BlockMapper, releaseCheck } = require(path.resolve(__dirname, '../../dist/mineflayer/blocks.js'));
-const { aliases } = require(path.resolve(__dirname, '../../src/mineflayer/data-aliases.json'));
-const registry = require('prismarine-registry')(aliases[release]?.data ?? release);
+const registry = require('prismarine-registry')(release);
 const Block = require('prismarine-block')(registry);
 // BlockMapper's answers to FlowingFluid and the camera, from the same state
 const native = require(path.resolve(__dirname, '../../native/artifacts/native.js'));

@@ -12,7 +12,7 @@ const adapter = require('..');
 
 const binding = adapter.LoadNativePhysics();
 
-for (const page of ['synchronization.md', 'state-contract.md']) {
+for (const page of ['synchronization.md', 'state-contract.md', 'field-catalogue.md']) {
     it(`runs the examples of docs/${page}`, () => {
         const text = fs.readFileSync(path.join(__dirname, '..', 'docs', page), 'utf8').replace(/\r\n/g, '\n');
         const blocks = [...text.matchAll(/^```js doctest\n([\s\S]*?)^```$/gm)].map(match => match[1]);

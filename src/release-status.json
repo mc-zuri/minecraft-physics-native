@@ -4,10 +4,8 @@
   "releases": {
     "1.8.8": {
       "source": {
-        "status": "alias",
-        "reasons": [
-          "served from 1.8.9"
-        ]
+        "status": "exact",
+        "reasons": []
       },
       "data": {
         "status": "complete",
@@ -21,10 +19,8 @@
     },
     "1.9.4": {
       "source": {
-        "status": "blocked",
-        "reasons": [
-          "the decompiled tree is pinned by hash; its decompiler and yarn build are not recorded, so it cannot be reproduced"
-        ]
+        "status": "exact",
+        "reasons": []
       },
       "data": {
         "status": "complete",
@@ -38,10 +34,8 @@
     },
     "1.10.2": {
       "source": {
-        "status": "blocked",
-        "reasons": [
-          "the decompiled tree is pinned by hash; its decompiler and yarn build are not recorded, so it cannot be reproduced"
-        ]
+        "status": "exact",
+        "reasons": []
       },
       "data": {
         "status": "complete",
@@ -55,10 +49,8 @@
     },
     "1.11.2": {
       "source": {
-        "status": "blocked",
-        "reasons": [
-          "the decompiled tree is pinned by hash; its decompiler and yarn build are not recorded, so it cannot be reproduced"
-        ]
+        "status": "exact",
+        "reasons": []
       },
       "data": {
         "status": "complete",
@@ -72,10 +64,8 @@
     },
     "1.12.2": {
       "source": {
-        "status": "blocked",
-        "reasons": [
-          "the decompiled tree is pinned by hash; its decompiler and yarn build are not recorded, so it cannot be reproduced"
-        ]
+        "status": "exact",
+        "reasons": []
       },
       "data": {
         "status": "complete",
@@ -89,10 +79,8 @@
     },
     "1.13.2": {
       "source": {
-        "status": "blocked",
-        "reasons": [
-          "the decompiled tree is pinned by hash; its decompiler and yarn build are not recorded, so it cannot be reproduced"
-        ]
+        "status": "exact",
+        "reasons": []
       },
       "data": {
         "status": "complete",

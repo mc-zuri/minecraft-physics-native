@@ -220,6 +220,16 @@ describe('NativeMinecartPhysics side effects', () => {
         assert.throws(() => physics.simulate(cart({ position: { x: 0.5, y: -70, z: 0.5 } }), level, { improvements: false }), /minY/);
     });
 
+    it('refuses an inventory on a cart whose tick would drop it', () => {
+        // (only MinecartHopper takes and holds items in a tick; a chest cart's slots reach it as comparatorSignal)
+        const { registry, world: level } = world();
+        const physics = new adapter.NativeMinecartPhysics(registry);
+        for (const fields of [{ variant: 'minecart' }, { variant: 'chest_minecart', comparatorSignal: 0 }]) {
+            assert.throws(() => physics.simulate(cart({ ...fields, inventory: [] }), level, { improvements: false }), /only a hopper_minecart/, fields.variant);
+        }
+        assert.doesNotThrow(() => physics.simulate(cart({ variant: 'hopper_minecart', comparatorSignal: 0, inventory: [] }), level, { improvements: false }));
+    });
+
     it('gives the blast of a lit cart back with its random', () => {
         const { registry, world: level } = world();
         const physics = new adapter.NativeMinecartPhysics(registry);

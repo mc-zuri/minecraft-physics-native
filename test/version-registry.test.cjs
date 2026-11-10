@@ -141,11 +141,12 @@ describe('the release registry', () => {
                 for (const candidate of candidates) assert.match(candidate.sha256, /^[0-9a-f]{64}$/);
             }
         }
-        // the releases before the mc-decomp trees come from their Yarn-named decompiles
-        for (const { version, source } of LEGACY_RELEASES) {
+        // the legacy releases come from their own jars, decompiled under the recorder's Mojang names
+        for (const { version } of LEGACY_RELEASES) {
             const entity = audit.releases[version].files['Entity.java'];
-            assert.equal(entity.mapping, 'yarn', version);
-            assert.equal(entity.sourceRelease ?? version, source, version);
+            assert.equal(entity.mapping, 'mojang', version);
+            assert.equal(entity.origin, 'legacy-jar', version);
+            assert.equal(entity.sourceRelease, undefined, version);
         }
     });
 
@@ -171,9 +172,8 @@ describe('the release registry', () => {
 
     it('finds the Entity, LivingEntity and Player sources of every 1.15 - 1.19 release at hand', () => {
         const modern = versions.filter(version => compareReleases(version, '1.15') >= 0 && compareReleases(version, '1.20') < 0);
-        const decompiled = process.env.MC_DECOMPILED_ROOT ?? path.join(root, '..', '..', 'pr', 'mc-decompiled');
+        const { modernTree } = require('../scripts/source-roots.cjs');
         const extracted = process.env.MC_EXTRACTED_DATA_REPO ?? 'D:/projects/mc-zuri/mc-data/extracted_minecraft_data';
-        const yarn = ['net/minecraft/entity/Entity.java', 'net/minecraft/entity/LivingEntity.java', 'net/minecraft/entity/player/PlayerEntity.java'];
         const mojangPaths = ['net/minecraft/world/entity/Entity.java', 'net/minecraft/world/entity/LivingEntity.java', 'net/minecraft/world/entity/player/Player.java'];
         for (const version of modern) {
             // the mc-decomp tree the source manifest recorded
@@ -181,11 +181,9 @@ describe('the release registry', () => {
             for (const file of mojangPaths) {
                 assert.ok(recorded.some(entry => entry.path === file && entry.present && entry.required), `${version} ${file}`);
             }
-            const local = path.join(decompiled, version);
-            if (fs.existsSync(local)) {
-                const paths = fs.existsSync(path.join(local, mojangPaths[0])) ? mojangPaths : yarn;
-                for (const file of paths) assert.ok(fs.existsSync(path.join(local, file)), `${local} ${file}`);
-            }
+            // the exact tree materialize-sources makes
+            const local = modernTree(version);
+            if (local) for (const file of mojangPaths) assert.ok(fs.existsSync(path.join(local, file)), `${local} ${file}`);
             if (fs.existsSync(extracted)) {
                 let tree = null;
                 try {

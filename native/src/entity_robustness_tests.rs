@@ -414,6 +414,7 @@ fn projectile(kind: &str) -> NativeProjectileState {
         bobbing: None,
         bob_random: None,
         no_physics: None,
+        stuck_speed_multiplier: None,
     }
 }
 
@@ -558,6 +559,7 @@ fn hits() -> NativeProjectileHitState {
         stop_fishing: None,
         bullet_delta: None,
         chunk_unloaded: None,
+        outside_border: None,
         peaceful: None,
         pearl_outlives_owner: None,
     }
@@ -573,6 +575,7 @@ fn owner() -> NativeProjectileOwner {
         player: true,
         spectator: None,
         removed: None,
+        won_game: None,
     }
 }
 
@@ -829,10 +832,10 @@ fn the_server_tick_of_the_other_projectiles_of_extreme_values_runs_or_fails_and_
 #[test]
 fn the_probes_reach_the_paths_they_are_for() {
     let world = scene();
-    let rules = NativeMinecartRules { improvements: false, max_minecart_speed: None, min_y: None, tnt_explodes: None, nether_exit: None };
+    let rules = NativeMinecartRules { improvements: false, max_minecart_speed: None, min_y: None, tnt_explodes: None, nether_exit: None, spawner_blocks_enabled: None, level_random: None };
     let on_rail = simulate_versioned_minecart_tick("1.21.1".to_owned(), &world, cart("minecart"), rules).expect("it runs");
     assert_eq!(on_rail.state.on_rails, Some(true));
-    let improved = NativeMinecartRules { improvements: true, max_minecart_speed: Some(8), min_y: None, tnt_explodes: None, nether_exit: None };
+    let improved = NativeMinecartRules { improvements: true, max_minecart_speed: Some(8), min_y: None, tnt_explodes: None, nether_exit: None, spawner_blocks_enabled: None, level_random: None };
     let ticked = simulate_versioned_minecart_tick("26.3".to_owned(), &world, cart("minecart"), improved).expect("it runs");
     assert!(!ticked.steps.is_empty(), "the improved path walked its track");
     let mut level = scene_world();
@@ -852,6 +855,14 @@ fn the_probes_reach_the_paths_they_are_for() {
     assert_ne!(drifted.state.position.y, 2.5);
     let swam = simulate_versioned_mob_travel("26.3".to_owned(), &world, mob("cod")).expect("it runs");
     assert_ne!(swam.position.z, 12.5);
+    // a NoAI mob's travel does nothing (1.16.5 LivingEntity.java:1959-1960)
+    for release in ["1.8.8", "1.16.5", "26.3"] {
+        let still = simulate_versioned_mob_travel(release.to_owned(), &world, NativeMobTravelState { effective_ai: Some(false), ..mob("cow") }).expect(release);
+        assert_eq!((still.position.z, still.velocity.y), (mob("cow").position.z, mob("cow").velocity.y), "{release}");
+    }
+    // (1.9.4 and 1.10.2: canPassengerSteer is true on the server for a mob nobody rides, so it travels)
+    let moved = simulate_versioned_mob_travel("1.10.2".to_owned(), &world, NativeMobTravelState { effective_ai: Some(false), ..mob("cow") }).expect("1.10.2");
+    assert_ne!(moved.velocity.y, mob("cow").velocity.y);
 }
 
 /// The hook before 1.11 is the server's call's alone, and every other kind of the call has its first release.
@@ -862,7 +873,7 @@ fn a_hook_before_1_11_runs_on_the_server_and_a_late_kind_in_no_call_of_an_earlie
         let reason = refusal(simulate_versioned_projectile_ticks(release.to_owned(), &world, vec![projectile("fishing_bobber")], 1));
         assert!(reason.contains("simulateVersionedProjectileHitTick"), "{reason}");
         let flown = simulate_versioned_projectile_hit_tick(release.to_owned(), &world, projectile("fishing_bobber"), Some(hits()), Vec::new(), Some(owner())).expect(release);
-        // EntityFishHook.onUpdate's own fall: 0.04F then 0.92F (1.8.9 FishingBobberEntity.java tick)
+        // EntityFishHook.onUpdate's own fall: 0.04F then 0.92F (1.8.8 FishingHook.java tick)
         assert_eq!(flown.projectile.velocity.y, (-0.5 - f64::from(0.04_f32)) * f64::from(0.92_f32), "{release}");
     }
     simulate_versioned_projectile_ticks("1.11.2".to_owned(), &world, vec![projectile("fishing_bobber")], 1).expect("the client's hook");
@@ -907,6 +918,7 @@ fn moving(kind: &str, server: bool) -> NativeMovingEntityState {
         age: None,
         pickup_delay: None,
         item_empty: None,
+        fire_immune: None,
         following_player: None,
         following_time: None,
         orb_ticks: None,
@@ -1027,6 +1039,9 @@ fn mob(kind: &str) -> NativeMobTravelState {
         dolphins_grace: None,
         gravity: None,
         water_movement_efficiency: None,
+        air_drag_modifier: None,
+        discard_friction: None,
+        effective_ai: None,
     }
 }
 
@@ -1102,23 +1117,31 @@ fn cart(variant: &str) -> NativeMinecartState {
         push: furnace.then(|| vec3(1.0, 0.0, 0.0)),
         comparator_signal: holds.then_some(3),
         has_loot_table: None,
+        custom_name: None,
         tick_count: None,
         hurt_time: None,
         hurt_dir: None,
         damage: None,
         invulnerable: None,
         fuse: None,
+        creative_ignition: None,
         explosion_power_base: None,
         explosion_speed_factor: None,
         random_seed: (variant == "tnt_minecart").then_some(42.0),
         enabled: None,
         inventory: (variant == "hopper_minecart").then(Vec::new),
         last_activated: None,
+        spawn_delay: None,
+        min_spawn_delay: None,
+        max_spawn_delay: None,
+        required_player_range: None,
         portal: None,
+        portal_entry: None,
         inside_portal: None,
         portal_time: None,
         portal_cooldown: None,
         removed: None,
+        team: None,
     }
 }
 
@@ -1135,20 +1158,27 @@ fn other() -> NativeMinecartOther {
         passenger: Some(false),
         has_passengers: Some(false),
         rides: None,
+        rides_other: None,
         boat: None,
         tick_position: None,
         tick_bounding_box: None,
         ticks_after: None,
         gets_off: None,
+        eye_height: None,
+        armor_stand: None,
+        bat: None,
+        team: None,
+        boarding_cooldown: None,
+        removed: None,
     }
 }
 
 fn rule_sets(release: &str) -> Vec<NativeMinecartRules> {
     let parsed = crate::version::MinecraftVersion::parse(release).expect("a release");
-    let mut rules = vec![NativeMinecartRules { improvements: false, max_minecart_speed: None, min_y: None, tnt_explodes: None, nether_exit: None }];
+    let mut rules = vec![NativeMinecartRules { improvements: false, max_minecart_speed: None, min_y: None, tnt_explodes: None, nether_exit: None, spawner_blocks_enabled: None, level_random: None }];
     if parsed.at_least(1, 21, 2) {
-        rules.push(NativeMinecartRules { improvements: true, max_minecart_speed: Some(8), min_y: None, tnt_explodes: None, nether_exit: None });
-        rules.push(NativeMinecartRules { improvements: true, max_minecart_speed: Some(1000), min_y: None, tnt_explodes: None, nether_exit: None });
+        rules.push(NativeMinecartRules { improvements: true, max_minecart_speed: Some(8), min_y: None, tnt_explodes: None, nether_exit: None, spawner_blocks_enabled: None, level_random: None });
+        rules.push(NativeMinecartRules { improvements: true, max_minecart_speed: Some(1000), min_y: None, tnt_explodes: None, nether_exit: None, spawner_blocks_enabled: None, level_random: None });
     }
     rules
 }
@@ -1212,7 +1242,7 @@ fn a_cart_of_extreme_values_runs_or_fails_and_never_panics_or_hangs() {
                 probe.case(format!("{label} scene {}", cases[index].0), move || {
                     let mut near = other();
                     (cases[index].1)(&mut near);
-                    simulate_versioned_minecart_scene(release.to_owned(), &world, vec![cart("minecart"), cart("chest_minecart")], vec![near], rules, None, None).map(|_| ())
+                    simulate_versioned_minecart_scene(release.to_owned(), &world, vec![cart("minecart"), cart("chest_minecart")], vec![near], rules, None, None, None).map(|_| ())
                 });
             }
         }
@@ -1264,7 +1294,7 @@ fn what_an_entity_cannot_walk_is_refused_with_what_is_wrong() {
             refusal(simulate_versioned_horse_ticks(version(), &mut level.borrow_mut(), vec![state], 1))
         };
         let reason = mob(&|state| state.velocity = huge);
-        // (1.8 moves a mob only off the client: 1.8.9 LivingEntity.java:1133, and tick_ridden_mob)
+        // (1.8 moves a mob only off the client: 1.8.8 LivingEntity.java:1134, and tick_ridden_mob)
         assert!(release == "1.8.8" || reason.contains("the tick's move"), "{release} {reason}");
         assert!(mob(&|state| state.position = far).contains("position.x"), "{release}");
         assert!(mob(&|state| state.lerp_position = Some(far)).contains("position.x"), "{release}");
@@ -1299,7 +1329,7 @@ fn what_an_entity_cannot_walk_is_refused_with_what_is_wrong() {
         let tick = |change: &dyn Fn(&mut NativeMinecartState)| {
             let mut state = cart("minecart");
             change(&mut state);
-            let rules = NativeMinecartRules { improvements: false, max_minecart_speed: None, min_y: None, tnt_explodes: None, nether_exit: None };
+            let rules = NativeMinecartRules { improvements: false, max_minecart_speed: None, min_y: None, tnt_explodes: None, nether_exit: None, spawner_blocks_enabled: None, level_random: None };
             refusal(simulate_versioned_minecart_tick(version(), &world, state, rules))
         };
         assert!(tick(&|state| state.position = far).contains("position.x"), "{release}");

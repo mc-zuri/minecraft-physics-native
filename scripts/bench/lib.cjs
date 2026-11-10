@@ -11,7 +11,6 @@ const { dirname, join } = require('node:path');
 
 const ROOT = join(__dirname, '..', '..');
 const physics = require(join(ROOT, 'dist'));
-const { dataReleaseOf } = require(join(ROOT, 'dist/mineflayer/registry-release'));
 const { compareReleases } = require(join(ROOT, 'dist/mineflayer/blocks'));
 const registryOf = require('prismarine-registry');
 
@@ -154,9 +153,9 @@ function fingerprint(values) {
 const registries = new Map();
 function registryFor(version) {
     if (!registries.has(version)) {
-        const found = registryOf(dataReleaseOf(version) ?? version);
+        const found = registryOf(version);
         // minecraft-data answers a release it lacks with the nearest table, under that table's name but this one's comparison
-        registries.set(version, found.version.minecraftVersion === (dataReleaseOf(version) ?? version) ? found : registryOf(found.version.minecraftVersion));
+        registries.set(version, found.version.minecraftVersion === version ? found : registryOf(found.version.minecraftVersion));
     }
     return registries.get(version);
 }
@@ -221,13 +220,9 @@ function sceneWorld(version, scene, region = REGION) {
     return { registry, source, sync, world: sync.world };
 }
 
-/**
- * The release whose data builds a scene: its own, or the alias's. minecraft-data has no table of 26.1.1 and 26.1.2, whose
- * registries declare 26.1 and which the adapter refuses, so their scenes are 26.1's blocks and only the ticks are theirs.
- */
+/** The release whose data builds a scene: its own, or the nearest table minecraft-data has for a release it lacks. */
 function worldRelease(version) {
-    const declared = registryFor(version).version.minecraftVersion;
-    return declared === version || dataReleaseOf(version) === declared ? version : declared;
+    return registryFor(version).version.minecraftVersion;
 }
 
 /** A walking player at the scene's start: `offset` keeps a crowd apart or, at 0, in one place. */

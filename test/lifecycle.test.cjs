@@ -120,7 +120,7 @@ it('a new dimension is a new world: the old one refuses the state and setState s
     const overworld = floorWorld();
     const nether = floorWorld(32);
     const player = new native.NativePlayer('26.3', stander(), {});
-    const input = new Float64Array(29);
+    const input = new Float64Array(require('..').NATIVE_PLAYER_LAYOUT.inputLength);
     input[13] = 0.3;
     input[14] = 1.8;
     input[15] = 1.62;

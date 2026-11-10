@@ -247,6 +247,76 @@ describe('what a prediction leaves alone', () => {
         }
     });
 
+    it('hands the library\'s own clone callers cloneState once the engine has ticked the state', () => {
+        // EPhysicsCtx.clone and the library's simulators call state.clone(): what PlayerState.clone leaves out must survive it
+        const bot = botOf('1.21.11');
+        const physics = adapter.createNativePhysics(bot.registry);
+        const ctx = EPhysicsCtx.FROM_BOT(physics, bot);
+        ctx.state.control.forward = true;
+        ctx.state.pos.y += 6;
+        ctx.state.onGround = false;
+        ticks(physics, ctx, bot.world, 12);
+        const copy = ctx.clone();
+        assert.equal(copy.state.fallDistance, ctx.state.fallDistance);
+        assert.equal(copy.state.prevForwardImpulse, ctx.state.prevForwardImpulse);
+        // the clone of a clone too, and a key of the state's own never shows the method
+        const second = copy.clone();
+        assert.ok(!Object.keys(second.state).includes('clone'));
+        for (let tick = 0; tick < 30; tick += 1) {
+            physics.simulate(ctx, bot.world);
+            physics.simulate(copy, bot.world);
+            physics.simulate(second, bot.world);
+            assert.deepEqual(copy.state.pos.toArray(), ctx.state.pos.toArray(), `tick ${tick}`);
+            assert.deepEqual(second.state.vel.toArray(), ctx.state.vel.toArray(), `tick ${tick}`);
+            assert.equal(second.state.fallDamage, ctx.state.fallDamage, `tick ${tick}`);
+        }
+    });
+
+    it('copies a state the engine has never ticked as cloneState does, through the library\'s own clone (B104)', () => {
+        // PlayerState.clone builds a new state from the bot and copies its own fields: what a caller set on a fresh state
+        // before its first tick (the fall, the input's history, attributes) went missing, and the copy went its own way
+        const bot = botOf('1.21.11');
+        const physics = adapter.createNativePhysics(bot.registry);
+        const ctx = EPhysicsCtx.FROM_BOT(physics, bot);
+        ctx.state.pos.y += 6;
+        ctx.state.onGround = false;
+        ctx.state.control.forward = true;
+        ctx.state.fallDistance = 3.5;
+        ctx.state.prevForwardImpulse = 0.98;
+        ctx.state.sprintTriggerTime = 4;
+        const key = physics.attributeKey('movementSpeed');
+        ctx.state.attributes = { [key]: { value: 0.1, modifiers: [{ id: 'minecraft:test', amount: 0.5, operation: 0 }] } };
+        const copy = ctx.clone();
+        assert.ok(copy.state instanceof PlayerState);
+        assert.equal(copy.state.fallDistance, 3.5);
+        assert.equal(copy.state.prevForwardImpulse, 0.98);
+        assert.equal(copy.state.sprintTriggerTime, 4);
+        copy.state.attributes[key].modifiers[0].amount = 9;
+        assert.equal(ctx.state.attributes[key].modifiers[0].amount, 0.5, 'the fork shares no attribute with its state');
+        copy.state.attributes[key].modifiers[0].amount = 0.5;
+        assert.ok(!Object.keys(copy.state).includes('clone'));
+        for (let tick = 0; tick < 20; tick += 1) {
+            physics.simulate(ctx, bot.world);
+            physics.simulate(copy, bot.world);
+            assert.deepEqual(copy.state.pos.toArray(), ctx.state.pos.toArray(), `tick ${tick}`);
+            assert.deepEqual(copy.state.vel.toArray(), ctx.state.vel.toArray(), `tick ${tick}`);
+            assert.equal(copy.state.fallDistance, ctx.state.fallDistance, `tick ${tick}`);
+        }
+    });
+
+    it('leaves the library\'s clone to a state of another engine', () => {
+        const bot = botOf('1.21.11');
+        const physics = adapter.createNativePhysics(bot.registry);
+        const ctx = EPhysicsCtx.FROM_BOT(physics, bot);
+        ctx.state.fallDistance = 2;
+        // the same class with an engine that is not this package's: its clone is the library's, which has no fall to copy
+        const other = { data: physics.data, supportFeature: name => physics.supportFeature(name), getEffectLevel: () => 0, getEnchantmentLevel: () => 0 };
+        ctx.state.ctx = other;
+        const copy = ctx.state.clone();
+        assert.equal(copy.ctx, other);
+        assert.equal(copy.fallDistance, undefined);
+    });
+
     it('keeps a fork apart from its state through nested attributes, effects and controls', () => {
         const bot = botOf('1.21.11');
         const physics = adapter.createNativePhysics(bot.registry);

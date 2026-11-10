@@ -67,6 +67,11 @@ export interface NearbyEntity {
     sameVehicle?: boolean;
     baby?: boolean;
     staysStill?: boolean;
+    /**
+     * LivingEntity.isAlive: false for a mob whose synced health is 0, in the ticks of its death before it is removed.
+     * Absent: alive. A dying shulker or happy ghast is no collider, and from 1.11 no living entity pushes while dying.
+     */
+    alive?: boolean;
 }
 
 /** The box vanilla keeps between ticks before 1.17, with the position and size it was left with. */
@@ -78,7 +83,6 @@ export interface KeptBoundingBox {
 }
 
 export interface Effect {
-    id: number;
     amplifier: number;
 }
 
@@ -123,7 +127,7 @@ export interface PlayerState {
      * the boots it wears (bot.inventory's slot for "feet") and its entity's synced data by index (bot.entity.metadata).
      */
     bot?: PistonBot & {
-        entity?: { metadata?: unknown[]; username?: string; uuid?: string; vehicle?: unknown };
+        entity?: { metadata?: unknown[]; username?: string; uuid?: string; vehicle?: unknown; passengers?: unknown[] };
         /** mineflayer's vehicle plugin: the entity the bot rides, null when it rides none. */
         vehicle?: unknown;
         /** The bot's player entry: its UUID (a tamed animal's owner). */
@@ -208,8 +212,6 @@ export interface PlayerState {
     nearbyEntities: NearbyEntity[];
     /** The entities the player pushed back this tick, and how far (Entity.push: the other way). */
     pushedEntities?: { id: number; x: number; z: number }[];
-    pistonDeltas: number[];
-    pistonDeltasTick: number;
     jumpTicks: number;
     sprintTriggerTime: number;
     /** 1.8's EntityPlayerSP.sprintingTicksLeft: 600 when a sprint starts, which ends it at 0. */
@@ -227,6 +229,9 @@ export interface PlayerState {
     yaw: number;
     pitch: number;
     yawDegrees?: number;
+    /** LivingEntity.yHeadRot in degrees as the last aiStep left it (the yaw then), which a 1.11 rocket that ticks before the
+     * player boosts along; the engine remembers the last tick's yaw when not given. */
+    headYawDegrees?: number;
     control: Controls;
     prevControl: Controls;
     heading: { forward: number; strafe: number };
@@ -247,23 +252,27 @@ export interface PlayerState {
     /** Depth Strider, Swift Sneak and Soul Speed where no bot inventory says: the bot's worn armor decides when it has one. */
     depthStrider: number;
     swiftSneak: number;
-    /** The Riptide of the item in use, when the caller knows it; else the adapter reads the item in use on the bot. */
+    /** The Riptide of the item in use, when the caller knows it: what the adapter reads of the item in use on the bot goes first. */
     riptide?: number;
-    /** The Riptide of the item in use while it is, kept for its release; written by the adapter. */
+    /** The Riptide of the item in use while it is, kept for its release; written by the adapter. Undefined with no use seen. */
     usedItemRiptide?: number;
     itemUseTicks: number;
     autoSpinAttackTicks: number;
     /**
      * A melee attack that landed since the last tick; the next tick takes it once (Player.attack's own recoil, not the
      * target's knockback). Set it only when the target's client side hurt returned true: on a client that is a remote player
-     * (1.8.9 OtherClientPlayerEntity.java:31, 1.20.4 :33, 26.3 RemotePlayer.java:31), never a mob (LivingEntity.damage is
-     * false on a client, 1.20.4 LivingEntity.java:1096; Entity.hurtClient, 26.3 Entity.java:1990). A spear's stab is not this
+     * (1.8.8 RemotePlayer.java:30, 1.20.4 :33, 26.3 RemotePlayer.java:31), never a mob (LivingEntity.damage is
+     * false on a client, 1.20.4 LivingEntity.java:1104; Entity.hurtClient, 26.3 Entity.java:1990). A spear's stab is not this
      * event: a client has no recoil of its own from one, which is the server's (NativeSimulationState.stabHit).
      */
     attackHit?: {
         /** getAttackStrengthScale(0.5F) at the attack, read from 1.9. */
         strength: number;
-        /** The weapon's knockback without the sprint's: EnchantmentHelper.getKnockback, Player.getKnockback from 1.21; 0 when not given. */
+        /**
+         * The weapon's knockback without the sprint's, as the client reads it: EnchantmentHelper.getKnockback to 1.20.6; from 1.21
+         * the attack_knockback attribute alone, as the enchantment is only asked in a ServerLevel (1.21 LivingEntity.java:1441-1447,
+         * 26.3 :1531-1535). 0 when not given.
+         */
         knockback?: number;
     } | null;
     soulSpeed: number;
@@ -307,6 +316,12 @@ export interface PlayerState {
      * position with the vel the last ride tick left, and the dismount offset is the caller's.
      */
     passenger?: boolean;
+    /**
+     * Entity.isVehicle: the player carries passengers, which only a server seats on it (vanilla's /ride refuses a player
+     * as a vehicle). From 1.9 nothing pushes it. Absent: whether the bot's entity lists passengers (mineflayer's
+     * set_passengers).
+     */
+    isVehicle?: boolean;
     /** Explicit boat geometry/status at the fluid-query phase; the caller carries it when cloning a state. */
     boatVehicle?: NativeBoatVehicle | null;
     /** A passenger's vehicle can sprint and this client moves it (LocalPlayer.vehicleCanSprint: a camel, or a player); false when not given. */

@@ -146,6 +146,8 @@ for (const level of [1, 2]) {
   ))
 }
 
+const HORSE = { entity: 'horse', attributes: { movement_speed: 0.2, jump_strength: 0.6, step_height: 1.0 } }
+
 // Using an item: the input is scaled down while it is in use, and sprinting stops.
 const use = (n: string, id: string, extra: PhysrecSetup = {}): KaseSpec => ({ area: 'flat', at: [0.5, 0, 0.5], tier: 2, tags: ['item_use', n], setup: { equipment: { mainhand: item(id) }, food: 10, ...extra } })
 out.push(
@@ -181,6 +183,30 @@ out.push(
     ticks(10),
     press(JUMP, 1),
     until('onGround', 40),
+    releaseAll(),
+    stopped(3),
+  ),
+  // a passenger's input is not slowed by the item it uses (26.3 LocalPlayer.java:695 isUsingItem() && !isPassenger(); 1.8.9
+  // ClientPlayerEntity.tickMovement isUsingItem() && !hasVehicle()): a horse goes on at the seat's speed
+  kase('q_eat_riding_horse', { ...use('eat', 'bread'), tier: 3, setup: { equipment: { mainhand: item('bread') }, food: 10, mount: { yaw: 0, ...HORSE } } },
+    hold(USE),
+    ticks(5),
+    press(F, 25),
+    releaseAll(),
+    stopped(3),
+  ),
+  kase('q_shield_riding_horse', { ...use('shield', 'shield'), tier: 3, setup: { equipment: { offhand: item('shield') }, mount: { yaw: 0, ...HORSE } } },
+    hold(USE),
+    press(F, 30),
+    releaseAll(),
+    stopped(3),
+  ),
+  // a use whose speed is zero (the use_effects component, 1.21.11: UseEffects.speedMultiplier, LocalPlayer.itemUseSpeedMultiplier)
+  kase('q_eat_speed_zero', { ...use('eat', 'bread'), since: '1.21.11', setup: { equipment: { mainhand: item('bread') }, food: 10,
+    commands: [{ '1.21.11': 'item replace entity @p weapon.mainhand with minecraft:bread[minecraft:use_effects={speed_multiplier:0.0}]' }] } },
+    hold(USE),
+    ticks(5),
+    press(F, 25),
     releaseAll(),
     stopped(3),
   ),

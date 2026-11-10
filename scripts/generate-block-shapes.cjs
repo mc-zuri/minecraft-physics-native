@@ -18,7 +18,7 @@ const os = require("node:os");
 const path = require("node:path");
 const zlib = require("node:zlib");
 const { spawnSync } = require("node:child_process");
-const { classpath } = require("./java-oracle/classpath.cjs");
+const { completeClasspath: classpath } = require("./java-oracle/classpath.cjs");
 const { clientJarRoot } = require("./source-pins.cjs");
 const { openZip } = require("./zip-read.cjs");
 const { parseTagFile, TAG_FILE, mergePacks, resolveTags } = require("./generate-block-tags.cjs");
@@ -346,12 +346,12 @@ function javaOf(major) {
 
 /** The release's own answers, the oracle compiled once into `classes`. */
 function runOracle(version, classes, directory) {
-  const { jars, missing, client, remapped, java } = classpath(version);
+  const { jars, client, remapped, java } = classpath(version);
   const output = path.join(directory, `${version}.tsv`);
   const major = Math.max(java, 21);
   const run = spawnSync(javaOf(major), ["-Xmx1500m", "-cp", [classes, ...jars].join(path.delimiter), "ShapeDump", output, tagsFile(version, directory)], { encoding: "utf8", cwd: directory });
   if (run.status !== 0) throw new Error(`The oracle failed on ${version}: ${(run.stderr ?? run.error?.message ?? "").slice(0, 2000)}`);
-  return { text: fs.readFileSync(output, "utf8"), missing, client, remapped };
+  return { text: fs.readFileSync(output, "utf8"), client, remapped };
 }
 
 function jarAtHand(version) {
@@ -395,13 +395,13 @@ function generate({ only, dumps, cached }) {
         tables.set(version, JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(tableRoot, `${version}.json.gz`))).toString("utf8")));
         continue;
       }
-      const { text, missing = [] } = dumps ? { text: fs.readFileSync(path.join(dumps, `${version}.tsv`), "utf8") } : runOracle(version, classes, work);
+      const { text } = dumps ? { text: fs.readFileSync(path.join(dumps, `${version}.tsv`), "utf8") } : runOracle(version, classes, work);
       const table = buildTable(version, parseDump(text, version), jarIdentity(version));
       const differences = againstClient(table, runtime[version].blocks);
       if (differences.length > 0) throw new Error(`${version} against the client's dump: ${differences.join("; ")}`);
       tables.set(version, table);
       const { client, remappedSha256, tags } = table;
-      releases[version] = { status: "exact", client, ...(remappedSha256 ? { remappedSha256 } : {}), tags, sha256: sha256(JSON.stringify(table)), ...coverage(table), ...(missing.length ? { librariesMissing: missing } : {}) };
+      releases[version] = { status: "exact", client, ...(remappedSha256 ? { remappedSha256 } : {}), tags, sha256: sha256(JSON.stringify(table)), ...coverage(table) };
     }
     return { report: { schema: 1, generatedBy: "scripts/generate-block-shapes.cjs", releases }, tables };
   } finally {

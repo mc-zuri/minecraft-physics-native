@@ -253,6 +253,8 @@ export type ServerActionSpec =
     | { readonly op: 'command'; readonly command: string }
     | { readonly op: 'tabList'; readonly header: string; readonly footer: string }
     | { readonly op: 'blockDamage'; readonly pos: BlockPos; readonly stage: number }
+    /** The client forgets the chunk column of this block, which the server goes on tracking; the mod sends it again after the case. */
+    | { readonly op: 'forgetChunk'; readonly pos: BlockPos }
     | { readonly op: 'kick'; readonly reason: string }
     | { readonly op: 'resourcePack'; readonly url: string; readonly packHash: string; readonly required: boolean; readonly prompt?: string; readonly pop: boolean }
     | { readonly op: 'respawnPoint'; readonly pos: BlockPos }
@@ -262,6 +264,7 @@ export type ServerActionSpec =
 export const srv = {
     tabList: (header: string, footer: string): ServerActionSpec => ({ op: 'tabList', header, footer }),
     blockDamage: (pos: BlockPos, stage: number): ServerActionSpec => ({ op: 'blockDamage', pos, stage }),
+    forgetChunk: (pos: BlockPos): ServerActionSpec => ({ op: 'forgetChunk', pos }),
     kick: (reason: string): ServerActionSpec => ({ op: 'kick', reason }),
     resourcePack: (url: string, packHash: string, required: boolean, prompt: string | undefined, pop: boolean): ServerActionSpec =>
         ({ op: 'resourcePack', url, packHash, required, ...(prompt ? { prompt } : {}), pop }),

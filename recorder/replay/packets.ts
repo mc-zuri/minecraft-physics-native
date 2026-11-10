@@ -10,7 +10,6 @@ import { createRequire } from 'node:module';
 import { existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SAME_DATA } from '../scenarios/dsl/names.ts';
 
 interface Parsed { data: { name: string; params: Record<string, unknown> } }
 interface Codecs {
@@ -40,8 +39,7 @@ export function minecraftProtocol(): NonNullable<typeof mc> {
 }
 
 const codecs = new Map<string, Codecs>();
-export function codecsFor(release: string): Codecs {
-    const version = SAME_DATA[release] ?? release;
+export function codecsFor(version: string): Codecs {
     let c = codecs.get(version);
     if (!c) {
         const p = minecraftProtocol();

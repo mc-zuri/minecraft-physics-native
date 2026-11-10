@@ -1,15 +1,25 @@
-// Writes src/mineflayer/data-aliases.json: the releases whose registry data is exactly that of another release, for the
-// releases minecraft-data has no table of their own for (B302, B029). It declares 1.19.1 and 1.21.2 / 1.21.7 as their
-// major release, 1.21.10 as 1.21.9 and 26.1.1 / 26.1.2 as 26.1: the data release here is the one of the same protocol, whose tables are the
-// real ones. Each alias rests on two comparisons of the real jars:
+// Writes generated/data-aliases.json: the proof behind six exact releases of minecraft-data that read their tables, by
+// path, from the release of the same protocol (B302, B029): 1.19.1 from 1.19.2, 1.21.2 from 1.21.3, 1.21.7 from 1.21.8,
+// 1.21.10 from 1.21.9, 26.1.1 and 26.1.2 from 26.1. Each declares itself (its own version.json, protocol and name), so the
+// adapter serves it on its own registry like any other release; nothing here is an alias at run time. Each pair rests on
+// three comparisons of the real jars, and one of minecraft-data:
 //
 //   - the vanilla data generator of both servers (net.minecraft.data.Main --server --reports): every report (blocks and
 //     their states, items, registries, packets, commands) and every data file (tags, recipes, biomes, dimensions) by hash;
 //   - both clients, remapped to intermediary (26.x as it ships, unobfuscated), class by class. A class that differs or stands alone in one must have a
-//     reviewed reason here, or the run fails: what the generator cannot show, as a block's collision shape, is in a class.
+//     reviewed reason here, or the run fails: what the generator cannot show, as a block's collision shape, is in a class;
+//   - both clients' assets/minecraft/lang/en_us.json, which neither of the above holds: where they differ (1.19.1) the
+//     release must have its own language table, and in every case its table must be its own jar's;
+//   - minecraft-data's dataPaths entry of the release: every table that of the pair's release, but its version.json and
+//     a language that differs, with the jar's protocol.
 //
-// An alias says nothing of the physics, which each release has from its own sources. Pass --check to compare with the
+// It says nothing of the physics, which each release has from its own sources. Pass --check to compare with the
 // record instead of writing. MC_REPORTS_DIR keeps the generated trees between runs (they take half a minute a release).
+//
+// The jars are held to their pins before anything is compared (`jars` of each record): the client at the sha1 its release
+// pins (scripts/java-oracle/classpath.cjs clientPin), the server at the sha1 the release's pinned version json gives
+// (MC_VERSION_JSONS/<release>/version.json, default MC_CLIENT_JAR_ROOT, held to generated/mojang-releases.json), and the
+// intermediary remap, which unimined makes and Mojang does not publish, at the sha256 the committed record holds.
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -17,8 +27,10 @@ const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const { clientJarRoot } = require("./source-pins.cjs");
 const { openZip } = require("./zip-read.cjs");
+const { clientPin } = require("./java-oracle/classpath.cjs");
+const { versionJsonPins } = require("./fetch-jar-inputs.cjs");
 
-const outputPath = path.resolve(__dirname, "..", "src", "mineflayer", "data-aliases.json");
+const outputPath = path.resolve(__dirname, "..", "generated", "data-aliases.json");
 const JAVA = process.env.MC_JAVA ?? "C:/Program Files/Java/jdk-21.0.11/bin/java.exe";
 const JAVA_26 = process.env.MC_JAVA_26 ?? "C:/Program Files/Java/jdk-25.0.3/bin/java.exe";
 const unobfuscated = (release) => /^\d\d\./.test(release);
@@ -153,7 +165,7 @@ function vanillaData(release, root) {
   const out = path.join(dir, "gen");
   if (!fs.existsSync(out)) {
     fs.mkdirSync(dir, { recursive: true });
-    const server = path.join(clientJarRoot(), release, `minecraft-${release}-server.jar`);
+    const server = serverJar(release);
     execFileSync(unobfuscated(release) ? JAVA_26 : JAVA, ["-DbundlerMainClass=net.minecraft.data.Main", "-jar", server, "--server", "--reports", "--output", "gen"], { cwd: dir, stdio: "ignore" });
   }
   const files = {};
@@ -169,14 +181,40 @@ function vanillaData(release, root) {
   return files;
 }
 
+const digest = (file, algorithm) => crypto.createHash(algorithm).update(fs.readFileSync(file)).digest("hex");
+const clientJar = (release) => path.join(clientJarRoot(), release, `minecraft-${release}-client.jar`);
+const serverJar = (release) => path.join(clientJarRoot(), release, `minecraft-${release}-server.jar`);
+const intermediaryJar = (release) => path.join(clientJarRoot(), release, `intermediary-${release}-mojmap-${release}`,
+  `minecraft-${release}-fabric-merged+custom-no-environment+fixed-intermediary.jar`);
+
+/**
+ * The jars of a release, each at its pin: `{ client, server, intermediary? }`. `recorded` is the committed record's, which
+ * pins the intermediary remap; a jar off its pin throws, naming it, before it is read.
+ */
+function jarIdentity(release, recorded = null) {
+  const fail = (what, file, actual, pinned) => {
+    throw new Error(`${release}: the ${what} ${file} is ${actual}, pinned ${pinned ?? "nothing"}`);
+  };
+  const client = digest(clientJar(release), "sha1");
+  if (client !== clientPin(release)) fail("client", clientJar(release), client, clientPin(release));
+  const jsonFile = path.join(process.env.MC_VERSION_JSONS ?? clientJarRoot(), release, "version.json");
+  if (!fs.existsSync(jsonFile)) throw new Error(`${release}: no version json at ${jsonFile}: set MC_VERSION_JSONS`);
+  const jsonSha1 = digest(jsonFile, "sha1");
+  if (jsonSha1 !== versionJsonPins().get(release)) fail("version json", jsonFile, jsonSha1, versionJsonPins().get(release));
+  const serverPin = JSON.parse(fs.readFileSync(jsonFile, "utf8")).downloads.server.sha1;
+  const server = digest(serverJar(release), "sha1");
+  if (server !== serverPin) fail("server", serverJar(release), server, serverPin);
+  if (unobfuscated(release)) return { client, server };
+  const intermediary = digest(intermediaryJar(release), "sha256");
+  if (recorded?.intermediary && intermediary !== recorded.intermediary) fail("intermediary remap", intermediaryJar(release), intermediary, recorded.intermediary);
+  return { client, server, intermediary };
+}
+
 const treeHash = (files) => sha256(Object.keys(files).sort().map((name) => `${name} ${files[name]}\n`).join(""));
 
 /** The two clients, in intermediary or as 26.x ships them: which classes differ or stand alone. */
 function compareClients(requested, data) {
-  const open = (release) => openZip(unobfuscated(release)
-    ? path.join(clientJarRoot(), release, `minecraft-${release}-client.jar`)
-    : path.join(clientJarRoot(), release, `intermediary-${release}-mojmap-${release}`,
-      `minecraft-${release}-fabric-merged+custom-no-environment+fixed-intermediary.jar`));
+  const open = (release) => openZip(unobfuscated(release) ? clientJar(release) : intermediaryJar(release));
   const left = open(requested);
   const right = open(data);
   const classes = (zip) => new Set(zip.names.filter((name) => name.endsWith(".class")));
@@ -190,7 +228,39 @@ function compareClients(requested, data) {
   };
 }
 
-function aliasRecord(requested, alias, reportsRoot) {
+/** The release's en_us.json from its client jar. */
+const jarLanguage = (release) => JSON.parse(openZip(clientJar(release))
+  .read("assets/minecraft/lang/en_us.json").toString("utf8"));
+
+const differingKeys = (left, right) => [...new Set([...Object.keys(left), ...Object.keys(right)])].filter((key) => left[key] !== right[key]).sort();
+
+/** Both jars' languages, and minecraft-data's table of the release held to its own jar. */
+function compareLanguage(requested, data) {
+  const own = jarLanguage(requested);
+  const differing = differingKeys(own, jarLanguage(data));
+  const table = require("minecraft-data")(requested).language;
+  const wrong = differingKeys(own, table);
+  if (wrong.length > 0) throw new Error(`${requested}: minecraft-data's language is not the jar's: ${wrong.slice(0, 5).join(", ")}`);
+  return { keys: Object.keys(own).length, differing };
+}
+
+/** minecraft-data's entry of the release: its own declaration, every other table its pair's, but a language of its own where the jars differ. */
+function compareMinecraftData(requested, alias, languageDiffers) {
+  const paths = require("minecraft-data/minecraft-data/data/dataPaths.json").pc;
+  const own = paths[requested];
+  const pair = paths[alias.data];
+  const ownTables = Object.keys({ ...own, ...pair }).filter((table) => own[table] !== pair[table]).sort();
+  const expected = languageDiffers ? ["language", "version"] : ["version"];
+  if (JSON.stringify(ownTables) !== JSON.stringify(expected)) throw new Error(`${requested}: minecraft-data's own tables are ${ownTables.join(", ")}, not ${expected.join(", ")}`);
+  if (own.version !== `pc/${requested}` || (languageDiffers && own.language !== `pc/${requested}`)) throw new Error(`${requested}: minecraft-data's tables are not under its name`);
+  const { version } = require("minecraft-data")(requested);
+  if (version.minecraftVersion !== requested || version.version !== alias.protocol) throw new Error(`${requested}: minecraft-data declares ${version.minecraftVersion}, protocol ${version.version}`);
+  return ownTables;
+}
+
+function aliasRecord(requested, alias, reportsRoot, recorded = null) {
+  // every jar at its pin before any is read
+  const jars = { [requested]: jarIdentity(requested, recorded?.jars?.[requested]), [alias.data]: jarIdentity(alias.data, recorded?.jars?.[alias.data]) };
   const files = vanillaData(requested, reportsRoot);
   const dataFiles = vanillaData(alias.data, reportsRoot);
   if (Object.keys(files).length === 0) throw new Error(`${requested}: the data generator wrote nothing`);
@@ -201,19 +271,26 @@ function aliasRecord(requested, alias, reportsRoot) {
   if (unreviewed.length > 0) throw new Error(`${requested} -> ${alias.data}: no review of ${unreviewed.join(", ")}`);
   const stale = Object.keys(alias.reviewed).filter((name) => !clients.differing.includes(name));
   if (stale.length > 0) throw new Error(`${requested} -> ${alias.data}: a review of what does not differ: ${stale.join(", ")}`);
+  const language = compareLanguage(requested, alias.data);
+  const ownTables = compareMinecraftData(requested, alias, language.differing.length > 0);
   return {
     data: alias.data,
     protocol: alias.protocol,
+    jars,
     vanillaDataFiles: Object.keys(files).length,
     vanillaData: treeHash(files),
     classes: clients.classes,
     differing: Object.fromEntries(clients.differing.map((name) => [name, alias.reviewed[name]])),
+    languageKeys: language.keys,
+    languageDiffering: language.differing,
+    ownTables,
   };
 }
 
 function output(reportsRoot) {
+  const committed = fs.existsSync(outputPath) ? JSON.parse(fs.readFileSync(outputPath, "utf8")).aliases ?? {} : {};
   const aliases = {};
-  for (const [requested, alias] of Object.entries(ALIASES)) aliases[requested] = aliasRecord(requested, alias, reportsRoot);
+  for (const [requested, alias] of Object.entries(ALIASES)) aliases[requested] = aliasRecord(requested, alias, reportsRoot, committed[requested]);
   return `${JSON.stringify({ schema: 1, generatedBy: "scripts/generate-data-aliases.cjs", aliases }, null, 2)}\n`;
 }
 
@@ -222,13 +299,13 @@ if (require.main === module) {
   const text = output(reportsRoot);
   if (process.argv.includes("--check")) {
     if (fs.readFileSync(outputPath, "utf8").replace(/\r\n/g, "\n") !== text) {
-      console.error("src/mineflayer/data-aliases.json is stale: run scripts/generate-data-aliases.cjs");
+      console.error("generated/data-aliases.json is stale: run scripts/generate-data-aliases.cjs");
       process.exitCode = 1;
     }
   } else {
     fs.writeFileSync(outputPath, text);
   }
-  console.log(`${Object.keys(ALIASES).length} data aliases compared.`);
+  console.log(`${Object.keys(ALIASES).length} releases on their pair's tables compared.`);
 }
 
-module.exports = { ALIASES };
+module.exports = { ALIASES, jarIdentity };

@@ -29,6 +29,14 @@
       "status": "source-compared"
     },
     {
+      "file": "collision.rs",
+      "function": "collide_with_shapes",
+      "boundaries": [
+        "1.21.5"
+      ],
+      "status": "source-compared"
+    },
+    {
       "file": "dragon.rs",
       "function": "fly",
       "boundaries": [
@@ -45,7 +53,7 @@
         "1.17",
         "1.18.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "dragon.rs",
@@ -54,7 +62,7 @@
         "1.9",
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "dragon.rs",
@@ -65,7 +73,7 @@
         "1.15",
         "1.21.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "dragon.rs",
@@ -90,7 +98,7 @@
         "1.17",
         "1.19"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "entity.rs",
@@ -119,7 +127,16 @@
     },
     {
       "file": "entity.rs",
-      "function": "boost_by_attached_rockets",
+      "function": "boost_by_attached_rockets_before_player",
+      "boundaries": [
+        "1.11",
+        "1.12"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "entity.rs",
+      "function": "boost_along",
       "boundaries": [
         "1.11"
       ],
@@ -143,9 +160,28 @@
     },
     {
       "file": "legacy_fluid.rs",
+      "function": "sink_in_water",
+      "boundaries": [
+        "1.10"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "legacy_fluid.rs",
       "function": "cells",
       "boundaries": [
         "1.9"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "math.rs",
+      "function": "declared_java_major",
+      "boundaries": [
+        "1.17",
+        "1.18",
+        "1.20.5",
+        "26.1"
       ],
       "status": "source-compared"
     },
@@ -157,7 +193,7 @@
         "1.14",
         "26.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "math.rs",
@@ -189,7 +225,7 @@
       "boundaries": [
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "math.rs",
@@ -253,7 +289,16 @@
       "boundaries": [
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
+    },
+    {
+      "file": "math.rs",
+      "function": "abs_max_for",
+      "boundaries": [
+        "1.19.4",
+        "1.21.9"
+      ],
+      "status": "source-compared"
     },
     {
       "file": "minecart.rs",
@@ -265,9 +310,68 @@
     },
     {
       "file": "minecart.rs",
-      "function": "tick_minecarts_among",
+      "function": "pushable_by",
       "boundaries": [
         "1.9"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "shares_cart",
+      "boundaries": [
+        "1.9"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "can_board",
+      "boundaries": [
+        "1.9"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "leave_vehicle",
+      "boundaries": [
+        "1.9"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "tick_minecarts_with",
+      "boundaries": [
+        "1.9"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "tick_gateways",
+      "boundaries": [
+        "1.9",
+        "1.11",
+        "1.21"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "gateway_cooldown",
+      "boundaries": [
+        "1.11"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "gateway_takes",
+      "boundaries": [
+        "1.16",
+        "1.16.2"
       ],
       "status": "source-compared"
     },
@@ -291,7 +395,14 @@
       "file": "minecart.rs",
       "function": "living_push_cart",
       "boundaries": [
-        "1.9",
+        "1.9"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "cart_takes_push",
+      "boundaries": [
         "1.10"
       ],
       "status": "source-compared"
@@ -323,6 +434,14 @@
     },
     {
       "file": "minecart.rs",
+      "function": "tick_spawner",
+      "boundaries": [
+        "1.21.9"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
       "function": "halved_fall",
       "boundaries": [
         "1.21.5"
@@ -341,6 +460,39 @@
     {
       "file": "minecart.rs",
       "function": "handle_portal",
+      "boundaries": [
+        "1.21"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "dimension_changing_delay",
+      "boundaries": [
+        "1.21",
+        "1.21.2"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "go_through",
+      "boundaries": [
+        "1.21"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "through_gateway",
+      "boundaries": [
+        "1.21.2"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "enter_gateway",
       "boundaries": [
         "1.21"
       ],
@@ -376,8 +528,15 @@
       "file": "minecart.rs",
       "function": "burn_in_move",
       "boundaries": [
-        "1.13",
         "1.16"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "lava_hurt",
+      "boundaries": [
+        "1.17"
       ],
       "status": "source-compared"
     },
@@ -385,6 +544,7 @@
       "file": "minecart.rs",
       "function": "attack",
       "boundaries": [
+        "1.19.3",
         "1.20.3"
       ],
       "status": "source-compared"
@@ -407,6 +567,15 @@
     },
     {
       "file": "minecart.rs",
+      "function": "tick_tnt",
+      "boundaries": [
+        "1.21.5",
+        "1.21.9"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
       "function": "explode",
       "boundaries": [
         "1.21.5"
@@ -415,9 +584,65 @@
     },
     {
       "file": "minecart.rs",
+      "function": "blast",
+      "boundaries": [
+        "1.21.11",
+        "26.3"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "blast_items",
+      "boundaries": [
+        "1.21.2",
+        "1.21.6"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "rays",
+      "boundaries": [
+        "1.17"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "block_resistance",
+      "boundaries": [
+        "1.13"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "blast_hit",
+      "boundaries": [
+        "1.9",
+        "1.11",
+        "1.14",
+        "1.17",
+        "1.20.3",
+        "1.21.9"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "seen_percent",
+      "boundaries": [
+        "1.16",
+        "1.18.2"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
       "function": "suck_in_items",
       "boundaries": [
-        "1.20"
+        "1.19.4"
       ],
       "status": "source-compared"
     },
@@ -435,7 +660,8 @@
       "file": "minecart.rs",
       "function": "update_fluids",
       "boundaries": [
-        "1.16"
+        "1.16",
+        "1.16.2"
       ],
       "status": "source-compared"
     },
@@ -447,7 +673,7 @@
         "1.14",
         "1.17"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "minecart.rs",
@@ -465,7 +691,7 @@
         "1.14",
         "1.17"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "minecart.rs",
@@ -483,7 +709,7 @@
         "1.17",
         "1.21.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "minecart.rs",
@@ -537,14 +763,15 @@
         "1.18.2",
         "1.21.5"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "minecart.rs",
       "function": "land",
       "boundaries": [
         "1.12",
-        "1.21.5"
+        "1.21.5",
+        "1.21.9"
       ],
       "status": "source-compared"
     },
@@ -563,7 +790,7 @@
         "1.14",
         "26.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "minecart.rs",
@@ -574,7 +801,7 @@
         "1.14",
         "1.21.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "minecart.rs",
@@ -583,7 +810,7 @@
         "1.14",
         "1.17"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "minecart.rs",
@@ -600,13 +827,29 @@
       "boundaries": [
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "minecart.rs",
       "function": "yaw_radians",
       "boundaries": [
         "1.9"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "comparator_signal",
+      "boundaries": [
+        "1.20.5"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "minecart.rs",
+      "function": "blast_push",
+      "boundaries": [
+        "1.21.11"
       ],
       "status": "source-compared"
     },
@@ -637,12 +880,20 @@
       "status": "source-compared"
     },
     {
+      "file": "minecart.rs",
+      "function": "fire_cells_end",
+      "boundaries": [
+        "1.9"
+      ],
+      "status": "source-compared"
+    },
+    {
       "file": "moving_entity.rs",
       "function": "gravity",
       "boundaries": [
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "moving_entity.rs",
@@ -656,7 +907,8 @@
       "file": "moving_entity.rs",
       "function": "apply_gravity",
       "boundaries": [
-        "1.10"
+        "1.10",
+        "1.14"
       ],
       "status": "source-compared"
     },
@@ -664,8 +916,7 @@
       "file": "moving_entity.rs",
       "function": "move_entity",
       "boundaries": [
-        "1.21.2",
-        "1.21.9"
+        "1.21.2"
       ],
       "status": "source-compared"
     },
@@ -686,12 +937,13 @@
         "1.16",
         "1.16.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "moving_entity.rs",
       "function": "base_tick",
       "boundaries": [
+        "1.16.2",
         "1.17"
       ],
       "status": "source-compared"
@@ -711,7 +963,7 @@
         "1.14",
         "26.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "moving_entity.rs",
@@ -719,7 +971,7 @@
       "boundaries": [
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "moving_entity.rs",
@@ -729,7 +981,7 @@
         "1.18",
         "1.18.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "moving_entity.rs",
@@ -741,7 +993,31 @@
         "1.17",
         "1.21.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
+    },
+    {
+      "file": "moving_entity.rs",
+      "function": "water_along",
+      "boundaries": [
+        "1.14"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "moving_entity.rs",
+      "function": "water_along_legacy",
+      "boundaries": [
+        "1.13"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "moving_entity.rs",
+      "function": "full_cube",
+      "boundaries": [
+        "1.13"
+      ],
+      "status": "source-compared"
     },
     {
       "file": "moving_entity.rs",
@@ -751,7 +1027,7 @@
         "1.11",
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "moving_entity.rs",
@@ -760,7 +1036,7 @@
         "1.15",
         "1.20"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "moving_entity.rs",
@@ -769,7 +1045,7 @@
         "1.11",
         "1.13",
         "1.14",
-        "1.15",
+        "1.14.4",
         "1.16",
         "1.16.2",
         "1.17",
@@ -777,16 +1053,17 @@
         "26.1",
         "26.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "moving_entity.rs",
       "function": "item_check",
       "boundaries": [
         "1.14",
+        "1.16",
         "1.17"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "moving_entity.rs",
@@ -794,7 +1071,7 @@
       "boundaries": [
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "moving_entity.rs",
@@ -807,7 +1084,7 @@
         "1.21.5",
         "1.21.6"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "moving_entity.rs",
@@ -818,7 +1095,7 @@
         "1.17",
         "1.21.5"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "moving_entity.rs",
@@ -834,7 +1111,7 @@
       "boundaries": [
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "moving_entity.rs",
@@ -844,7 +1121,15 @@
         "1.17",
         "1.21.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
+    },
+    {
+      "file": "moving_entity.rs",
+      "function": "mob_move",
+      "boundaries": [
+        "26.2"
+      ],
+      "status": "source-compared"
     },
     {
       "file": "moving_entity.rs",
@@ -852,6 +1137,14 @@
       "boundaries": [
         "1.20",
         "1.21.6"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "napi_api.rs",
+      "function": "collision_shapes",
+      "boundaries": [
+        "1.13"
       ],
       "status": "source-compared"
     },
@@ -879,7 +1172,7 @@
         "1.17",
         "1.20.5"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "napi_api.rs",
@@ -891,7 +1184,23 @@
     },
     {
       "file": "napi_api.rs",
+      "function": "shulker_box_block_event",
+      "boundaries": [
+        "1.11"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "napi_api.rs",
       "function": "simulate_versioned_shulker_box_tick",
+      "boundaries": [
+        "1.11"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "napi_api.rs",
+      "function": "simulate_versioned_shulker_box_push",
       "boundaries": [
         "1.11"
       ],
@@ -912,7 +1221,7 @@
         "1.9",
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "napi_bulk.rs",
@@ -928,6 +1237,23 @@
       "function": "rules_of",
       "boundaries": [
         "1.18"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "napi_moving_entity.rs",
+      "function": "simulate_versioned_mob_travel",
+      "boundaries": [
+        "1.9",
+        "1.11"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "napi_player.rs",
+      "function": "push_by_shulker_box",
+      "boundaries": [
+        "1.11"
       ],
       "status": "source-compared"
     },
@@ -952,10 +1278,9 @@
       "file": "piston.rs",
       "function": "set_moving_block",
       "boundaries": [
-        "1.11",
-        "1.15"
+        "1.11"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "piston.rs",
@@ -965,14 +1290,6 @@
         "1.11"
       ],
       "status": "source-compared"
-    },
-    {
-      "file": "piston.rs",
-      "function": "go_on",
-      "boundaries": [
-        "1.15"
-      ],
-      "status": "unverified"
     },
     {
       "file": "piston.rs",
@@ -991,7 +1308,7 @@
         "1.15",
         "1.20"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "piston.rs",
@@ -999,7 +1316,7 @@
       "boundaries": [
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "piston.rs",
@@ -1021,39 +1338,32 @@
     },
     {
       "file": "piston.rs",
+      "function": "reads_edge_cells",
+      "boundaries": [
+        "1.14.4"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "piston.rs",
       "function": "move_body",
       "boundaries": [
-        "1.21.4",
         "1.21.10",
         "26.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "piston.rs",
       "function": "move_entity",
       "boundaries": [
         "1.13",
-        "1.14",
-        "1.15",
         "1.20.5",
         "1.21.2",
-        "1.21.4",
         "1.21.5",
-        "1.21.9",
-        "1.21.10",
         "26.2"
       ],
-      "status": "unverified"
-    },
-    {
-      "file": "piston.rs",
-      "function": "stop_blocked_motion",
-      "boundaries": [
-        "1.14",
-        "1.18.2"
-      ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "projectile.rs",
@@ -1068,7 +1378,8 @@
       "file": "projectile.rs",
       "function": "update_in_water",
       "boundaries": [
-        "1.16"
+        "1.16",
+        "1.16.2"
       ],
       "status": "source-compared"
     },
@@ -1085,6 +1396,15 @@
       "function": "below_world",
       "boundaries": [
         "1.17"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "projectile.rs",
+      "function": "pearl_lost",
+      "boundaries": [
+        "1.20.2",
+        "1.21.9"
       ],
       "status": "source-compared"
     },
@@ -1114,10 +1434,12 @@
         "1.13",
         "1.14",
         "1.16",
+        "1.21.2",
+        "1.21.4",
         "1.21.5",
         "1.21.9"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "projectile.rs",
@@ -1137,13 +1459,21 @@
         "1.14",
         "1.21.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "projectile.rs",
       "function": "apply_arrow_gravity",
       "boundaries": [
         "1.20.5"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "projectile.rs",
+      "function": "apply_vector_gravity_from_1_14",
+      "boundaries": [
+        "1.14"
       ],
       "status": "source-compared"
     },
@@ -1182,7 +1512,15 @@
     },
     {
       "file": "projectile.rs",
-      "function": "push_by_bubble_column",
+      "function": "apply_projectile_cells",
+      "boundaries": [
+        "1.15"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "projectile.rs",
+      "function": "push_motion_by_bubble_column_where",
       "boundaries": [
         "1.21.5"
       ],
@@ -1192,6 +1530,7 @@
       "file": "projectile.rs",
       "function": "tick_hurting_projectile",
       "boundaries": [
+        "1.16.2",
         "1.21",
         "1.21.2"
       ],
@@ -1203,7 +1542,7 @@
       "boundaries": [
         "1.18.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "projectile.rs",
@@ -1212,10 +1551,10 @@
         "1.11",
         "1.14",
         "1.16",
-        "1.16.2",
+        "1.16.4",
         "1.21.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "projectile.rs",
@@ -1224,11 +1563,20 @@
         "1.11",
         "1.14",
         "1.16",
+        "1.17",
         "1.21.6",
         "1.21.9",
         "26.3"
       ],
-      "status": "unverified"
+      "status": "source-compared"
+    },
+    {
+      "file": "projectile.rs",
+      "function": "remake_hook_box",
+      "boundaries": [
+        "1.17"
+      ],
+      "status": "source-compared"
     },
     {
       "file": "projectile.rs",
@@ -1239,13 +1587,15 @@
         "1.16",
         "1.21.5"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "projectile.rs",
       "function": "tick_shulker_bullet",
       "boundaries": [
-        "1.21.2"
+        "1.16.2",
+        "1.21.2",
+        "1.21.5"
       ],
       "status": "source-compared"
     },
@@ -1254,8 +1604,10 @@
       "function": "move_projectile",
       "boundaries": [
         "1.17",
+        "1.21.2",
         "1.21.4",
-        "1.21.9"
+        "1.21.9",
+        "26.3"
       ],
       "status": "source-compared"
     },
@@ -1290,6 +1642,14 @@
       "file": "projectile.rs",
       "function": "clip_blocks_between",
       "boundaries": [
+        "1.14"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "projectile.rs",
+      "function": "clip_blocks_legacy",
+      "boundaries": [
         "1.13"
       ],
       "status": "source-compared"
@@ -1298,7 +1658,8 @@
       "file": "projectile.rs",
       "function": "clip_block",
       "boundaries": [
-        "1.13"
+        "1.13",
+        "1.14"
       ],
       "status": "source-compared"
     },
@@ -1311,13 +1672,21 @@
       "status": "source-compared"
     },
     {
+      "file": "projectile.rs",
+      "function": "no_border_cell",
+      "boundaries": [
+        "1.14"
+      ],
+      "status": "source-compared"
+    },
+    {
       "file": "projectile_hits.rs",
       "function": "arrow_damage",
       "boundaries": [
         "1.14",
         "1.16"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "projectile_hits.rs",
@@ -1325,7 +1694,7 @@
       "boundaries": [
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "projectile_hits.rs",
@@ -1344,7 +1713,7 @@
         "1.16",
         "1.21.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "projectile_hits.rs",
@@ -1383,7 +1752,7 @@
         "1.16",
         "1.20.5"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "projectile_hits.rs",
@@ -1396,7 +1765,7 @@
         "1.21.2",
         "26.3"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "projectile_hits.rs",
@@ -1404,11 +1773,10 @@
       "boundaries": [
         "1.9",
         "1.10",
-        "1.14",
         "1.16",
         "1.20.5"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "projectile_hits.rs",
@@ -1426,7 +1794,7 @@
         "1.14",
         "1.16"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "projectile_hits.rs",
@@ -1447,7 +1815,7 @@
         "1.14",
         "1.16"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "projectile_hits.rs",
@@ -1471,7 +1839,7 @@
       "boundaries": [
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "projectile_hits.rs",
@@ -1488,7 +1856,7 @@
         "1.14",
         "1.21.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "ridden.rs",
@@ -1497,13 +1865,21 @@
         "1.9",
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
+    },
+    {
+      "file": "ridden.rs",
+      "function": "movement_speed_in",
+      "boundaries": [
+        "1.21.11"
+      ],
+      "status": "source-compared"
     },
     {
       "file": "ridden.rs",
       "function": "fluid_jump_threshold",
       "boundaries": [
-        "1.20.5"
+        "1.16"
       ],
       "status": "source-compared"
     },
@@ -1520,7 +1896,7 @@
         "1.21.5",
         "1.21.6"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "ridden.rs",
@@ -1530,7 +1906,7 @@
         "1.16",
         "1.16.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "ridden.rs",
@@ -1544,7 +1920,8 @@
       "file": "ridden.rs",
       "function": "tick_ridden",
       "boundaries": [
-        "1.11"
+        "1.11",
+        "1.19.4"
       ],
       "status": "source-compared"
     },
@@ -1573,7 +1950,15 @@
         "1.20.5",
         "1.21.6"
       ],
-      "status": "unverified"
+      "status": "source-compared"
+    },
+    {
+      "file": "ridden.rs",
+      "function": "camel_ignores_rider_1_19_3",
+      "boundaries": [
+        "1.19.4"
+      ],
+      "status": "source-compared"
     },
     {
       "file": "ridden.rs",
@@ -1616,12 +2001,13 @@
         "1.13",
         "1.14",
         "1.16",
+        "1.17",
         "1.20",
         "1.20.5",
         "1.21.2",
         "26.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "ridden.rs",
@@ -1634,7 +2020,7 @@
         "1.21.11",
         "26.3"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "ridden.rs",
@@ -1649,7 +2035,7 @@
         "1.21.9",
         "26.1"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "ridden.rs",
@@ -1657,6 +2043,7 @@
       "boundaries": [
         "1.16",
         "1.19.4",
+        "1.20",
         "1.21.2",
         "1.21.6"
       ],
@@ -1711,7 +2098,7 @@
         "1.18.2",
         "1.21.5"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -1730,7 +2117,7 @@
         "1.19.3",
         "26.1"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -1788,7 +2175,7 @@
       "boundaries": [
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -1818,7 +2205,7 @@
         "1.16",
         "1.16.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -1826,14 +2213,25 @@
       "boundaries": [
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
       "function": "apply_fluid_travel_vertical",
       "boundaries": [
+        "1.10",
+        "1.13",
+        "1.14",
         "1.16",
         "1.20.5"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "simulation.rs",
+      "function": "visits_no_blocks_dead",
+      "boundaries": [
+        "1.20.2"
       ],
       "status": "source-compared"
     },
@@ -1844,7 +2242,7 @@
         "1.19.3",
         "1.21.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -1870,7 +2268,7 @@
         "1.15",
         "1.20"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -1882,12 +2280,28 @@
     },
     {
       "file": "simulation.rs",
+      "function": "apply_block_effects",
+      "boundaries": [
+        "1.15"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "simulation.rs",
       "function": "apply_inside_block_effects",
       "boundaries": [
         "1.15",
         "1.21.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
+    },
+    {
+      "file": "simulation.rs",
+      "function": "slide_down_honey",
+      "boundaries": [
+        "1.21.2"
+      ],
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -1989,13 +2403,23 @@
       "function": "blocks_inside_moves",
       "boundaries": [
         "1.21.5",
+        "1.21.6",
         "1.21.9"
       ],
       "status": "source-compared"
     },
     {
       "file": "simulation.rs",
-      "function": "movements_this_tick",
+      "function": "movements_this_tick_from",
+      "boundaries": [
+        "1.21.5",
+        "1.21.9"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "simulation.rs",
+      "function": "recorded_movement",
       "boundaries": [
         "1.21.5",
         "1.21.9"
@@ -2034,7 +2458,7 @@
         "1.14",
         "26.3"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -2060,13 +2484,25 @@
         "1.18.2",
         "1.19.4"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
       "function": "fluid_jump",
       "boundaries": [
         "1.16"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "simulation.rs",
+      "function": "living_knockback",
+      "boundaries": [
+        "1.9",
+        "1.14",
+        "1.16",
+        "1.17",
+        "1.21"
       ],
       "status": "source-compared"
     },
@@ -2087,7 +2523,7 @@
         "1.17.1",
         "1.20"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -2097,7 +2533,7 @@
         "1.18.2",
         "1.21.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -2113,11 +2549,12 @@
       "boundaries": [
         "1.9",
         "1.15",
+        "1.18.2",
         "1.19",
         "1.21.4",
         "1.21.5"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -2141,7 +2578,7 @@
       "boundaries": [
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -2177,7 +2614,7 @@
         "1.20.5",
         "1.21.5"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -2194,9 +2631,9 @@
         "1.16",
         "1.17",
         "1.18",
-        "1.19"
+        "1.18.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -2206,7 +2643,7 @@
         "1.16.2",
         "1.18"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -2233,7 +2670,7 @@
         "1.18",
         "1.21"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -2246,16 +2683,70 @@
     },
     {
       "file": "simulation.rs",
+      "function": "reset_fall_on_clip",
+      "boundaries": [
+        "1.18.2",
+        "1.21.9"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "simulation.rs",
+      "function": "move_without_physics",
+      "boundaries": [
+        "1.21.9"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "simulation.rs",
+      "function": "refreshes_vertical_collision",
+      "boundaries": [
+        "1.21.4"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "simulation.rs",
+      "function": "entity_move",
+      "boundaries": [
+        "1.14",
+        "1.15",
+        "1.17",
+        "1.21.2",
+        "1.21.10"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "simulation.rs",
+      "function": "stop_blocked_motion",
+      "boundaries": [
+        "1.14",
+        "1.18.2"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "simulation.rs",
+      "function": "base_tick_fluids_and_fire",
+      "boundaries": [
+        "1.14",
+        "1.16",
+        "1.16.2"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "simulation.rs",
       "function": "launch_riptide",
       "boundaries": [
         "1.13",
-        "1.14",
-        "1.15",
         "1.21",
         "1.21.2",
         "26.1"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -2264,7 +2755,7 @@
         "1.15",
         "1.19.4"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -2277,7 +2768,7 @@
         "1.15",
         "1.18"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -2293,11 +2784,35 @@
       "boundaries": [
         "1.9",
         "1.12",
-        "1.16",
+        "1.17",
         "1.18",
         "1.21.2",
         "1.21.5",
         "26.1"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "simulation.rs",
+      "function": "resets_landed_fall",
+      "boundaries": [
+        "1.9"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "simulation.rs",
+      "function": "refresh_legacy_eyes",
+      "boundaries": [
+        "1.16"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "simulation.rs",
+      "function": "applies_effects_from_blocks",
+      "boundaries": [
+        "1.21.2"
       ],
       "status": "source-compared"
     },
@@ -2317,7 +2832,7 @@
         "1.21.2",
         "26.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -2326,7 +2841,7 @@
         "1.21.11",
         "26.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -2334,7 +2849,7 @@
       "boundaries": [
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "simulation.rs",
@@ -2343,11 +2858,8 @@
         "1.9",
         "1.13",
         "1.14",
-        "1.15",
         "1.16",
-        "1.16.2",
         "1.17",
-        "1.18.2",
         "1.19.1",
         "1.19.3",
         "1.20",
@@ -2355,11 +2867,10 @@
         "1.21.2",
         "1.21.4",
         "1.21.5",
-        "1.21.9",
         "1.21.11",
         "26.3"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "vehicle.rs",
@@ -2375,13 +2886,14 @@
       "function": "boat_passenger_position",
       "boundaries": [
         "1.9",
+        "1.18.2",
         "1.19",
         "1.19.3",
         "1.20",
         "1.20.2",
         "1.20.5"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "vehicle.rs",
@@ -2398,7 +2910,17 @@
       "boundaries": [
         "1.9",
         "1.17",
+        "1.21.2",
         "1.21.4",
+        "1.21.5"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "vehicle.rs",
+      "function": "tick_lerp",
+      "boundaries": [
+        "1.21.2",
         "1.21.5"
       ],
       "status": "source-compared"
@@ -2408,6 +2930,14 @@
       "function": "advance_paddles",
       "boundaries": [
         "1.12"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "vehicle.rs",
+      "function": "count_boat_fall",
+      "boundaries": [
+        "1.9"
       ],
       "status": "source-compared"
     },
@@ -2425,7 +2955,7 @@
       "boundaries": [
         "1.15"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "vehicle.rs",
@@ -2442,7 +2972,7 @@
         "1.13",
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "vehicle.rs",
@@ -2454,9 +2984,19 @@
     },
     {
       "file": "vehicle.rs",
+      "function": "water_level_above",
+      "boundaries": [
+        "1.13",
+        "1.14"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "vehicle.rs",
       "function": "push_boat_by_fluids",
       "boundaries": [
-        "1.16"
+        "1.16",
+        "1.16.2"
       ],
       "status": "source-compared"
     },
@@ -2467,7 +3007,7 @@
         "1.14",
         "1.21"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "vehicle.rs",
@@ -2483,7 +3023,7 @@
       "boundaries": [
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "vehicle.rs",
@@ -2504,18 +3044,16 @@
         "1.21.2",
         "26.2"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "vehicle.rs",
       "function": "collide_vehicle",
       "boundaries": [
-        "1.13",
-        "1.14",
         "1.18",
         "1.21"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "vehicle.rs",
@@ -2533,7 +3071,7 @@
         "1.12",
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "vehicle.rs",
@@ -2550,32 +3088,7 @@
         "1.9",
         "1.13",
         "1.15",
-        "1.18",
         "1.21"
-      ],
-      "status": "unverified"
-    },
-    {
-      "file": "version.rs",
-      "function": "supports_fluid_physics",
-      "boundaries": [
-        "1.13"
-      ],
-      "status": "source-compared"
-    },
-    {
-      "file": "version.rs",
-      "function": "supports_honey_blocks",
-      "boundaries": [
-        "1.15"
-      ],
-      "status": "unverified"
-    },
-    {
-      "file": "version.rs",
-      "function": "supports_fall_flying",
-      "boundaries": [
-        "1.9"
       ],
       "status": "source-compared"
     },
@@ -2597,9 +3110,27 @@
     },
     {
       "file": "world.rs",
+      "function": "of",
+      "boundaries": [
+        "1.9",
+        "1.13",
+        "1.14"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "world.rs",
       "function": "is_within_world_border",
       "boundaries": [
         "1.21"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "world.rs",
+      "function": "legacy_column_exists",
+      "boundaries": [
+        "1.9"
       ],
       "status": "source-compared"
     },
@@ -2611,7 +3142,7 @@
         "1.16",
         "1.18"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "world.rs",
@@ -2648,7 +3179,7 @@
         "1.20.5",
         "26.1"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "world.rs",
@@ -2660,12 +3191,20 @@
     },
     {
       "file": "world.rs",
+      "function": "legacy_collision_shapes",
+      "boundaries": [
+        "1.11"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "world.rs",
       "function": "no_collision_for_entity",
       "boundaries": [
         "1.13",
         "1.14"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     },
     {
       "file": "world.rs",
@@ -2675,7 +3214,32 @@
         "1.16",
         "1.18"
       ],
-      "status": "unverified"
+      "status": "source-compared"
+    },
+    {
+      "file": "world.rs",
+      "function": "legacy_collision_boxes_in_order",
+      "boundaries": [
+        "1.11"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "world.rs",
+      "function": "contains_any_liquid",
+      "boundaries": [
+        "26.3"
+      ],
+      "status": "source-compared"
+    },
+    {
+      "file": "world.rs",
+      "function": "collect_collision_shapes",
+      "boundaries": [
+        "1.11",
+        "1.13"
+      ],
+      "status": "source-compared"
     },
     {
       "file": "world.rs",
@@ -2685,7 +3249,7 @@
         "1.14",
         "1.16"
       ],
-      "status": "unverified"
+      "status": "source-compared"
     }
   ]
 }

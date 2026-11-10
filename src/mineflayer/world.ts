@@ -1,8 +1,8 @@
 // A NativeWorld kept in step with a prismarine world (mineflayer's bot.world, or any world with getBlock): before each
 // tick the blocks around the simulated entity are read again, and every block whose own state or a neighbour's changed
 // is written anew (its shape before 1.13, its fluid flow and the trapdoor over a ladder depend on the blocks around).
-import type { NativeAabb, NativeBlockUpdate, NativeMovingPiston, NativePhysicsBinding, NativeWorld } from '../native';
-import { BlockMapper, describeBlock, releaseCheck, type DescribedBlock, type PrismarineBlock } from './blocks';
+import { guardNativeBinding, type NativeAabb, type NativeBlockUpdate, type NativeMovingPiston, type NativePhysicsBinding, type NativeWorld } from '../native';
+import { BlockMapper, compareReleases, describeBlock, releaseCheck, type DescribedBlock, type PrismarineBlock } from './blocks';
 import type { Box } from './legacy';
 import { rainsInBiome, type BiomeData } from './rain';
 import { resolveRegistryRelease } from './registry-release';
@@ -155,7 +155,7 @@ export interface MovingBlock {
 }
 
 /**
- * The box that pushes on 1.9 - 1.10 (the block's bounding box, 1.9.4 PistonBlockEntity.java): a moved block's own boxes. A head's is
+ * The box that pushes on 1.9 - 1.10 (the block's bounding box, 1.9.4 PistonMovingBlockEntity.java): a moved block's own boxes. A head's is
  * its plate alone, which its collision boxes do not say: the engine draws that itself.
  */
 const outlineOf = (block: PrismarineBlock, boxes: NativeAabb[]) => (block.name === 'piston_head' ? {} : { outlineShapes: boxes });
@@ -165,9 +165,10 @@ export class NativeWorldSync {
     private readonly binding: NativePhysicsBinding;
     private readonly mapper: BlockMapper;
     private readonly release: string;
-    /** The cells given a moving block's shape, by key. */
-    private readonly moving = new Map<string, [number, number, number]>();
-    private readonly shulkers = new Map<string, [number, number, number]>();
+    /** The cells given a moving block's shape, by key: the cell and the boxes it collides with, in the cell (free to leave it). */
+    private readonly moving = new Map<string, [number, number, number, Box[]]>();
+    /** The open shulker boxes of setShulkerBoxes: the cell and its lid's box in the cell. */
+    private readonly shulkers = new Map<string, [number, number, number, Box]>();
     /** The state id read at each cell (UNKNOWN where the world had no block), and the block of each state id. */
     private readonly ids = new Map<string, number>();
     private readonly described = new Map<number, DescribedBlock>();
@@ -198,9 +199,11 @@ export class NativeWorldSync {
 
     constructor(binding: NativePhysicsBinding, registry: SyncRegistry, release?: string) {
         const selected = resolveRegistryRelease(registry, release);
+        guardNativeBinding(binding);
         this.binding = binding;
         this.release = selected;
         this.world = new binding.NativeWorld();
+        this.world.setRelease?.(selected);
         // the release's #fall_damage_resetting tag, from the engine's generated block data
         const hasTag = (name: string, tag: string) => binding.generatedBlockHasTag(selected, name, tag);
         this.mapper = new BlockMapper(releaseCheck(selected), registry, hasTag, name => binding.generatedMethodShapeBoxes(selected, name, 'outline'),
@@ -384,18 +387,17 @@ export class NativeWorldSync {
      * The shapes come from the blocks around the cell, as a block there would have them.
      */
     setMovingBlocks(blocks: readonly MovingBlock[]): void {
-        const boxes = (block: PrismarineBlock, x: number, y: number, z: number) =>
-            this.mapper.boxesAt(this.blockAt, x, y, z, this.mapper.describe(block)).map(([minX, minY, minZ, maxX, maxY, maxZ]): NativeAabb => (
-                { min: { x: minX, y: minY, z: minZ }, max: { x: maxX, y: maxY, z: maxZ } }));
+        const boxes = (block: PrismarineBlock, x: number, y: number, z: number) => this.movedBoxes(block, x, y, z);
         const before = new Map(this.moving);
         this.moving.clear();
         for (const { x, y, z, facing, extending, source, progress, block, base } of blocks) {
             const name = this.blockAt(x, y, z)?.name;
             // (the block entity's cell has another block once the packets replaced it: then it has that block's shape)
             if (name !== 'moving_piston' && name !== 'piston_extension') continue;
-            this.world.setMovingBlock(this.release, { x, y, z, facing, extending, source, progress, shapes: boxes(block, x, y, z), ...outlineOf(block, boxes(block, x, y, z)) }, base ? boxes(base, x, y, z) : undefined);
+            const shapes = this.movedBoxes(block, x, y, z, { extending, source, progress });
+            const moved = this.world.setMovingBlock(this.release, { x, y, z, facing, extending, source, progress, shapes, ...this.movedOutline(block, x, y, z, shapes) }, base ? boxes(base, x, y, z) : undefined);
             const cell = key(x, y, z);
-            this.moving.set(cell, [x, y, z]);
+            this.moving.set(cell, [x, y, z, moved.map(({ min, max }): Box => [min.x, min.y, min.z, max.x, max.y, max.z])]);
             before.delete(cell);
         }
         for (const [x, y, z] of before.values()) this.world.clearMovingBlock(x, y, z);
@@ -416,7 +418,7 @@ export class NativeWorldSync {
                 minX: bounds.min.x, minY: bounds.min.y, minZ: bounds.min.z, maxX: bounds.max.x, maxY: bounds.max.y, maxZ: bounds.max.z, slipperiness: 0.6,
             }]);
             const cell = key(x, y, z);
-            this.shulkers.set(cell, [x, y, z]);
+            this.shulkers.set(cell, [x, y, z, [bounds.min.x, bounds.min.y, bounds.min.z, bounds.max.x, bounds.max.y, bounds.max.z]]);
             before.delete(cell);
         }
         // (at once: the sync of this tick has run, and a shut lid is a cube for this tick's move)
@@ -429,15 +431,56 @@ export class NativeWorldSync {
         }
     }
 
+    /**
+     * The boxes of the block a block entity moves, in its cell. On 1.11 and 1.12 a source piston's head is SHORT by its progress,
+     * which no data value holds: its arm then stops at its cell's face, where the long one reaches a quarter into the base
+     * (1.12.2 PistonMovingBlockEntity.java:331-338, PistonHeadBlock.java:42-53; LegacyNeighbourDump `entities`).
+     *
+     * On 1.8 the moving block takes the moved block's getCollisionShape at its own cell (1.8.8 MovingPistonBlock.java getCollisionBox),
+     * which is the block's bounds: a piston base sets them from the block at that cell, the piston_extension, so a cube
+     * (PistonBaseBlock.java:179-225), and a fence's bounds are never left higher than its block (FenceBlock.java:41-86).
+     */
+    private movedBoxes(block: PrismarineBlock, x: number, y: number, z: number, moving?: { extending: boolean; source: boolean; progress: number }): NativeAabb[] {
+        let boxes = this.mapper.boxesAt(this.blockAt, x, y, z, this.mapper.describe(block));
+        if (compareReleases(this.release, '1.9') < 0) {
+            if (block.name === 'piston' || block.name === 'sticky_piston') boxes = [[0, 0, 0, 1, 1, 1]];
+            else if (/fence$/.test(block.name)) boxes = boxes.map(([minX, minY, minZ, maxX, maxY, maxZ]): Box => [minX, minY, minZ, maxX, Math.min(maxY, 1), maxZ]);
+        }
+        const legacyShort = compareReleases(this.release, '1.11') >= 0 && compareReleases(this.release, '1.13') < 0;
+        if (moving && legacyShort && block.name === 'piston_head' && moving.source && moving.extending !== (Math.fround(1 - moving.progress) < 0.25)) {
+            const held = (value: number) => Math.min(Math.max(value, 0), 1);
+            boxes = boxes.map((box): Box => box.map(held) as Box);
+        }
+        return boxes.map(([minX, minY, minZ, maxX, maxY, maxZ]): NativeAabb => ({ min: { x: minX, y: minY, z: minZ }, max: { x: maxX, y: maxY, z: maxZ } }));
+    }
+
+    /**
+     * The box that pushes on 1.9 - 1.10: the moved block's getBoundingBox in the cell, its outline before the flattening (a fence's no
+     * higher than its block, a layer of snow's an eighth), its collision boxes after (1.9.4 PistonMovingBlockEntity.java:80-89,
+     * LegacyNeighbourDump `entities`).
+     */
+    private movedOutline(block: PrismarineBlock, x: number, y: number, z: number, shapes: NativeAabb[]): { outlineShapes?: NativeAabb[] } {
+        if (block.name === 'piston_head') return {};
+        if (compareReleases(this.release, '1.13') >= 0) return outlineOf(block, shapes);
+        const described = this.mapper.describe(block);
+        const at = (a: number, b: number, c: number) => (a === x && b === y && c === z ? described : this.blockAt(a, b, c));
+        const outlines = this.mapper.updatesAt(at, x, y, z).flatMap(({ outlineShape, shape }): NativeAabb[] => {
+            const box = outlineShape ?? shape;
+            return box && box.maxX > box.minX && box.maxY > box.minY && box.maxZ > box.minZ
+                ? [{ min: { x: box.minX, y: box.minY, z: box.minZ }, max: { x: box.maxX, y: box.maxY, z: box.maxZ } }] : [];
+        });
+        return { outlineShapes: outlines };
+    }
+
     /** The moving blocks as the engine's pushes take them (NativeMovingPiston), their shapes those setMovingBlocks gives the cells. */
     movingPistonsOf(blocks: readonly MovingBlock[]): NativeMovingPiston[] {
-        const shapes = (block: PrismarineBlock, x: number, y: number, z: number) =>
-            this.mapper.boxesAt(this.blockAt, x, y, z, this.mapper.describe(block)).map(([minX, minY, minZ, maxX, maxY, maxZ]): NativeAabb => ({ min: { x: minX, y: minY, z: minZ }, max: { x: maxX, y: maxY, z: maxZ } }));
+        const shapes = (block: PrismarineBlock, x: number, y: number, z: number, moving?: { extending: boolean; source: boolean; progress: number }) =>
+            this.movedBoxes(block, x, y, z, moving);
         return blocks.map(({ x, y, z, facing, extending, source, progress, block, next }) => ({
             x, y, z, facing, extending, source, progress,
-            shapes: shapes(block, x, y, z),
-            ...outlineOf(block, shapes(block, x, y, z)),
-            ...(next ? { nextShapes: shapes(next, x, y, z) } : {}),
+            shapes: shapes(block, x, y, z, { extending, source, progress }),
+            ...this.movedOutline(block, x, y, z, shapes(block, x, y, z, { extending, source, progress })),
+            ...(next ? { nextShapes: shapes(next, x, y, z, { extending, source, progress: Math.min(Math.fround(progress + 0.5), 1) }) } : {}),
             bounces: block.name === 'slime_block' || block.name === 'slime',
             stickyForEntities: block.name === 'honey_block',
         }));
@@ -464,8 +507,31 @@ export class NativeWorldSync {
         return shapes.filter(({ min, max }) => min.x < box.maxX && max.x > box.minX && min.y < box.maxY && max.y > box.minY && min.z < box.maxZ && max.z > box.minZ);
     }
 
-    /** The collision boxes of the block the sync read at a cell, in the cell. */
+    /**
+     * A moving piston block's collision boxes at a cell, in the cell and free to leave it, as setMovingBlocks gave them
+     * (MovingPistonBlock.getCollisionShape, PistonMovingBlockEntity.getCollisionShape); undefined for any other cell, or one
+     * whose block the packets have since replaced.
+     */
+    movingBoxesAt(x: number, y: number, z: number): Box[] | undefined {
+        const moved = this.moving.get(key(x, y, z));
+        const name = moved && this.blockAt(x, y, z)?.name;
+        return name === 'moving_piston' || name === 'piston_extension' ? moved![3] : undefined;
+    }
+
+    /** An open shulker box's collision box at a cell, in the cell, as setShulkerBoxes gave it; undefined for any other cell. */
+    shulkerLidAt(x: number, y: number, z: number): Box | undefined {
+        return this.shulkers.get(key(x, y, z))?.[3];
+    }
+
+    /**
+     * The collision boxes of the block the sync read at a cell, in the cell: an open shulker box's lid as setShulkerBoxes gave
+     * it, a moving piston block's boxes as setMovingBlocks did.
+     */
     boxesAt(x: number, y: number, z: number): Box[] {
+        const lid = this.shulkers.get(key(x, y, z));
+        if (lid) return [lid[3]];
+        const moved = this.movingBoxesAt(x, y, z);
+        if (moved) return moved;
         const block = this.blockAt(x, y, z);
         return block ? this.mapper.boxesAt(this.blockAt, x, y, z, block) : [];
     }
@@ -536,6 +602,7 @@ export class NativeWorldSync {
     private forget() {
         this.clearCaches();
         this.world = new this.binding.NativeWorld();
+        this.world.setRelease?.(this.release);
     }
 
     private clearCaches() {

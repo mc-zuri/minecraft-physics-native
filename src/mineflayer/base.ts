@@ -1,11 +1,11 @@
 import { ShulkerBoxTracker } from './shulkers';
-import type { BlockActionPacket } from './shulkers';
+import type { BlockActionPacket, OpenShulkerBox } from './shulkers';
 // What the adapter's engines share: the registry they were made for, the native binding, the NativeWorld kept in step
 // with the caller's world, and the rest of mineflayer-physics-utils' IPhysics, which its states and EPhysicsCtx call
 // (effect and enchantment levels, supportFeature).
 import type { IPhysics } from '@nxg-org/mineflayer-physics-util/dist/physics/engines/IPhysics';
 
-import { LoadNativePhysics, type NativeAabb, type NativePhysicsBinding } from '../native';
+import { guardNativeBinding, LoadNativePhysics, type NativeAabb, type NativePhysicsBinding } from '../native';
 import { assertReleaseAdmitted } from '../release-status';
 import { compareReleases } from './blocks';
 import { attributesWearNamespace, physicsFeature } from './physics-features';
@@ -150,7 +150,7 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
         Object.defineProperty(this, 'version', { writable: false, configurable: false });
         this.data = registry;
         this.registry = registry as unknown as Registry;
-        this.binding = options.binding ?? LoadNativePhysics();
+        this.binding = options.binding ? guardNativeBinding(options.binding) : LoadNativePhysics();
         // A binding may support fewer releases than this package's TypeScript manifest.
         if (this.binding.isSupportedVersion && !this.binding.isSupportedVersion(this.version)) {
             throw new Error(`unsupported decompiled Minecraft version: ${this.version}`);
@@ -187,7 +187,7 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
 
     /**
      * Entity.isNoGravity (1.10+): a state's own noGravity when it has one, else the synced data at 5 of the entity it
-     * was made from (1.10.2 Entity.java:139, 902; 1.21.11 Entity.java:1443-1445 getGravity 0); 1.8 and 1.9 have no
+     * was made from (1.10.2 Entity.java:142, 900; 1.21.11 Entity.java:1443-1445 getGravity 0); 1.8 and 1.9 have no
      * such flag. States without either field (older mineflayer-physics-utils ones) fall as before.
      */
     protected noGravityOf(state: { noGravity?: boolean; entity?: { metadata?: unknown[] } }, entity?: { metadata?: unknown[] }): boolean {
@@ -212,7 +212,21 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
      * has started it (syncMovingBlocks), and for a world that has no such bot.
      */
     movingBlockTrackerOf(world: PrismarineWorld): MovingBlockTracker | undefined {
-        return this.links.get(world)?.tracker;
+        return this.links.get(world)?.tracker ?? this.movingBlocksFrom?.movingBlockTrackerOf(world);
+    }
+
+    /**
+     * The engine whose bot's piston events this one's worlds take their moving blocks from: a vehicle engine has no bot of its
+     * own, and the vehicle collides with a block a piston moves as the player does (Entity.move, the moving_piston cell).
+     */
+    movingBlocksFrom?: NativeEngine;
+
+    /**
+     * The shulker boxes open in a world, as its bot's block events opened them and its physicsTicks moved their lids on (each
+     * one's `pushes` says whether pushByShulkerBox moves an entity in its way this tick): undefined as movingBlockTrackerOf.
+     */
+    shulkerBoxesOf(world: PrismarineWorld): OpenShulkerBox[] | undefined {
+        return this.links.get(world)?.shulkers?.boxes();
     }
 
     /**
@@ -310,7 +324,10 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
                 }
             }) as BotListener);
             link.listenBot(bot, [
-                ['physicsTick', (() => lids.tick()) as BotListener],
+                // (the block entities' tick, which the plugin emits after the entities when it does: from 26.3 the position is sent
+                // after it; else the end of the physics tick)
+                ['blockEntityTick', (() => lids.tick()) as BotListener],
+                ['physicsTick', (() => { if (!(bot as { _emitsBlockEntityTick?: boolean })._emitsBlockEntityTick) lids.tick(); }) as BotListener],
                 ['blockUpdate', ((old: PistonBlock, block: PistonBlock) => {
                     const at = block?.position ?? old?.position;
                     if (at && !block?.name?.endsWith('shulker_box')) lids.forget(at.x, at.y, at.z);
@@ -337,8 +354,8 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
     /**
      * The amplifier of an effect by its minecraft-data name, undefined without it. Before 1.20.5 the effect packet reads
      * it as a signed byte and MobEffectInstance keeps it, so 255 is -1 and the effect stays (1.20.4
-     * EntityStatusEffectS2CPacket.java:49, StatusEffectInstance.java:73); from 1.20.5 it is a varint the instance clamps
-     * to 0 - 255 (1.20.5 EntityStatusEffectS2CPacket.java:57, StatusEffectInstance.java:81).
+     * ClientboundUpdateMobEffectPacket.java:50, MobEffectInstance.java:76); from 1.20.5 it is a varint the instance clamps
+     * to 0 - 255 (1.20.5 ClientboundUpdateMobEffectPacket.java:55, MobEffectInstance.java:75).
      */
     protected effectAmplifierByName(name: string, effects: object): number | undefined {
         const descriptor = this.registry.effectsByName[name];
@@ -394,7 +411,7 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
     /**
      * AttributeInstance.getValue clamped to the attribute's range (RangedAttribute.sanitizeValue): the base plus every
      * ADD_VALUE, plus the sum times every ADD_MULTIPLIED_BASE, times one plus every ADD_MULTIPLIED_TOTAL, each operation in
-     * the order its container iterates (1.8.9 EntityAttributeInstanceImpl.java:147-165, 1.16 EntityAttributeInstance.java:132-147,
+     * the order its container iterates (1.8.8 ModifiableAttributeInstance.java:147-165, 1.16 AttributeInstance.java:130-145,
      * 1.21.11 AttributeInstance.java:150-172).
      */
     protected attributeValue(name: string, attribute: Attribute): number {
@@ -412,8 +429,8 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
         for (const modifier of this.iterationOrder(modifiers.filter(entry => entry.operation === 2))) value *= 1.0 + modifier.amount;
         const range = this.attributeRanges.get(name);
         if (!range) return value;
-        // NaN is the minimum from 1.19, before it Mth.clamp lets it through (1.18 ClampedEntityAttribute.java:36,
-        // 1.19 ClampedEntityAttribute.java:36)
+        // NaN is the minimum from 1.19, before it Mth.clamp lets it through (1.18 RangedAttribute.java:36,
+        // 1.19 RangedAttribute.java:32)
         if (Number.isNaN(value)) return this.lt('1.19') ? value : range.min;
         return Math.min(Math.max(value, range.min), range.max);
     }
@@ -421,10 +438,10 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
     /**
      * The modifiers of one operation in the order vanilla's container iterates them, from the order they were added (the
      * attributes packet's, then setSprinting's). Before 1.16 computeValue copies the operation's HashSet into a new one
-     * (Sets.newHashSet(Collection), 1.15 EntityAttributeInstanceImpl.java:163-164); 1.16 - 1.20.4 iterate the HashSet
-     * itself (1.16 EntityAttributeInstance.java:58-59, 152-153): buckets in order, a bucket's entries as they came, by
-     * the UUID's hash (EntityAttributeModifier.hashCode). From 1.20.5 a fastutil Object2ObjectOpenHashMap by the UUID
-     * (1.20.5 EntityAttributeInstance.java:21, 53-54), by the Identifier from 1.21 (1.21 :24, 56-57; 26.3
+     * (Sets.newHashSet(Collection), 1.15 ModifiableAttributeInstance.java:161-162); 1.16 - 1.20.4 iterate the HashSet
+     * itself (1.16 AttributeInstance.java:56-57, 150-151): buckets in order, a bucket's entries as they came, by
+     * the UUID's hash (AttributeModifier.hashCode). From 1.20.5 a fastutil Object2ObjectOpenHashMap by the UUID
+     * (1.20.5 AttributeInstance.java:22, 53-55), by the Identifier from 1.21 (1.21 :25, 56-58; 26.3
      * AttributeInstance.java:23, 54-55): linear probing from mix(hash), iterated from the last slot down.
      */
     protected iterationOrder(modifiers: AttributeModifier[]): AttributeModifier[] {
@@ -455,7 +472,7 @@ export class NativeEngine implements Omit<IPhysics, 'simulate'> {
         return ordered;
     }
 
-    /** UUID.hashCode before 1.21 (the four 32-bit words xor'd), Identifier.hashCode from it (31 * namespace + path). */
+    /** UUID.hashCode before 1.21 (the four 32-bit words xor'd), ResourceLocation.hashCode from it (31 * namespace + path). */
     private modifierIdHash(id: string): number {
         if (this.lt('1.21')) {
             const hex = id.replace(/-/g, '');

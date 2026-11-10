@@ -76,3 +76,12 @@ test('the input of a tick is held to what the adapter made of the keys: a wrong 
         assert.deepEqual([first?.tick, first?.field], [at, field]);
     }
 });
+
+test('a push from an entity that ticked before the player counts once, and a rocket pushes no one', () => {
+    // 1.15.1, one of the releases where the boat ticks before the player: tickStart already holds the push, and the engine gives it
+    // again from the row's start; there minecraft-data calls a firework rocket a mob of UNKNOWN category
+    for (const name of ['pl_attack_sprint_boat', 'f_elytra_wall_hit_rocket']) {
+        const recording = loadRecording(join(fileURLToPath(new URL('fixtures/1.15.1/physrec', import.meta.url)), `${name}.jsonl.gz`));
+        assert.equal(replayAdapter(recording, undefined, true).first, undefined, name);
+    }
+});

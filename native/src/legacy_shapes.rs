@@ -1,4 +1,4 @@
-//! The VoxelShape joins of 1.13.2's collision query (VoxelShapes.java, the mergers class_4085,
+//! The VoxelShape joins of 1.13.2's collision query (Shapes.java, the mergers class_4085,
 //! class_4089 and class_4092), which decide on cells of the merged grid lines: a line within
 //! 1.0E-7 of the last one kept joins it, so what touches, or reaches in by less than that, is not
 //! met. Only LevelReader.method_16365's few joins run here, once for each block of a 1.13.2 move.
@@ -16,6 +16,7 @@ struct Lines {
 }
 
 impl Lines {
+    /// The lines i / parts of a CubePointRange (CubePointRange#getDouble).
     fn cube(parts: u32) -> Self {
         Self {
             values: (0..=parts).map(|line| f64::from(line) / f64::from(parts)).collect(),
@@ -40,6 +41,7 @@ fn component(value: Vec3, axis: usize) -> f64 {
 }
 
 impl Shape {
+    /// Shapes#empty: one empty cell of the unit cube.
     fn empty() -> Self {
         Self::of_lines(std::array::from_fn(|_| Lines::cube(1)), vec![false])
     }
@@ -62,7 +64,7 @@ impl Shape {
         Self { lines, cells }
     }
 
-    /// VoxelShapes.method_18049 (Shapes.create), its grid told by the test of 1.13.2.
+    /// Shapes.create, its grid told by the test of 1.13.2.
     pub(crate) fn create(bounds: Aabb) -> Self {
         let bits: [Option<u32>; 3] = [0, 1, 2].map(|axis| {
             grid_bits(component(bounds.min, axis), component(bounds.max, axis), GridTest::Floor)
@@ -121,7 +123,7 @@ impl Shape {
         })
     }
 
-    /// The whole cubes of the range: the shape method_16378 joins them in (class_4101).
+    /// The whole cubes of the range: the shape LevelReader#method_16378 joins them in (class_4101).
     pub(crate) fn of_cubes(low: [i32; 3], high: [i32; 3], cubes: impl Fn([i32; 3]) -> bool) -> Self {
         let lines = [0, 1, 2].map(|axis| Lines {
             values: (low[axis]..=high[axis]).map(f64::from).collect(),
@@ -132,7 +134,7 @@ impl Shape {
         })
     }
 
-    /// VoxelShape.offset: OffsetDoubleList, no longer a cube's lines.
+    /// VoxelShape#move (MCP's offset): OffsetDoubleList, no longer a cube's lines.
     pub(crate) fn moved(&self, by: Vec3) -> Self {
         let lines = [0, 1, 2].map(|axis| Lines {
             values: self.lines[axis].values.iter().map(|line| line + component(by, axis)).collect(),
@@ -141,10 +143,12 @@ impl Shape {
         Self::of_lines(lines, self.cells.clone())
     }
 
+    /// VoxelShape#isEmpty: no cell is full.
     pub(crate) fn is_empty(&self) -> bool {
         !self.cells.iter().any(|cell| *cell)
     }
 
+    /// BitSetDiscreteVoxelShape#getIndex of a cell inside the shape, x outermost; none outside it.
     fn index(&self, [x, y, z]: [i32; 3]) -> Option<usize> {
         let size = self.lines.each_ref().map(Lines::cells);
         let inside = |at: i32, size: usize| at >= 0 && (at as usize) < size;
@@ -152,12 +156,13 @@ impl Shape {
             .then(|| (x as usize * size[1] + y as usize) * size[2] + z as usize)
     }
 
-    /// VoxelSet.inBoundsAndContains.
+    /// DiscreteVoxelShape.isFullWide.
     fn holds(&self, cell: [i32; 3]) -> bool {
         self.index(cell).is_some_and(|index| self.cells[index])
     }
 
-    /// The first and past-the-last filled cell on each axis, the bounds class_4081 keeps.
+    /// The first and past-the-last filled cell on each axis, the bounds class_4081 keeps
+    /// (BitSetDiscreteVoxelShape#firstFull and BitSetDiscreteVoxelShape#lastFull).
     fn filled_range(&self) -> [(usize, usize); 3] {
         let size = self.lines.each_ref().map(Lines::cells);
         let mut range = size.map(|size| (size, 0));
@@ -176,7 +181,7 @@ impl Shape {
         range
     }
 
-    /// VoxelShape.getMinimum and getMaximum of each axis; the shape is not empty.
+    /// VoxelShape#min and VoxelShape#max (MCP's getMinimum and getMaximum) of each axis; the shape is not empty.
     pub(crate) fn bounds(&self) -> ([f64; 3], [f64; 3]) {
         let range = self.filled_range();
         (
@@ -192,6 +197,8 @@ struct Merged {
     cells: Vec<(i32, i32)>,
 }
 
+/// The greatest common divisor of the two cell counts, whose least common multiple Shapes#lcm
+/// takes for the cube merger (Guava's IntMath gcd there).
 fn gcd(a: usize, b: usize) -> usize {
     if b == 0 {
         a
@@ -200,7 +207,7 @@ fn gcd(a: usize, b: usize) -> usize {
     }
 }
 
-/// VoxelShapes.method_18048 (createIndexMerger). A shape past the other (class_4094) never comes
+/// Shapes.createIndexMerger. A shape past the other (class_4094) never comes
 /// here: both joins' lists overlap, and AND leaves first on the shapes' bounds.
 fn merge(first: &Lines, second: &Lines, prior: usize, keep_first: bool, keep_second: bool) -> Merged {
     if first.cube && second.cube {
@@ -224,7 +231,8 @@ fn merge(first: &Lines, second: &Lines, prior: usize, keep_first: bool, keep_sec
 }
 
 /// class_4092 (IndirectMerger): the two sorted lists walked together, a line that is not past
-/// the last kept by 1.0E-7 moving that cell's indices on instead.
+/// the last kept by 1.0E-7 moving that cell's indices on instead. Its constructor builds the lines
+/// and indices that IndirectMerger#forMergedIndexes walks.
 fn indirect(first: &[f64], second: &[f64], keep_first: bool, keep_second: bool) -> Merged {
     let (mut i, mut j) = (0_usize, 0_usize);
     let mut last = f64::NAN;
@@ -264,7 +272,8 @@ fn indirect(first: &[f64], second: &[f64], keep_first: bool, keep_second: bool) 
     Merged { lines: Lines { values, cube: false }, cells }
 }
 
-/// The three mergers of a join, each told the cells of the ones before it.
+/// The three mergers of a join, each told the cells of the ones before it (Shapes#joinUnoptimized
+/// and Shapes#joinIsNotEmpty).
 fn mergers(first: &Shape, second: &Shape, keep_first: bool, keep_second: bool) -> [Merged; 3] {
     let x = merge(&first.lines[0], &second.lines[0], 1, keep_first, keep_second);
     let y = merge(&first.lines[1], &second.lines[1], x.lines.cells(), keep_first, keep_second);
@@ -278,7 +287,7 @@ fn mergers(first: &Shape, second: &Shape, keep_first: bool, keep_second: bool) -
     [x, y, z]
 }
 
-/// VoxelShapes.combine(first, second, ONLY_FIRST).
+/// Shapes.join(first, second, ONLY_FIRST).
 pub(crate) fn only_first(first: &Shape, second: &Shape) -> Shape {
     if first.is_empty() {
         return Shape::empty();
@@ -298,7 +307,7 @@ pub(crate) fn only_first(first: &Shape, second: &Shape) -> Shape {
     })
 }
 
-/// VoxelShapes.matchesAnywhere(first, second, AND).
+/// Shapes.joinIsNotEmpty(first, second, AND).
 pub(crate) fn overlap(first: &Shape, second: &Shape) -> bool {
     if first.is_empty() || second.is_empty() {
         return false;

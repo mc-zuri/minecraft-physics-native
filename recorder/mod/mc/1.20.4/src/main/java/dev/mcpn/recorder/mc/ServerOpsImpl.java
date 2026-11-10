@@ -151,6 +151,10 @@ public final class ServerOpsImpl implements Bridge.ServerOps {
     @Override
     public String prepare(Scenario scenario) {
         ServerPlayer player = player();
+        for (int[] column : FORGOTTEN) {
+            CompatChunks.send(player, level(), level().getChunk(column[0], column[1]));
+        }
+        FORGOTTEN.clear();
         // ServerGamePacketListenerImpl kicks a player floating too long unless the server allows flight
         CompatServer.setFlightAllowed(server, scenario.setup.allowFlight);
         teleporting = true;
@@ -313,6 +317,8 @@ public final class ServerOpsImpl implements Bridge.ServerOps {
     }
 
     /** The chunks the area can bring into view, kept loaded: forced on first use, never released. */
+    /** The columns the running case made the client forget, which nothing else would send again. */
+    private static final List<int[]> FORGOTTEN = new ArrayList<>();
     private static final java.util.Set<Long> FORCED = new java.util.HashSet<>();
 
     /**
@@ -352,6 +358,7 @@ public final class ServerOpsImpl implements Bridge.ServerOps {
     }
 
     private void clearEntities(int[] box) {
+        FakeTarget.removeAll(player());
         // (and under it: what fell through a case's floor, or came back from a portal, is in the view the next case keeps)
         AABB area = new AABB(box[0], -256.0, box[2], box[3] + 1, box[4] + 1, box[5] + 1).inflate(ENTITY_MARGIN);
         for (Entity e : level().getEntities((Entity) null, area, e -> !(e instanceof Player))) {
@@ -883,6 +890,12 @@ public final class ServerOpsImpl implements Bridge.ServerOps {
                 int[] at = abs(toInts(a.pos));
                 level().destroyBlockProgress(-1000000, new net.minecraft.core.BlockPos(at[0], at[1], at[2]), a.stage);
             }
+            case "forgetChunk" -> {
+                // only the client: the server keeps tracking the column, and sends it again before the next case (prepare)
+                int[] at = abs(toInts(a.pos));
+                CompatChunks.forget(player, level().getChunk(at[0] >> 4, at[2] >> 4), at[0] >> 4, at[2] >> 4);
+                FORGOTTEN.add(new int[] {at[0] >> 4, at[2] >> 4});
+            }
             case "respawnPoint" -> {
                 int[] at = abs(toInts(a.pos));
                 // (forced, as the command makes it: exactly there, and without a bed)
@@ -971,6 +984,12 @@ public final class ServerOpsImpl implements Bridge.ServerOps {
     }
 
     private String summon(Scenario.Summon s) {
+        // (a second player, for the recorded one to hit: FakeTarget)
+        if ("player".equals(s.type)) {
+            Vec3 at = abs(s.pos);
+            SUMMONS.put(s.ref, FakeTarget.spawn(server, level(), player(), at.x, at.y, at.z, s.yRot == null ? 0 : s.yRot));
+            return null;
+        }
         Entity e = createEntity(s.type);
         if (e == null) {
             return "no entity " + s.type;

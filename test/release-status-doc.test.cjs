@@ -39,8 +39,8 @@ describe('the release status page', () => {
     it('takes missing evidence for what it is', () => {
         const pass = { notOk: 'none' };
         const passing = { source: { status: 'exact' }, data: { status: 'complete' }, implementation: { status: 'complete' }, admitted: false };
-        assert.equal(stateOf(passing, pass, 0), 'untested: no current replay');
-        assert.equal(stateOf(passing, { notOk: '1 error' }, 0), 'untested: no current replay, recordings short');
+        assert.equal(stateOf(passing, pass, 0), 'unpinned: no conformance pin');
+        assert.equal(stateOf(passing, { notOk: '1 error' }, 0), 'unpinned: no conformance pin, recordings short');
         assert.equal(stateOf({ ...passing, source: { status: 'blocked' } }, pass, 0), 'blocked: source');
         assert.equal(stateOf({ ...passing, source: { status: 'blocked' } }, pass, 2), 'blocked: source');
         assert.equal(stateOf(passing, pass, 2), 'known failing: 2');

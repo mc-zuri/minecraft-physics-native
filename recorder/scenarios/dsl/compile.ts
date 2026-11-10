@@ -14,7 +14,7 @@ import type {
     AttributeSpec, BlockRef, EffectSpec, ExpectSpec, ItemSpec, Scenario, ScenarioSpec, ServerActionSpec, StepInput,
     StepSpec, SummonSpec, VersionContext, VersionedCommand,
 } from './core.ts';
-import { compareVersions, inRange, snake, versionAtLeast, SAME_DATA } from './names.ts';
+import { compareVersions, inRange, snake, versionAtLeast } from './names.ts';
 import { rawBlock } from './core.ts';
 
 const require = createRequire(import.meta.url);
@@ -41,6 +41,19 @@ const ITEM_RENAMES: Record<string, readonly [string, string]> = {
 /** Before 1.21.2 every boat is one entity type (with a wood variant): the modern id -> the entity minecraft-data knows. */
 /** The boats before 1.13, whose items do not name their wood: 1.8's one boat, from 1.9 BoatEntity.Type (1.8.9 BoatEntity.java has none, 1.9.4 :720-726, 1.12.2 :748). */
 const LEGACY_BOATS = (version: string): ReadonlySet<string> => new Set(versionAtLeast(version, '1.9') ? ['oak_boat', 'spruce_boat', 'birch_boat', 'jungle_boat', 'acacia_boat', 'dark_oak_boat'] : ['oak_boat']);
+// Entities a release registers only behind an experimental feature flag (EntityType.Builder.requiredFeatures, per release in
+// net/minecraft/world/entity/EntityType.java): a default world has none of them, so the recorder could only skip them.
+const EXPERIMENTAL_ENTITIES: Readonly<Record<string, string>> = {
+    camel: '>=1.19.3 <=1.19.4', // FeatureFlags.UPDATE_1_20
+    sniffer: '=1.19.4', // FeatureFlags.UPDATE_1_20
+    breeze: '>=1.20.3 <=1.20.6', // FeatureFlags.UPDATE_1_21
+    wind_charge: '>=1.20.3 <=1.20.6', // FeatureFlags.UPDATE_1_21
+    bogged: '>=1.20.5 <=1.20.6', // FeatureFlags.UPDATE_1_21
+    breeze_wind_charge: '>=1.20.5 <=1.20.6', // FeatureFlags.UPDATE_1_21
+    ominous_item_spawner: '>=1.20.5 <=1.20.6', // FeatureFlags.UPDATE_1_21
+    creaking: '>=1.21.2 <=1.21.3', // FeatureFlags.WINTER_DROP
+    creaking_transient: '>=1.21.2 <=1.21.3', // FeatureFlags.WINTER_DROP
+};
 const BOAT_ENTITIES = /^(?:(oak|spruce|birch|jungle|acacia|dark_oak|mangrove|cherry|pale_oak)_(chest_)?boat|bamboo_(chest_)?raft)$/;
 
 const GENERIC_FROM_1_20_5 = new Set(['gravity', 'jump_strength', 'step_height', 'scale', 'safe_fall_distance', 'fall_damage_multiplier']);
@@ -64,7 +77,7 @@ export class Resolver {
     readonly data: McData;
 
     constructor(version: string) {
-        const data = mcData(SAME_DATA[version] ?? version);
+        const data = mcData(version);
         if (!data) throw new Error(`minecraft-data has no ${version}`);
         this.version = version;
         this.data = data;
@@ -198,6 +211,8 @@ export class Resolver {
     }
 
     entity(type: string): string {
+        // (a second player, which the mod makes itself: FakeTarget)
+        if (type === 'player') return type;
         if (!versionAtLeast(this.version, '1.11')) {
             // (a boat's variant the mod makes of the id, as on the later releases)
             if (LEGACY_BOATS(this.version).has(type) && this.data.entitiesByName.Boat) return type;
@@ -207,6 +222,7 @@ export class Resolver {
             if (/^Minecart/.test(legacy)) return legacy;
             throw new Skip(`no entity ${type}`);
         }
+        if (EXPERIMENTAL_ENTITIES[type] && inRange(this.version, EXPERIMENTAL_ENTITIES[type])) throw new Skip(`entity ${type} is an experiment in ${this.version}`);
         if (this.data.entitiesByName[type]) return type;
         if (type === 'command_block_minecart' && this.data.entitiesByName.commandblock_minecart) return 'commandblock_minecart';
         // a modern boat id: before 1.21.2 one boat (chest_boat from 1.19) entity with a variant

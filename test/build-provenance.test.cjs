@@ -190,7 +190,16 @@ describe('LoadNativePhysics', () => {
         const package_ = fs.mkdtempSync(path.join(directory, 'p-'));
         fs.mkdirSync(path.join(package_, 'dist'));
         fs.mkdirSync(path.join(package_, 'native', 'artifacts'), { recursive: true });
-        fs.copyFileSync(path.join(root, 'dist', 'native.js'), path.join(package_, 'dist', 'native.js'));
+        // dist/native.js and what it requires of its own folder, however that grows
+        const copied = new Set();
+        const copy = (file) => {
+            if (copied.has(file)) return;
+            copied.add(file);
+            fs.copyFileSync(path.join(root, 'dist', file), path.join(package_, 'dist', file));
+            const text = fs.readFileSync(path.join(root, 'dist', file), 'utf8');
+            for (const [, neighbour] of text.matchAll(/require\("\.\/([^"]+)"\)/g)) copy(`${neighbour}.js`);
+        };
+        copy('native.js');
         fs.writeFileSync(path.join(package_, 'native', 'artifacts', 'native.js'),
             `module.exports = { buildIdentity: () => (${JSON.stringify({ target, sourceHash: 'h', crateVersion: '0' })}) };`);
         return package_;

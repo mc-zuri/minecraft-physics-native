@@ -3,7 +3,6 @@
 // itself: `simulate` runs when a caller calls it, or, after installTicks, when mineflayer's physics plugin does.
 import type { NativeEngineOptions, PhysicsRegistry, PistonBot } from './base';
 import type { NativePhysics } from './player';
-import { dataReleaseOf } from './registry-release';
 import type { PhysicsCtx } from './types';
 import { createNativePhysics } from './versions';
 import type { PrismarineWorld } from './world';
@@ -37,9 +36,7 @@ export class NativeBotPhysics {
     private disposed = false;
 
     constructor(private readonly bot: PhysicsBot, registry: PhysicsRegistry, options: NativeEngineOptions) {
-        // (a bot on a release with another's data has that release's registry, which then cannot name the bot's own)
-        const version = options.version ?? (dataReleaseOf(bot.version) === undefined ? undefined : bot.version);
-        this.physics = createNativePhysics(registry, { ...options, ...(version === undefined ? {} : { version }) });
+        this.physics = createNativePhysics(registry, options);
         if (bot.version !== undefined && bot.version !== this.physics.version) {
             throw new Error(`createBotPhysics: the bot runs ${bot.version}, and the engine asked for is ${this.physics.version}`);
         }

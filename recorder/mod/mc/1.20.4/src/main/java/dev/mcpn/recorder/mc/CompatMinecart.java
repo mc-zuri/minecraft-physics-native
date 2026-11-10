@@ -217,7 +217,13 @@ final class CompatMinecart {
             return null;
         }
         Object count = call(stack, "getCount");
-        return new Json.Obj().str("item", String.valueOf(call(stack, "getDescriptionId")))
+        // (ItemStack.getDescriptionId is gone from 1.21.2: the item's own, which the stack's gave before)
+        Object id = call(stack, "getDescriptionId");
+        if (id == null) {
+            Object item = call(stack, "getItem");
+            id = item == null ? null : call(item, "getDescriptionId");
+        }
+        return new Json.Obj().str("item", String.valueOf(id))
             .num("count", (Integer) (count != null ? count : read(stack, "count")))
             .num("maxStack", (Integer) call(stack, "getMaxStackSize"));
     }
@@ -249,6 +255,278 @@ final class CompatMinecart {
         } catch (ReflectiveOperationException absent) {
             throw new IllegalStateException(absent);
         }
+        Json.Obj source = sourceContainer(e);
+        if (source != null) {
+            out.obj("container", source);
+        }
+        List<String> near = nearContainers(e);
+        if (!near.isEmpty()) {
+            out.raw("containers", Json.array(near));
+        }
+    }
+
+    /** The method of `owner` (or its superclasses) named `name` whose parameters the `candidates` fill, by type, and its call. */
+    private static Object invokeMatching(Class<?> owner, Object on, String name, Object... candidates) {
+        for (Class<?> c = owner; c != null; c = c.getSuperclass()) {
+            for (Method m : c.getDeclaredMethods()) {
+                if (!m.getName().equals(name)) {
+                    continue;
+                }
+                Class<?>[] types = m.getParameterTypes();
+                Object[] args = new Object[types.length];
+                boolean filled = true;
+                for (int i = 0; i < types.length && filled; i++) {
+                    filled = false;
+                    for (Object candidate : candidates) {
+                        if (types[i].isInstance(candidate)) {
+                            args[i] = candidate;
+                            filled = true;
+                            break;
+                        }
+                    }
+                }
+                if (filled) {
+                    try {
+                        m.setAccessible(true);
+                        return m.invoke(on, args);
+                    } catch (ReflectiveOperationException e) {
+                        throw new IllegalStateException(e);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static Object blockPos(int x, int y, int z) {
+        try {
+            return Class.forName("net.minecraft.core.BlockPos").getConstructor(int.class, int.class, int.class).newInstance(x, y, z);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static String pos(Object blockPos) {
+        return "[" + call(blockPos, "getX") + "," + call(blockPos, "getY") + "," + call(blockPos, "getZ") + "]";
+    }
+
+    /** The level a server's entity is in, or null on a client, which cannot see into containers and block entities. */
+    private static Object serverLevel(Entity e) {
+        Object level = read(e, "level", "world");
+        return level == null || level.getClass().getSimpleName().equals("ClientLevel") ? null : level;
+    }
+
+    /**
+     * What a hopper cart takes from when it takes from a container: HopperBlockEntity.getSourceContainer, at the block over
+     * its hopper (getLevelY is the cart's y and half a block, in every release), with the slots HopperBlockEntity.getSlots
+     * gives it from below in their order; a slot a WorldlyContainer will not give through its bottom is null.
+     */
+    private static Json.Obj sourceContainer(Entity e) {
+        Object level = serverLevel(e);
+        if (level == null) {
+            return null;
+        }
+        Vec3 at = CompatMove.position(e);
+        Object pos = blockPos((int) Math.floor(at.x), (int) Math.floor(at.y + 0.5 + 1.0), (int) Math.floor(at.z));
+        Object state = invokeMatching(level.getClass(), level, "getBlockState", pos);
+        try {
+            Class<?> hopperEntity = Class.forName("net.minecraft.world.level.block.entity.HopperBlockEntity");
+            Object source = invokeMatching(hopperEntity, null, "getSourceContainer", level, e, pos, state);
+            if (source == null) {
+                return null;
+            }
+            return described(source, pos);
+        } catch (ReflectiveOperationException absent) {
+            throw new IllegalStateException(absent);
+        }
+    }
+
+    /**
+     * The block containers over the cells about the one over a hopper cart's hopper, a block each way: where its next tick
+     * can take it, whose take comes after its move (MinecartHopper.tick, super.tick then the suck), so that the tick it
+     * reaches a container on has the container as it was. HopperBlockEntity.getContainerAt of each cell, at the cell
+     * (Level, BlockPos from 1.13, Level and the cell's middle before it); the cell over the hopper is `container`.
+     */
+    private static List<String> nearContainers(Entity e) {
+        List<String> out = new ArrayList<>();
+        Object level = serverLevel(e);
+        if (level == null) {
+            return out;
+        }
+        Vec3 at = CompatMove.position(e);
+        int x = (int) Math.floor(at.x);
+        int y = (int) Math.floor(at.y + 0.5 + 1.0);
+        int z = (int) Math.floor(at.z);
+        try {
+            Class<?> hopperEntity = Class.forName("net.minecraft.world.level.block.entity.HopperBlockEntity");
+            Class<?> blockPosClass = Class.forName("net.minecraft.core.BlockPos");
+            Method byPos = null;
+            Method byPoint = null;
+            for (Method m : hopperEntity.getDeclaredMethods()) {
+                if (!m.getName().equals("getContainerAt")) {
+                    continue;
+                }
+                Class<?>[] types = m.getParameterTypes();
+                if (types.length == 2 && types[0].isInstance(level) && types[1] == blockPosClass) {
+                    byPos = m;
+                } else if (types.length == 4 && types[0].isInstance(level) && types[1] == double.class && types[2] == double.class && types[3] == double.class) {
+                    byPoint = m;
+                }
+            }
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dz = -1; dz <= 1; dz++) {
+                        if (dx == 0 && dy == 0 && dz == 0) {
+                            continue;
+                        }
+                        Object pos = blockPos(x + dx, y + dy, z + dz);
+                        Object found;
+                        if (byPos != null) {
+                            byPos.setAccessible(true);
+                            found = byPos.invoke(null, level, pos);
+                        } else if (byPoint != null) {
+                            byPoint.setAccessible(true);
+                            found = byPoint.invoke(null, level, x + dx + 0.5, y + dy + 0.5, z + dz + 0.5);
+                        } else {
+                            return out;
+                        }
+                        // (the cart is a container entity itself, in the cells about its own)
+                        if (found != null && found != e) {
+                            out.add(described(found, pos).text());
+                        }
+                    }
+                }
+            }
+            return out;
+        } catch (ReflectiveOperationException absent) {
+            throw new IllegalStateException(absent);
+        }
+    }
+
+    /** A container as a hopper below it sees it: its block, and the slots HopperBlockEntity.getSlots gives from below. */
+    private static Json.Obj described(Object source, Object pos) {
+        try {
+            Class<?> container = Class.forName("net.minecraft.world.Container");
+            Class<?> direction = Class.forName("net.minecraft.core.Direction");
+            Object down = direction.getField("DOWN").get(null);
+            Method get = container.getMethod("getItem", int.class);
+            Class<?> worldly = Class.forName("net.minecraft.world.WorldlyContainer");
+            int[] open;
+            if (worldly.isInstance(source)) {
+                open = (int[]) worldly.getMethod("getSlotsForFace", direction).invoke(source, down);
+            } else {
+                open = new int[(Integer) container.getMethod("getContainerSize").invoke(source)];
+                for (int i = 0; i < open.length; i++) {
+                    open[i] = i;
+                }
+            }
+            List<String> slots = new ArrayList<>();
+            for (int slot : open) {
+                Object item = get.invoke(source, slot);
+                boolean refused = worldly.isInstance(source) && !Boolean.TRUE.equals(worldly
+                    .getMethod("canTakeItemThroughFace", int.class, Class.forName("net.minecraft.world.item.ItemStack"), direction)
+                    .invoke(source, slot, item, down));
+                Json.Obj stack = refused ? null : stack(item);
+                slots.add(stack == null ? "null" : stack.text());
+            }
+            return new Json.Obj().raw("pos", pos(pos)).raw("slots", Json.array(slots));
+        } catch (ReflectiveOperationException absent) {
+            throw new IllegalStateException(absent);
+        }
+    }
+
+    /**
+     * The scoreboard team an entity is on, which the pushes select by from 1.9 (EntitySelector.pushableBy): its name, and
+     * its Team.CollisionRule by its command name, always before 1.9 where there is none.
+     */
+    static void writeTeam(Entity e, Json.Obj out) {
+        Object team = invokeMatching(Entity.class, e, "getTeam");
+        if (team == null) {
+            return;
+        }
+        Object name = invokeMatching(team.getClass(), team, "getName");
+        Object rule = invokeMatching(team.getClass(), team, "getCollisionRule");
+        // (by its place in the enum, ALWAYS, NEVER, PUSH_OTHER_TEAMS, PUSH_OWN_TEAM in every release from 1.9, 1.12.2 and 26.3
+        // Team.java: the names of its constants are not the same under every release's mapping)
+        String[] names = {"always", "never", "pushOtherTeams", "pushOwnTeam"};
+        String ruleName = rule == null ? "always" : names[((Enum<?>) rule).ordinal()];
+        Json.Obj written = new Json.Obj().str("name", String.valueOf(name)).str("collisionRule", ruleName);
+        // (PlayerTeam.allowFriendlyFire, which from 26.3 keeps a TNT cart's blast off its allies: written only where it is off)
+        if (Boolean.FALSE.equals(invokeMatching(team.getClass(), team, "isAllowFriendlyFire"))) {
+            written.bool("allowFriendlyFire", false);
+        }
+        out.obj("team", written);
+    }
+
+    /** A spawner cart's BaseSpawner: what its serverTick counts down, and how near a player has to be. */
+    private static void spawner(Entity e, Json.Obj out) {
+        Object spawner = read(e, "spawner");
+        if (spawner == null || !e.getClass().getSimpleName().equals("MinecartSpawner")) {
+            return;
+        }
+        out.obj("spawner", new Json.Obj().num("delay", (Integer) read(spawner, "spawnDelay"))
+            .num("minDelay", (Integer) read(spawner, "minSpawnDelay")).num("maxDelay", (Integer) read(spawner, "maxSpawnDelay"))
+            .num("range", (Integer) read(spawner, "requiredPlayerRange")));
+    }
+
+    /**
+     * The end gateways about a server's cart, which no client can see into: each one's block, the block it sends to (the exit
+     * portal under ExactTeleport, else what its own findExitPosition finds; absent where it has no exit), its cooldown and age.
+     */
+    private static void gateways(Entity e, Json.Obj out) {
+        Object level = serverLevel(e);
+        if (level == null) {
+            return;
+        }
+        Vec3 at = CompatMove.position(e);
+        Vec3 vel = CompatMove.velocity(e);
+        int reach = 2 + (int) Math.ceil(Math.max(Math.abs(vel.x), Math.abs(vel.z)));
+        List<String> found = new ArrayList<>();
+        for (int x = (int) Math.floor(at.x) - reach; x <= (int) Math.floor(at.x) + reach; x++) {
+            for (int y = (int) Math.floor(at.y) - 1; y <= (int) Math.floor(at.y) + 2; y++) {
+                for (int z = (int) Math.floor(at.z) - reach; z <= (int) Math.floor(at.z) + reach; z++) {
+                    Object pos = blockPos(x, y, z);
+                    Object entity = invokeMatching(level.getClass(), level, "getBlockEntity", pos);
+                    if (entity == null || !entity.getClass().getSimpleName().equals("TheEndGatewayBlockEntity")) {
+                        continue;
+                    }
+                    Object exitPortal = read(entity, "exitPortal");
+                    Object exit = exitPortal;
+                    if (exitPortal != null && !Boolean.TRUE.equals(read(entity, "exactTeleport"))) {
+                        // (an instance method of its own exit portal to 1.16.5, a static one of the level and the exit portal from 1.17)
+                        exit = invokeMatching(entity.getClass(), entity, "findExitPosition", level, exitPortal);
+                    }
+                    Json.Obj gateway = new Json.Obj().raw("pos", pos(pos))
+                        .num("cooldown", (Integer) read(entity, "teleportCooldown")).num("age", (Long) read(entity, "age"));
+                    if (exit != null) {
+                        gateway.raw("exit", pos(exit));
+                    }
+                    found.add(gateway.text());
+                }
+            }
+        }
+        if (!found.isEmpty()) {
+            out.raw("gateways", Json.array(found));
+        }
+    }
+
+    /** Abilities.instabuild of a player: getAbilities() from 1.17, the abilities field before. */
+    private static boolean creative(Player player) {
+        Object abilities = call(player, "getAbilities");
+        if (abilities == null) {
+            abilities = read(player, "abilities");
+        }
+        return abilities != null && Boolean.TRUE.equals(read(abilities, "instabuild"));
+    }
+
+    /**
+     * Entity.boardingCooldown from 1.9, the ticks before a cart can pick up what just left a vehicle: written only while it
+     * runs, for every entity.
+     */
+    static void writeBoarding(Entity e, Json.Obj out) {
+        if (read(e, "boardingCooldown") instanceof Integer cooldown && cooldown > 0) {
+            out.num("boardingCooldown", cooldown);
+        }
     }
 
     /** VehicleEntity's synced numbers and what each variant's side effects keep. */
@@ -262,6 +540,28 @@ final class CompatMinecart {
             if (seed != null) {
                 out.num("randomSeed", seed);
             }
+            // (from 1.21.2 the blast's power, which the NBT sets: written only where it is not the 4 and 1 of a new cart)
+            if (read(e, "explosionPowerBase") instanceof Float power && power != 4.0F) {
+                out.num("explosionPowerBase", power);
+            }
+            if (read(e, "explosionSpeedFactor") instanceof Float factor && factor != 1.0F) {
+                out.num("explosionSpeedFactor", factor);
+            }
+            // (from 1.21.5 the hurt that lit it, whose attacker its blast keeps: only whether that is a creative player counts)
+            Object ignition = read(e, "ignitionSource");
+            Object attacker = ignition == null ? null : call(ignition, "getEntity");
+            if (attacker instanceof Player player && creative(player)) {
+                out.bool("creativeIgnition", true);
+            }
+        }
+        // (Entity.isInvulnerable, which keeps all but a creative player's hit off: written only where it holds. 26.3 renames
+        // the field permanentlyInvulnerable and adds a temporary invulnerableTime to the method; 1.8 has the field alone)
+        Object invulnerable = call(e, "isInvulnerable");
+        if (invulnerable == null) {
+            invulnerable = read(e, "invulnerable");
+        }
+        if (Boolean.TRUE.equals(invulnerable)) {
+            out.bool("invulnerable", true);
         }
         Object lastActivated = read(e, "lastActivated");
         if (lastActivated instanceof Integer tick) {
@@ -274,6 +574,14 @@ final class CompatMinecart {
         if (process != null) {
             time = call(process, "getPortalTime");
             inside = call(process, "isInsidePortalThisTick");
+            // (from 1.21 the portal it is in, by its block, and the block it went in at)
+            Object portal = read(process, "portal");
+            String kind = portal == null ? "" : portal.getClass().getSimpleName();
+            out.str("portal", kind.equals("EndGatewayBlock") ? "gateway" : kind.equals("EndPortalBlock") ? "end" : "nether");
+            Object entry = read(process, "entryPosition");
+            if (entry != null) {
+                out.raw("portalEntry", pos(entry));
+            }
         }
         if (time instanceof Integer ticks) {
             out.num("portalTime", ticks).bool("insidePortal", Boolean.TRUE.equals(inside));
@@ -304,6 +612,8 @@ final class CompatMinecart {
         furnace(e, m);
         container(e, m);
         effects(e, m);
+        spawner(e, m);
+        gateways(e, m);
         Entity rider = firstPassenger(e);
         if (rider != null) {
             m.obj("rider", rider(rider));

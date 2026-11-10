@@ -115,6 +115,7 @@ above its struct in `native/src/simulation.rs`; these are the other families'. A
 | `autoJump` | false | caller, kept | caller | yes | no |  |
 | `autoJumpTime` | 0 | engine, seeded | aiStep | yes | yes |  |
 | `riptideLaunch` | absent | caller, every tick | taken at tick start | yes | no |  |
+| `pendingMovements` | absent | engine, seeded | the shulker boxes' pushes, in order, taken by the next tick's block effects | no | yes | 1.21.5+ |
 | `sprinting` | false | caller, every tick | caller, ended by a stab or a wall | yes | no |  |
 | `wasSprinting` | false | caller, every tick | caller | yes | no |  |
 | `sprintModifier` | absent | caller, kept | caller | yes | no | absent folds the speed itself: not the same as false |
@@ -126,6 +127,7 @@ above its struct in `native/src/simulation.rs`; these are the other families'. A
 | `canSimulateMovement` | absent | caller, kept | caller | no | no | absent derives from side and local control |
 | `nonLiving` | false | caller, kept | caller | no | no |  |
 | `passenger` | false | caller, kept | caller | no | no |  |
+| `isVehicle` | false | caller, kept | caller | no | no | carries passengers: from 1.9 not pushed |
 | `boatVehicle` | absent | caller, the tick's scene | caller | no | no |  |
 | `inWeb` | false | engine, seeded | block effects | no | yes |  |
 | `weaving` | false | caller, kept | caller | no | no |  |

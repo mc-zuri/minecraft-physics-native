@@ -1,7 +1,7 @@
 // What makes a release's source record acceptable (B002, docs/source-records.md). A record is held to
 // the pins it was made from, so a changed hash, a wrong embedded identity or missing mappings fail
 // here with the release named, whatever the manifest says of itself.
-const { PINNED_CLIENTS, PINNED_SOURCES, TREE_CLIENTS } = require("./source-pins.cjs");
+const { PINNED_CLIENTS, PINNED_SOURCES, TREE_CLIENTS, NAMED_JARS } = require("./source-pins.cjs");
 
 const SHA1 = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -23,7 +23,8 @@ function sourceRecordProblems(version, record) {
 
   if (mappings?.kind === "mojang" && !SHA1.test(mappings.sha1 ?? "")) fail("Mojang's mappings have no sha1");
   if (mappings?.kind === "unobfuscated" && !/^\d\d\./.test(version)) fail("only 26.x ships unobfuscated");
-  if (mappings?.kind === "unpublished" && source.mapping !== "yarn") fail("no mappings are published and the source names none");
+  // before 1.14.4 Mojang published no mappings: the source is in the recorder's (recorder/mod/mappings/<release>.tiny)
+  if (mappings?.kind === "unpublished" && !["recorder", "yarn"].includes(source.mapping)) fail("no mappings are published and the source names none");
   if (!["mojang", "unobfuscated", "unpublished"].includes(mappings?.kind)) fail("the mappings are missing");
   if (mappings?.kind === "mojang" && source.mapping !== "mojang") fail(`the source is in ${source.mapping} names, not the mappings recorded`);
 
@@ -32,7 +33,7 @@ function sourceRecordProblems(version, record) {
   if (pinned ? source.commit !== pinned : source.commit !== undefined) fail(`the source commit ${source.commit} is not the pinned ${pinned ?? "absence of one"}`);
   const client = PINNED_CLIENTS[version]?.client ?? TREE_CLIENTS[version];
   if (client !== undefined && source.clientJar?.sha1 !== client) fail(`the client jar ${source.clientJar?.sha1} is not the pinned ${client}`);
-  const remapped = PINNED_CLIENTS[version]?.remapped;
+  const remapped = PINNED_CLIENTS[version]?.remapped ?? (source.mapping === "recorder" ? NAMED_JARS[version] : undefined);
   if (remapped !== undefined && source.clientJar?.remappedSha256 !== remapped) fail(`the remapped jar ${source.clientJar?.remappedSha256} is not the pinned ${remapped}`);
   if (source.tree !== undefined && !SHA256.test(source.tree)) fail("the source tree hash is malformed");
   if (!source.commit && !source.clientJar?.sha1 && !source.tree) fail("no commit, client jar or tree hash identifies the source");

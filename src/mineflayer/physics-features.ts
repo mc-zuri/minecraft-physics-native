@@ -8,7 +8,7 @@ const before = (release: string, version: string): boolean => compareReleases(re
 
 /**
  * The index of DATA_LIVING_ENTITY_FLAGS, the first tracked field after Entity's, or null where a release has none:
- * 1.8 has no such field (1.8.9 LivingEntity.java:195-198), 1.9 follows Entity's five (1.9.4 Entity.java), 1.10 added
+ * 1.8 has no such field (1.8.8 LivingEntity.java:196-199), 1.9 follows Entity's five (1.9.4 Entity.java), 1.10 added
  * NO_GRAVITY (1.10.2 Entity.java), 1.14 POSE (1.14.4 Entity.java:2825) and 1.17 DATA_TICKS_FROZEN (1.17 Entity.java,
  * 26.3 Entity.java:4268).
  */
@@ -34,11 +34,11 @@ const CATALOG: ReadonlyMap<string, (release: string) => boolean> = new Map([
     ['independentLiquidGravity', release => before(release, '1.13')],
     // gravity / 16 and / 4 (1.13.2 LivingEntity.java:1639,1677, 26.3 LivingEntity.java:2474,2614)
     ['proportionalLiquidGravity', release => !before(release, '1.13')],
-    // SoulSandBlock.onEntityCollision multiplies the velocity (1.8.9 SoulSandBlock.java:24-26, 1.14.4 SoulsandBlock.java:26)
+    // SoulSandBlock.onEntityCollision multiplies the velocity (1.8.8 SoulsandBlock.java:25-27, 1.14.4 SoulsandBlock.java:26)
     ['velocityBlocksOnCollision', release => before(release, '1.15')],
     // Entity.getBlockSpeedFactor of the block stood on (1.15 Entity.java:634,681, Blocks.java:597)
     ['velocityBlocksOnTop', release => !before(release, '1.15')],
-    // horizontalCollision alone (1.13.2 LivingEntity.java:1605), then || jumping (1.14 LivingEntity.java:1868)
+    // horizontalCollision alone (1.13.2 LivingEntity.java:1606), then || jumping (1.14.4 LivingEntity.java:1835)
     ['climbUsingJump', release => !before(release, '1.14')],
     // only where slot 6 is the field: where it is neither 6 nor 8 no answer can be true, see livingFlagsSlot
     ['itemUsageMetadata6', release => livingFlagsSlot(release) === 6],

@@ -17,7 +17,6 @@ export type { PhysicsBot, PhysicsCtxFactory } from './setup';
 export { NativeWorldSync } from './world';
 export { MovingBlockTracker } from './moving';
 export type { MovingBlock } from './world';
-export { dataReleaseOf } from './registry-release';
 export type { PrismarineWorld } from './world';
 export { BlockMapper, describeBlock, liquidCollisionBox, type LiquidCollisionContext } from './blocks';
 export { ShulkerBoxTracker } from './shulkers';

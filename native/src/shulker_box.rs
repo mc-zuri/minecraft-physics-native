@@ -6,7 +6,7 @@
 
 use crate::math::{Aabb, Vec3};
 use crate::piston::move_entity;
-use crate::simulation::{kept_bounding_box, PhysicsConfig, SimulationState};
+use crate::simulation::{kept_bounding_box, MoverType, PhysicsConfig, SimulationState};
 use crate::version::MinecraftVersion;
 use crate::world::WorldSnapshot;
 
@@ -33,6 +33,8 @@ pub struct ShulkerBox {
 }
 
 impl ShulkerBox {
+    /// FACING's unit step: Direction#getStepX, Direction#getStepY and Direction#getStepZ of the
+    /// Direction of that ordinal.
     fn step(self) -> Vec3 {
         match self.facing {
             0 => Vec3::new(0.0, -1.0, 0.0),
@@ -87,7 +89,8 @@ impl ShulkerBox {
         false
     }
 
-    /// getBoundingBox: the cell's cube, stretched by half the progress, as a float, towards FACING.
+    /// ShulkerBoxBlockEntity#getBoundingBox: the cell's cube, stretched by half the progress, as a
+    /// float, towards FACING.
     #[must_use]
     pub fn bounds(self) -> Aabb {
         let cube = Aabb::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0));
@@ -144,7 +147,8 @@ fn legacy_push(shulker: ShulkerBox, cell: (i32, i32, i32), entity: Aabb) -> Opti
 
 /// moveCollidedEntities for an entity: moved by the swept box's size and 0.01 along FACING with
 /// MoverType.SHULKER_BOX, where the box reaches it (26.3 ShulkerBoxBlockEntity.java:125-139), from
-/// 1.17; `legacy_push` before. Whether it moved.
+/// 1.17; `legacy_push` before. Whether it moved. (1.16.5 ShulkerBoxBlockEntity.java:117-160 moves it
+/// out of the lid's top box; 1.17 ShulkerBoxBlockEntity.java:104-115 by the progress delta box's size.)
 pub fn push_entity(
     state: &mut SimulationState,
     world: &WorldSnapshot,
@@ -159,7 +163,7 @@ pub fn push_entity(
         let Some(delta) = legacy_push(shulker, cell, state.bounds()) else {
             return false;
         };
-        move_entity(state, world, delta, config, release, false);
+        move_entity(state, world, delta, config, release, MoverType::ShulkerBox);
         return true;
     }
     let swept = shulker.delta_bounds(cell);
@@ -173,6 +177,65 @@ pub fn push_entity(
         (size.y + 0.01) * step.y,
         (size.z + 0.01) * step.z,
     );
-    move_entity(state, world, delta, config, release, false);
+    move_entity(state, world, delta, config, release, MoverType::ShulkerBox);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const R1_16_5: MinecraftVersion = MinecraftVersion::new(1, 16, 5);
+    const R1_17: MinecraftVersion = MinecraftVersion::new(1, 17, 0);
+
+    #[test]
+    fn a_closing_lid_pushes_until_1_16_5_and_not_from_1_17() {
+        // 1.16.5 ShulkerBoxBlockEntity.tick moves what it meets while OPENING or CLOSING
+        // (ShulkerBoxBlockEntity.java:64-69); 1.17 updateAnimation pushes in OPENING alone (:72-92)
+        let closing = |release| {
+            let mut lid = ShulkerBox { facing: 1, ..ShulkerBox::default() };
+            lid.block_event(1);
+            for _ in 0..11 {
+                lid.tick(release);
+            }
+            lid.block_event(0);
+            lid.tick(release)
+        };
+        assert!(closing(R1_16_5));
+        assert!(!closing(R1_17));
+    }
+
+    #[test]
+    fn an_opening_lid_meets_what_is_over_its_whole_step_from_1_17() {
+        // 1.16.5 pushes out of the lid's slab past the cell, half the progress high (1.16.5
+        // ShulkerBoxBlockEntity.java:117-160); 1.17 moves what meets getProgressDeltaAabb of the last
+        // two progresses, not halved (1.17 ShulkerBoxBlockEntity.java:104-115, Shulker.java:248-253):
+        // over a lid going from 0.4 to 0.5, feet at 1.3 are past the first's 1.25 and in the second's
+        // 1.4 to 1.5
+        let mut world = WorldSnapshot::new();
+        let cube = crate::world::BlockShape::full_block();
+        world.set_block_shapes((0, 0, 0), crate::world::BlockState { id: 1, shape: Some(cube), ..crate::world::BlockState::default() }, vec![cube]);
+        let lid = ShulkerBox {
+            facing: 1,
+            status: ShulkerBoxStatus::Opening,
+            progress: 0.5,
+            progress_old: 0.4,
+            push_progress: 0.5,
+        };
+        let pushed = |release| {
+            let mut state = SimulationState {
+                position: Vec3::new(0.5, 1.3, 0.5),
+                half_width: f64::from(0.6_f32 / 2.0),
+                height: f64::from(1.8_f32),
+                non_living: true,
+                controlled_by_local_instance: true,
+                ..SimulationState::default()
+            };
+            (push_entity(&mut state, &world, lid, (0, 0, 0), PhysicsConfig::default(), release), state.position.y)
+        };
+        assert_eq!(pushed(R1_16_5), (false, 1.3));
+        let (moved, y) = pushed(R1_17);
+        assert!(moved);
+        assert!(y > 1.3, "{y}");
+    }
 }

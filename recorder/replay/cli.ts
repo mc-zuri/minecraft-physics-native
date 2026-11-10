@@ -5,26 +5,29 @@
 //   node recorder/replay/cli.ts [--version 1.20.4] [--case "walk/*"] [--json report.json] [--all-ticks] [--moving] [--moving-client]
 //
 // --moving replays the moving entities (TNT, falling blocks, items, orbs) of the server's view too, which the physrec/me_*
-// cases always do; --moving-client the client's view of them.
+// cases always do; --moving-client the client's view of them; --moving-only those and not the player.
 //
-// --adapter asks the adapter for the decisions the native layer seeds from vanilla (adapter.ts) instead; with --motion
+// --adapter asks the adapter for the decisions the native layer seeds from vanilla (adapter.ts) instead; --clones forks the state
+// through cloneState after every tick and goes on from the fork; with --motion
 // what its whole tick left as well (the position, the motion, the ground, the fall, the jump counters); with --effects-only
 // from the effects alone, no movement speed attribute synced.
 //
 // --bot runs a whole mineflayer bot on the recorded packets and holds what it writes to the client's, by name, order and bytes
 // (bot.ts).
 //
+// --pinned replays only the recordings recorder/corpus/<release>.json pins.
+//
 // --continuous seeds each recording once and carries the engine's output forward (continuous.ts); its report says so, and a
 // stepwise match is no continuous one. --phases compares the engine's trace with vanilla's phases as well (phases.ts).
 
-import { writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { replayAdapter } from './adapter.ts';
 import { idMatcher } from '../scenarios/build.ts';
 import { describe } from './compare.ts';
 import { describeProjectile, replayProjectiles } from './projectile.ts';
 import { createRequire } from 'node:module';
-import { SAME_DATA } from '../scenarios/dsl/names.ts';
 import { replayBot } from './bot.ts';
 import { replayBotCarts } from './bot-carts.ts';
 import { nativeBinding, replayNative, type ReplayResult } from './engine.ts';
@@ -38,11 +41,7 @@ import { replayIdentity } from '../runner/provenance.ts';
 
 const require = createRequire(import.meta.url);
 const { MinecartTracker, NativeMinecartPhysics } = require('../../dist/index.js') as typeof import('../../dist/index.js');
-// (the release whose data it is: a registry must declare that, and 26.1.2 has 26.1's)
-const registryFor = (version: string) => {
-    const data = require('minecraft-data')(SAME_DATA[version] ?? version) as { version: { minecraftVersion: string } };
-    return (require('prismarine-registry') as (v: string) => ConstructorParameters<typeof NativeMinecartPhysics>[0])(data.version.minecraftVersion);
-};
+const registryFor = (version: string) => (require('prismarine-registry') as (v: string) => ConstructorParameters<typeof NativeMinecartPhysics>[0])(version);
 
 const { values } = parseArgs({
     options: {
@@ -53,8 +52,10 @@ const { values } = parseArgs({
         projectiles: { type: 'boolean', default: false },
         moving: { type: 'boolean', default: false },
         'moving-client': { type: 'boolean', default: false },
+        'moving-only': { type: 'boolean', default: false },
         adapter: { type: 'boolean', default: false },
         motion: { type: 'boolean', default: false },
+        clones: { type: 'boolean', default: false },
         'effects-only': { type: 'boolean', default: false },
         'bot-carts': { type: 'boolean', default: false },
         bot: { type: 'boolean', default: false },
@@ -62,11 +63,24 @@ const { values } = parseArgs({
         'bot-forget-rider-collision': { type: 'boolean', default: false },
         continuous: { type: 'boolean', default: false },
         phases: { type: 'boolean', default: false },
+        pinned: { type: 'boolean', default: false },
     },
 });
 
 const matches = idMatcher(values.case);
-const files = findRecordings(recordingsRoot(), values.version ? values.version.split(',') : undefined).filter(f => matches(f.id));
+// (--pinned: only the recordings recorder/corpus/<release>.json pins, as the release matrix replays them; a release with no
+// manifest has none)
+const pinnedIds = (version: string): Set<string> => {
+    const manifest = join(RECORDER_ROOT, 'corpus', `${version}.json`);
+    return new Set(existsSync(manifest) ? (JSON.parse(readFileSync(manifest, 'utf8')) as { entries: { id: string }[] }).entries.map(e => e.id) : []);
+};
+const pins = new Map<string, Set<string>>();
+const pinned = (version: string, id: string) => {
+    if (!pins.has(version)) pins.set(version, pinnedIds(version));
+    return pins.get(version)!.has(id);
+};
+const files = findRecordings(recordingsRoot(), values.version ? values.version.split(',') : undefined)
+    .filter(f => matches(f.id) && (!values.pinned || pinned(f.version, f.id)));
 if (files.length === 0) {
     console.error(`no recordings match ${values.case ?? '*'}${values.version ? ` for ${values.version}` : ''} in ${recordingsRoot()}`);
     process.exit(1);
@@ -94,7 +108,8 @@ if (values.projectiles) {
             + result.playerHealth.map(h => ` t${h.t} health ${h.before}->${h.after}${h.reaction ? ` ${h.reaction}` : ''}${h.damage !== undefined ? ` (${h.damage})` : ''}`).join('');
         if (!result.first) {
             matching += 1;
-            console.log(`ok    ${key} (${result.projectiles} projectile(s), ${result.compared} ticks${hits ? `; ${hits}` : ''}${blocks ? `; ${blocks}` : ''})`);
+            const stops = result.stopped.map(x => `#${x.projectile} stopped at its ${x.why}, t=${x.t}`).join(', ');
+            console.log(`ok    ${key} (${result.projectiles} projectile(s), ${result.compared} ticks${hits ? `; ${hits}` : ''}${blocks ? `; ${blocks}` : ''}${stops ? `; ${stops}` : ''})`);
             continue;
         }
         bad += 1;
@@ -102,11 +117,14 @@ if (values.projectiles) {
         if (values['all-ticks']) for (const d of result.divergences) console.log(`        ${describeProjectile(d)}`);
     }
     console.log(`${files.length} recording(s), ${matching} matching, ${bad} unexpected`);
+    if (values.json) writeFileSync(values.json, writeJson({ replay: replayIdentity(RECORDER_ROOT), matching, unexpected: bad, recordings: files.length }));
     process.exit(bad > 0 ? 1 : 0);
 }
 
 if (values.adapter) {
     let unexpected = 0;
+    let matching = 0;
+    const notCompared: string[] = [];
     for (const f of files) {
         // (a WeakRef's target lives until the job ends: without a turn of the loop every recording's world stays)
         await new Promise(resolve => setImmediate(resolve));
@@ -118,12 +136,17 @@ if (values.adapter) {
             console.log(`BAD   ${f.version}/${f.id}: ${invalid.slice(0, 3).join('; ')}`);
             continue;
         }
-        const result = replayAdapter(recording, undefined, values.motion, values['effects-only']);
-        if (!result.first) continue;
+        const result = replayAdapter(recording, undefined, values.motion, values['effects-only'], values.clones);
+        if (!result.first) {
+            if (result.compared > 0) matching += 1;
+            else notCompared.push(f.id);
+            continue;
+        }
         unexpected += 1;
         console.log(`FAIL  ${f.version}/${f.id} ${result.divergences.length}/${result.compared} decisions diverge; first: ${describe(result.first)}`);
     }
-    console.log(`${files.length} recording(s), ${unexpected} unexpected`);
+    console.log(`${files.length} recording(s), ${matching} matching, ${notCompared.length} with no decision to compare, ${unexpected} unexpected`);
+    if (values.json) writeFileSync(values.json, writeJson({ replay: replayIdentity(RECORDER_ROOT), matching, notCompared, unexpected, recordings: files.length }));
     process.exit(unexpected === 0 ? 0 : 1);
 }
 
@@ -131,6 +154,7 @@ if (values['bot-carts']) {
     let bad = 0;
     let matching = 0;
     let none = 0;
+    const failures: { key: string; divergences: number; compared: number; first: unknown }[] = [];
     for (const f of files) {
         const recording = loadRecording(f.file);
         const key = `${f.version}/${f.id}`;
@@ -146,16 +170,19 @@ if (values['bot-carts']) {
         }
         bad += 1;
         const first = result.divergences[0]!;
+        failures.push({ key, divergences: result.divergences.length, compared: result.compared, first });
         console.log(`FAIL  ${key} ${result.divergences.length} divergence(s) in ${result.compared} ticks; first: t=${first.tick} ${first.field}: expected ${JSON.stringify(first.expected)} got ${JSON.stringify(first.actual)}`);
         if (values['all-ticks']) for (const d of result.divergences) console.log(`        t=${d.tick} ${d.field}: expected ${JSON.stringify(d.expected)} got ${JSON.stringify(d.actual)}`);
     }
     console.log(`${files.length} recording(s), ${matching} matching, ${none} with no ridden cart, ${bad} unexpected`);
+    if (values.json) writeFileSync(values.json, writeJson({ replay: replayIdentity(RECORDER_ROOT), matching, none, unexpected: bad, recordings: files.length, failures }));
     process.exit(bad > 0 ? 1 : 0);
 }
 if (values.bot) {
     const tally = { matching: 0, unsupported: 0, hands: 0, different: 0, codec: 0 };
     const packets: Record<string, number> = {};
     const left: Record<string, number> = {};
+    const outcomes: { key: string; outcome: string; detail: unknown }[] = [];
     for (const f of files) {
         await new Promise(resolve => setImmediate(resolve));
         const recording = loadRecording(f.file);
@@ -163,6 +190,7 @@ if (values.bot) {
         const invalid = validateRecording(recording, f.version, f.id, true);
         if (invalid.length > 0) {
             tally.different += 1;
+            outcomes.push({ key, outcome: 'bad', detail: invalid[0] });
             console.log(`BAD   ${key}: ${invalid[0]}`);
             continue;
         }
@@ -171,15 +199,19 @@ if (values.bot) {
         for (const [name, n] of Object.entries(result.notCompared)) left[name] = (left[name] ?? 0) + n;
         if (result.unsupported) {
             tally.unsupported += 1;
+            outcomes.push({ key, outcome: 'unsupported', detail: result.unsupported });
             console.log(`none  ${key}: ${result.unsupported}`);
         } else if (result.first) {
             tally.different += 1;
+            outcomes.push({ key, outcome: 'different', detail: { divergences: result.divergences.length, compared: result.compared, first: result.first } });
             console.log(`FAIL  ${key} ${result.divergences.length} of ${result.compared} ticks; first: ${JSON.stringify(result.first).slice(0, 260)}`);
         } else if (result.afterHands.length > 0) {
             tally.hands += 1;
-            console.log(`hands ${key}: the client acted at t=${result.handsAt}, and ${result.afterHands.length} ticks differ from there; this layer drives no hands`);
+            outcomes.push({ key, outcome: 'hands', detail: { at: result.handsAt, ticks: result.afterHands.length } });
+            console.log(`hands ${key}: the client acted at t=${result.handsAt}, and ${result.afterHands.length} ticks differ from there; this layer does not drive what it did`);
         } else if (result.codec.length > 0) {
             tally.codec += 1;
+            outcomes.push({ key, outcome: 'codec', detail: result.codec[0] });
             console.log(`codec ${key}: ${result.codec[0]}`);
         } else {
             tally.matching += 1;
@@ -187,6 +219,7 @@ if (values.bot) {
     }
     console.log(`packets compared ${JSON.stringify(packets)}; not compared ${JSON.stringify(left)}`);
     console.log(`${files.length} recording(s), bot: ${tally.matching} matching, ${tally.unsupported} unsupported, ${tally.hands} past the hands, ${tally.codec} codec, ${tally.different} different`);
+    if (values.json) writeFileSync(values.json, writeJson({ replay: replayIdentity(RECORDER_ROOT), ...tally, recordings: files.length, packets, notCompared: left, outcomes }));
     process.exit(tally.different > 0 ? 1 : 0);
 }
 
@@ -212,7 +245,17 @@ for (const f of files) {
         if (tag === 'FAIL ') tally.fail += 1;
         console.log(`${tag} ${key} [moving ${side}] ${moved.compared} entity ticks (${kinds}), ${moved.ended} ended, ${moved.gone} left to the server${moved.first ? `; ${moved.diverged} diverge; first: t=${moved.first.tick} ${moved.first.at} ${moved.first.field}: ${JSON.stringify(moved.first.expected)} != ${JSON.stringify(moved.first.actual)}` : ''}${moved.problems.length ? `; ${moved.problems[0]}` : ''}`);
     }
-    const result = replayNative(recording, { mode: values.continuous ? 'continuous' : 'stepwise', phases: values.phases });
+    // (--moving-only: the moving entities alone, the player's replay being another mode's)
+    if (values['moving-only']) continue;
+    // (a packet the codec cannot read fails this recording, not the run: the rest of the release still replays)
+    let result: ReturnType<typeof replayNative>;
+    try {
+        result = replayNative(recording, { mode: values.continuous ? 'continuous' : 'stepwise', phases: values.phases });
+    } catch (error) {
+        tally.fail += 1;
+        console.log(`BAD   ${key}: the replay stopped: ${String((error as Error).message).split(/\r?\n/)[0]}`);
+        continue;
+    }
     const expected = values.continuous ? undefined : known[key];
     // (what the recording was made with stands as it was: the report's own build is apart from it, below)
     report.push({ ...result, version: f.version, ...(expected ? { known: expected.reason } : {}), recording: recording.header.provenance ?? 'unrecorded' });

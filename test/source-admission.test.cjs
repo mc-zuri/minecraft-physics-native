@@ -59,24 +59,22 @@ describe('source records', () => {
         assert.notEqual(manifest['1.16.4'].source.commit, manifest['1.16.4'].source.rejectedRef.commit);
     });
 
-    it('gives all registrations a reproducible record or a visible blocker', () => {
+    it('gives all registrations a reproducible record', () => {
         const all = allAdmissions();
-        const blocked = Object.entries(all).filter(([, status]) => status.source.status === 'blocked').map(([version]) => version);
-        assert.deepEqual(blocked, ['1.9.4', '1.10.2', '1.11.2', '1.12.2', '1.13.2']);
-        for (const version of blocked) {
-            assert.match(sourceBlocker(manifest[version]), /cannot be reproduced/);
-            assert.match(all[version].source.reasons.join(), /decompiler and yarn build are not recorded/);
-        }
-        for (const [version, status] of Object.entries(all)) {
-            if (!blocked.includes(version)) assert.ok(['exact', 'alias'].includes(status.source.status), version);
-        }
+        for (const [version, status] of Object.entries(all)) assert.equal(status.source.status, 'exact', version);
+        for (const version of Object.keys(manifest)) assert.equal(sourceBlocker(manifest[version]), null, version);
     });
 
-    it('serves 1.8.8 only as the alias its evidence proves, with that evidence in the record', () => {
-        assert.equal(manifest['1.8.8'].source.status, 'alias');
-        assert.equal(manifest['1.8.8'].source.sourceRelease, '1.8.9');
-        assert.match(manifest['1.8.8'].source.evidence, /^[0-9a-f]{64}$/);
-        assert.equal(allAdmissions()['1.8.8'].source.status, 'alias');
+    it('still blocks a yarn tree no record can make again', () => {
+        const yarn = { ...manifest['1.12.2'], source: { status: 'embedded', embedded: '1.12.2', mapping: 'yarn', clientJar: { sha1: manifest['1.12.2'].source.clientJar.sha1 }, tree: manifest['1.12.2'].source.tree } };
+        assert.match(sourceBlocker(yarn), /decompiler and yarn build are not recorded/);
+    });
+
+    it('holds a legacy release to the jar the recorder mapping remapped', () => {
+        const record = structuredClone(manifest['1.12.2']);
+        assert.deepEqual(sourceRecordProblems('1.12.2', record), []);
+        record.source.clientJar.remappedSha256 = '0'.repeat(64);
+        assert.match(sourceRecordProblems('1.12.2', record).join(), /the remapped jar 0{64} is not the pinned/);
     });
 });
 

@@ -9,19 +9,24 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { describe, it } = require('node:test');
+const { after, describe, it } = require('node:test');
 const { admission, admitted } = require('../scripts/release-admission.cjs');
 const { sha256OfModule } = require('../scripts/generate-release-manifest.cjs');
 const { extractMethod } = require('../scripts/generate-version-manifest.cjs');
 const { directoryIdentity } = require('../scripts/source-identity.cjs');
 const { mergePacks, resolveTags, membershipHash } = require('../scripts/generate-block-tags.cjs');
 const { againstClient, buildTable, parseDump } = require('../scripts/generate-block-shapes.cjs');
-const { runStages } = require('../scripts/generate-all.cjs');
+const { runStages, recover } = require('../scripts/generate-all.cjs');
 const { isDeclaration } = require('../scripts/verify-generation-invariants.cjs');
 const { explain, inventory, OUTPUTS, ORACLES } = require('../scripts/provenance.cjs');
 const { integrityReport } = require('../scripts/report-generated-integrity.cjs');
 
 const root = path.resolve(__dirname, '..');
+// Every scratch folder these tests make is removed when the file's tests end: each gate run of every lane made ~40 MB
+// of them under the system temp folder and kept them, until the drive filled.
+const scratch = [];
+const scratchDirectory = prefix => { const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); scratch.push(directory); return directory; };
+after(() => { for (const directory of scratch) fs.rmSync(directory, { recursive: true, force: true }); });
 const generated = name => JSON.parse(fs.readFileSync(path.join(root, 'generated', name), 'utf8'));
 const manifest = generated('release-manifest.json').releases;
 const runtime = generated('runtime-registries.json').releases;
@@ -75,7 +80,7 @@ describe('each audited defect, put back', () => {
 
     /** Runs generate-all's last stage over a copy of the audit changed by `change`: its status and what it said. */
     function generationOver(change) {
-        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-invariants-'));
+        const directory = scratchDirectory('mc-invariants-');
         const audit = generated('physics-methods.json');
         const sources = generated('minecraft-versions.json');
         change(audit, sources);
@@ -137,7 +142,7 @@ describe('each audited defect, put back', () => {
     });
 
     it('M32: a snapshot taken for the release its branch is named after', () => {
-        const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-identity-'));
+        const tree = scratchDirectory('mc-identity-');
         fs.mkdirSync(path.join(tree, 'client'));
         fs.writeFileSync(path.join(tree, 'client', 'version.json'), JSON.stringify({ id: '20w45a' }));
         assert.equal(directoryIdentity(tree), '20w45a');
@@ -148,7 +153,7 @@ describe('each audited defect, put back', () => {
 
 describe('a failed generation', () => {
     function workspace() {
-        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-stage-'));
+        const directory = scratchDirectory('mc-stage-');
         const folder = path.join(directory, 'artifacts');
         fs.mkdirSync(folder);
         fs.writeFileSync(path.join(folder, 'table.json'), '{"complete":true}\n');
@@ -174,6 +179,39 @@ describe('a failed generation', () => {
         assert.equal(read(), '{"partial":true}\n');
     });
 
+    it('a run killed outright leaves a journal, and the next run puts the previous artifacts back first', () => {
+        const { directory, folder, read } = workspace();
+        const journal = path.join(directory, 'journal.json');
+        // a stage that writes half a table and then kills the run itself, TerminateProcess on Windows: nothing in the
+        // run lives to restore anything
+        fs.writeFileSync(path.join(directory, 'killer.cjs'), `require('fs').writeFileSync(${JSON.stringify(path.join(folder, 'table.json'))}, '{"partial":true}\\n'); process.kill(process.ppid, 'SIGKILL');`);
+        const runner = path.join(directory, 'runner.cjs');
+        fs.writeFileSync(runner, `require(${JSON.stringify(path.join(__dirname, '..', 'scripts', 'generate-all.cjs'))}).runStages(${JSON.stringify({ stages: ['adds.cjs', 'killer.cjs'], folders: [folder], directory, cwd: directory, journal })});`);
+        const killed = spawnSync(process.execPath, [runner]);
+        assert.notEqual(killed.status, 0);
+        assert.equal(read(), '{"partial":true}\n');
+        assert.ok(fs.existsSync(journal), 'the killed run left its journal');
+        const { failed, recovered } = runStages({ stages: ['fails.cjs'], folders: [folder], directory, cwd: directory, journal });
+        assert.equal(recovered, true);
+        assert.equal(failed, 'fails.cjs');
+        assert.equal(read(), '{"complete":true}\n');
+        assert.deepEqual(fs.readdirSync(folder), ['table.json']);
+        assert.equal(fs.existsSync(journal), false);
+    });
+
+    it('recover alone restores a killed run and says when there was none', () => {
+        const { folder, directory, read } = workspace();
+        const journal = path.join(directory, 'journal.json');
+        const snapshot = scratchDirectory('mc-generated-');
+        fs.cpSync(folder, path.join(snapshot, '0'), { recursive: true });
+        fs.writeFileSync(path.join(folder, 'table.json'), '{"partial":true}\n');
+        fs.writeFileSync(journal, JSON.stringify({ snapshot, copies: [[folder, path.join(snapshot, '0')]] }));
+        assert.equal(recover(journal), true);
+        assert.equal(read(), '{"complete":true}\n');
+        assert.equal(fs.existsSync(snapshot), false);
+        assert.equal(recover(journal), false);
+    });
+
     it('a check keeps nothing, and names what drifted, added files too', () => {
         const { directory, folder, read } = workspace();
         const { drift } = runStages({ stages: ['writes.cjs', 'adds.cjs'], folders: [folder], check: true, directory, cwd: directory });
@@ -182,10 +220,10 @@ describe('a failed generation', () => {
     });
 
     it('fails a fresh legacy run with no tree rather than keeping old entries, and keeps them only if told to', () => {
-        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-legacy-'));
+        const directory = scratchDirectory('mc-legacy-');
         const manifest = path.join(directory, 'legacy.json');
         fs.copyFileSync(path.join(root, 'generated', 'legacy-release-data.json'), manifest);
-        const environment = { ...process.env, MC_DECOMPILED_ROOT: path.join(directory, 'no-such-tree'), MC_LEGACY_RELEASE_MANIFEST: manifest };
+        const environment = { ...process.env, MC_LEGACY_SOURCES: path.join(directory, 'no-such-tree'), MC_LEGACY_RELEASE_MANIFEST: manifest };
         const script = path.join(root, 'scripts', 'generate-legacy-release-manifest.cjs');
         const fresh = spawnSync(process.execPath, [script], { env: environment, encoding: 'utf8' });
         assert.notEqual(fresh.status, 0);
@@ -241,7 +279,8 @@ describe('where an entry comes from (B047)', () => {
         const { identity, behaviour } = chain('block', '26.3', 'oak_door');
         assert.deepEqual([identity.status, identity.embedded], ['embedded', '26.3']);
         assert.match(behaviour, /not judged here/);
-        assert.equal(chain('block', '1.8.8', 'acacia_door').identity.status, 'alias');
+        // (1.8.8 is read from its own jar since its decompile is pinned: no longer 1.8.9's alias)
+        assert.deepEqual([chain('block', '1.8.8', 'acacia_door').identity.status, chain('block', '1.8.8', 'acacia_door').identity.embedded], ['embedded', '1.8.8']);
     });
 
     it('refuses an entry that does not exist and a release that is not registered', () => {
@@ -252,7 +291,7 @@ describe('where an entry comes from (B047)', () => {
 
     /** A copy of the generated folder and the scripts, with `change` applied: what `--check` says of it. */
     function checkOver(change) {
-        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-provenance-'));
+        const directory = scratchDirectory('mc-provenance-');
         const copied = path.join(directory, 'generated');
         const scripts = path.join(directory, 'scripts');
         fs.mkdirSync(scripts);
@@ -266,7 +305,10 @@ describe('where an entry comes from (B047)', () => {
         fs.mkdirSync(path.join(scripts, 'java-oracle'));
         for (const name of ORACLES) fs.copyFileSync(path.join(root, 'scripts', name), path.join(scripts, name));
         change(copied, scripts);
-        return spawnSync(process.execPath, [path.join(root, 'scripts', 'provenance.cjs'), '--check'], { env: { ...process.env, MC_GENERATED_ROOT: copied, MC_GENERATOR_ROOT: scripts }, encoding: 'utf8' });
+        // (a stalled child fails this test: without the timeout it holds the whole gate; the check takes well under a second)
+        const run = spawnSync(process.execPath, [path.join(root, 'scripts', 'provenance.cjs'), '--check'], { env: { ...process.env, MC_GENERATED_ROOT: copied, MC_GENERATOR_ROOT: scripts }, encoding: 'utf8', timeout: 60_000 });
+        if (run.error) throw new Error(`provenance --check did not finish: ${run.error.message}`);
+        return run;
     }
 
     it('passes the checked-in files', () => {

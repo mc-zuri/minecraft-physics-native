@@ -3,6 +3,9 @@
 // level, so this says what a state is by itself: what neighbours do to it is for the recordings. A query the blank level
 // cannot answer stays as `refused`, with why, and nothing else of the block is taken for it.
 //
+// It writes src/mineflayer/legacy-full-cubes.json too: by release before 1.13, each block's metadata whose state alone World.isBlockFullCube
+// answers true for (its getCollisionBoundingBox's average edge at least 1, 1.12.2 World.java:1835-1838), which the mapper
+// sends as the engine's LEGACY_FULL_CUBE tag; the blocks whose box reads their neighbours are the mapper's to answer.
 // The jars are the recorder's, Mojang's names of 1.14.4 mapped on by Calamus ids. A library or jar missing stops the run.
 //   node scripts/generate-legacy-shapes.cjs [--dumps DIR] [--check]
 const crypto = require("node:crypto");
@@ -11,7 +14,7 @@ const os = require("node:os");
 const path = require("node:path");
 const zlib = require("node:zlib");
 const { spawnSync } = require("node:child_process");
-const { clientJarRoot } = require("./source-pins.cjs");
+const { completeClasspath } = require("./java-oracle/classpath.cjs");
 const { LEGACY_RELEASES } = require("./legacy-release-data.cjs");
 
 const repositoryRoot = path.resolve(__dirname, "..");
@@ -20,28 +23,8 @@ const reportPath = path.join(repositoryRoot, "generated", "block-shapes-legacy.j
 const oracleSource = path.join(__dirname, "java-oracle", "LegacyShapeDump.java");
 const sha256 = (data) => crypto.createHash("sha256").update(data).digest("hex");
 
-function jarsOf(version) {
-  const root = clientJarRoot();
-  const directory = path.join(root, version);
-  const named = fs.readdirSync(directory).filter((name) => name.startsWith(`intermediary-${version}-mojang-`))
-    .map((name) => path.join(directory, name, `minecraft-${version}-fabric-merged+custom-no-environment+fixed-named+intermediary.jar`))
-    .filter((file) => fs.existsSync(file)).sort((a, b) => sha256(a).localeCompare(sha256(b)));
-  if (named.length === 0) throw new Error(`No Mojang-named jar of ${version} under ${directory}`);
-  const modules = process.env.MC_GRADLE_MODULES ?? path.join(os.homedir(), ".gradle", "caches", "modules-2", "files-2.1");
-  const json = JSON.parse(fs.readFileSync(path.join(directory, "version.json"), "utf8"));
-  const jars = [named[0]];
-  for (const { downloads } of json.libraries) {
-    const artifact = downloads?.artifact;
-    if (!artifact) continue;
-    const parts = artifact.path.split("/");
-    const file = parts.pop();
-    const release = parts.pop();
-    const name = parts.pop();
-    const found = path.join(modules, parts.join("."), name, release, artifact.sha1.replace(/^0+/, ""), file);
-    if (fs.existsSync(found)) jars.push(found);
-  }
-  return jars;
-}
+/** The release's pinned Mojang-named jar and every library its version json lists (scripts/java-oracle/classpath.cjs). */
+const jarsOf = (version) => completeClasspath(version).jars;
 
 const parseBoxes = (text) => (text === "-" ? null : text === "" ? [] : text.split(";").map((box) => box.split(",").map(Number)));
 
@@ -60,8 +43,10 @@ function parseDump(text, version) {
     if (line === "") continue;
     const fields = line.split("\t");
     if (fields[0] === "state") {
-      const [, name, id, props, collision, outline] = fields;
-      (blocks[name] ??= []).push([Number(id), props, shapeId(parseBoxes(collision)), shapeId(parseBoxes(outline))]);
+      const [, name, id, props, collision, outline, full] = fields;
+      // (World.isBlockFullCube of the state alone before 1.13, 1 or 0; none from 1.13)
+      const flag = full === "1" ? 1 : full === "0" ? 0 : null;
+      (blocks[name] ??= []).push([Number(id), props, shapeId(parseBoxes(collision)), shapeId(parseBoxes(outline)), flag]);
     } else if (fields[0] === "refused") {
       const [, name, , , channel, reason] = fields;
       ((refused[name] ??= {})[channel] ??= {})[reason] = ((refused[name][channel] ?? {})[reason] ?? 0) + 1;
@@ -128,6 +113,17 @@ function main() {
   }
   fs.mkdirSync(tableRoot, { recursive: true });
   for (const [version, table] of tables) fs.writeFileSync(path.join(tableRoot, `${version}.json.gz`), compressed(JSON.stringify(table)));
+  const fullCubes = {};
+  for (const [version, table] of tables) {
+    const byBlock = {};
+    for (const [name, rows] of Object.entries(table.blocks)) {
+      const metas = rows.filter((row) => row[4] === 1).map(([id]) => id >> 12).sort((a, b) => a - b);
+      if (metas.length > 0) byBlock[name] = [...new Set(metas)];
+    }
+    if (Object.keys(byBlock).length > 0) fullCubes[version] = byBlock;
+  }
+  fs.writeFileSync(path.join(repositoryRoot, "src", "mineflayer", "legacy-full-cubes.json"), `${JSON.stringify(fullCubes)}
+`);
   fs.writeFileSync(reportPath, text);
 }
 

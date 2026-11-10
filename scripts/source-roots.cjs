@@ -34,6 +34,18 @@ function modernTree(version) {
   return null;
 }
 
+/** MC_LEGACY_SOURCES (default legacy-src beside the source cache): the legacy releases' own jars, decompiled. */
+const legacySourcesRoot = () => process.env.MC_LEGACY_SOURCES ?? path.join(sourceCache(), "..", "legacy-src");
+
+/**
+ * The Mojang-named tree of a legacy release (1.8.8 - 1.13.2): its pinned jar remapped by recorder/mod/mappings/<release>.tiny
+ * and decompiled by scripts/materialize-sources.cjs, null when it is not at hand.
+ */
+function legacyTree(version) {
+  const tree = path.join(legacySourcesRoot(), version);
+  return fs.existsSync(path.join(tree, "net", "minecraft")) ? tree : null;
+}
+
 /**
  * How a manifest in `manifestDirectory` records a release's source file: `<pin>:<path>` when the
  * file comes from a pinned commit or client, `mc-source:<path>` when it comes from MC_SOURCE_ROOT,
@@ -49,4 +61,4 @@ function recordedSource(version, manifestDirectory, filePath) {
   return serializePath(manifestDirectory, filePath);
 }
 
-module.exports = { modernTree, recordedSource, versionFamily, repositoryRoot, manifest, manifestPath, decompRoot };
+module.exports = { modernTree, legacyTree, legacySourcesRoot, recordedSource, versionFamily, repositoryRoot, manifest, manifestPath, decompRoot };

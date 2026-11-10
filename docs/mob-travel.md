@@ -27,5 +27,12 @@ Ridden mobs are `simulateVersionedHorseTick`, happy ghasts and nautiluses includ
 | Unridden strider, skeleton horse | As their ridden kinds' travel with no rider |
 | `living` | Any other `LivingEntity`: it has no `travel` of its own (`me_mob_chicken_flutters`, `me_mob_slime_hops`, `me_mob_magma_cube_in_lava`, `me_mob_breeze_hops`, `me_mob_iron_golem_stands`, `me_mob_rabbit_hops`, `me_mob_creeper_in_water`) |
 
-`entityTravelSupport` names the family of a kind by release; `unknown` means no override, so such a kind travels as `living`. Interpolation
+`entityTravelSupport` names the family of a kind by release. Every kind of every release's registry has one
+(`test/mineflayer.test.cjs`), so `unknown` is only a name outside the game, and this path refuses it. A `mob` kind that is not in the
+table travels as `living`: no class below LivingEntity overrides `travel` (or `travelInWater`, `travelInFluid`) but those of the table,
+the ridden kinds and the player, read in the 1.8.8, 1.12.2, 1.13.2, 1.14.4, 1.16.5, 1.17, 1.19.4, 1.20.6, 1.21.2, 1.21.11 and 26.3
+trees. Two kinds are taken out of `mob` and refused here: the dragon (`dragon`), whose aiStep moves it and never calls `travel`
+(1.8.8 EnderDragon.java:102-220, 26.3 EnderDragon.java:146-231), and the shulker (`unsupported`), whose travel leaves nothing: 1.9.4
+Shulker.java:365-369 zeroes its motion after aiStep, 1.16.5 Shulker.java:257 puts it back on its block in tick, and 26.3
+Shulker.java:295-300 holds no motion at all. Interpolation
 of a remote mob is `lerpPosition` on the client's side, and is no part of this.

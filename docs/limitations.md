@@ -29,9 +29,9 @@ Dated 2026-11-06, commit `0eaaa0d`. The final pass is still running, so nothing 
 | --- | --- | --- | --- |
 | No release is admitted | untested | `requireParity: true` refuses all 50 | `src/release-status.json`, B288 |
 | Every pin is stale | untested | 23 pins on record, none on the current engine | `node scripts/release-admission.cjs 26.3`, `generated/conformance-evidence.json` |
-| The recordings on hand predate the mod changes and the scenarios added since | untested | A clean pass is still to come | `docs/recorder-coverage.md`, B219, B235 |
+| The corpus is current, the pins are not | untested | Every compiled scenario of every release is recorded `ok` in the corpus that `recorder/corpus/` pins, and two captures of it agree (B219, B235); no pin is made from it yet | `recorder/corpus/26.3.json`, `docs/release-status.md` |
 | A pin does not show a branch was reached | untested | Three of nine moved gates had no check until a fixture was written | `docs/validation-records.md` |
-| 102 of 295 gated functions are `unverified` against the source audit | untested | The list claims nothing for them | `generated/shared-gates.json`, `docs/shared-code-audit.md` |
+| A shared function with no `at_least` gate, or a gate spelled as a profile rule, has no source comparison | untested | All 323 gated functions are `source-compared`; the others claim nothing (B280) | `generated/shared-gates.json`, `docs/shared-code-audit.md` |
 | Random impulses other than the fire draws are not inputs | not implemented | Knockback spread, fishing and potion scatter are not predicted | `docs/boundary-inputs.md`, B058 |
 | AI, pathfinding, targets and mob jumps | not implemented | The caller gives their result as input | `docs/mob-travel.md` |
 | Hunger and exhaustion | not implemented | A tick never changes them | `docs/determinism.md` |
@@ -39,25 +39,23 @@ Dated 2026-11-06, commit `0eaaa0d`. The final pass is still running, so nothing 
 | Remote entities, air supply, health, inventory, general `Entity` state | not implemented | Local-player parity says nothing of them | `docs/state-contract.md` |
 | An infinite motion before 1.21.11, or a finite one past `MAX_WALKED_CELLS` | differs | Refused as "the tick's move", where vanilla walks it | `docs/numeric-contract.md`, `test/numeric-limits.test.cjs` |
 | A motion past `MAX_SYNCED_CELLS` in the adapter | differs | The tick is skipped and `state.moveRefused` is set | `docs/numeric-contract.md`, B313 |
-| `Math.sin`, `Math.cos`, `Math.atan2` | untested | Bit equal on the fixtures, which is no claim for every JVM | `docs/numeric-contract.md` |
+| `Math.sin`, `Math.cos` on x86_64 HotSpot | exact | Every finite float and 22 million other angles, on Java 21.0.11 and 25.0.3 | `docs/numeric-contract.md` |
+| `Math.sin`, `Math.cos` on arm64 HotSpot | differs | Other code there: about 1 angle in 6 by tickwright (Oracle JDK 24, Apple silicon), not measured here. The engine gives x86_64's | `docs/numeric-contract.md` |
+| `Math.sin`, `Math.cos` on Java 8 within pi/4 (x87 `fsin`, `fcos`) | differs | Releases up to 1.16.5 follow Java 8 (`trig::java8`). Past pi/4 it is exact; within it the engine rounds the true value to 64 bits and then to a double, and the processor's own `fsin` decides where that lands within a 64-bit unit of a midpoint: 9 of 1,593,644 measured call-site values (the 1.8.8 boat, the cart push to 1.13.2, `COS_TAB`) on an AMD EPYC under Linux. Windows (53-bit x87 precision) and Intel were not measured. B315 | `docs/numeric-contract.md` |
+| Java 8's mode has no recording | untested | The recorder runs every release on Java 21 or 25, so its replays set Java 21 (`setMathJava`); the Java 8 mode rests on digests and per-value measurements of Temurin 8, not on a recording. B315 | `docs/numeric-contract.md` |
+| `Math` of Java 16 (1.17, 1.17.1) | untested | Not run; inferred from 11 and 17, which give 21's sin and cos digests. 1.17 has no direct call outside the `Mth` tables. B315 | `docs/numeric-contract.md` |
 | Equal results across targets | untested | macOS, ARM and a browser did not run the corpus. It says nothing of equality with the JVM | `docs/determinism.md` |
 
 ## By release
 
 | Releases | Limitation | Kind | Evidence |
 | --- | --- | --- | --- |
-| 1.8.8 | Source is an alias of 1.8.9, for the scope in its record. No exact source | no source evidence | `generated/release-aliases.json`, `docs/source-records.md` |
 | 1.8.x | `EmptyChunk` keeps what is set in it. That is not modelled | differs | `native/src/world.rs` `set_block` |
-| 1.9.4 to 1.13.2 | Source blocked: the decompiled trees cannot be reproduced | no source evidence | `docs/source-records.md`, B276 |
-| 1.9.4, 1.10.2, 1.11.2, 1.12.2 | The 2026-11-06 pass left scenarios `invalid` or in `error` | untested | `docs/recorder-coverage.md` |
 | 1.13.2 | `me_mob_phantom_circles` is intermittently not deterministic | untested | B314 |
 | 1.13.x | The empty chunk gives back the fluid set in it. That is not modelled | differs | `native/src/world.rs` `set_block` |
-| 1.19.1, 1.21.2, 1.21.7, 1.21.10 | minecraft-data has no table of their own. The adapter takes a neighbour's data by a proved alias | untested | `src/mineflayer/data-aliases.json`, B302 |
-| 26.1.1, 26.1.2 | The adapter takes 26.1's data | untested | `src/mineflayer/data-aliases.json`, `docs/registry-release-contract.md` |
 | 26.2, 26.3 | The published `minecraft-data` has no table. The adapter needs a build that does | not implemented | `README.md` |
-| 1.19.3, 1.19.4 | `v_camel_dash`, `v_camel_sprint` and `v_camel_walk` were skipped in the last pass | untested | `docs/recorder-coverage.md` |
-| 1.20 | `x_far29m_sprint_jump` ended in an error in the last pass | untested | `docs/recorder-coverage.md` |
-| 1.20.5, 1.20.6 | Three chested-mount scenarios ended in an error, and `pj_arrow_breeze_deflects` was skipped in the last pass | untested | `docs/recorder-coverage.md` |
+| 1.19.3, 1.19.4 | The camel is an experiment there (FeatureFlags.UPDATE_1_20): its scenarios are not compiled | untested | `recorder/scenarios/dsl/compile.ts` |
+| 1.20.3 to 1.20.6 | The breeze and its wind charge are an experiment there (FeatureFlags.UPDATE_1_21): their scenarios are not compiled | untested | `recorder/scenarios/dsl/compile.ts` |
 
 ## By entry point
 
@@ -66,12 +64,16 @@ Dated 2026-11-06, commit `0eaaa0d`. The final pass is still running, so nothing 
 | `simulateTick`, `simulateTicks` | Refused: a concrete version is required | not implemented | `native/src/napi_api.rs` |
 | `simulateBoatTick`, `simulateHorseTick`, `simulateProjectileTick`, `simulateArrowTick`, `simulateTridentTick` | Run at the default release, with no version argument | differs | `docs/engine-architecture.md` |
 | `simulateVersionedTick` | Leaves out the scene the next tick reads. Use `simulateVersionedTickOutcome` to carry a state | not implemented | `docs/state-contract.md` |
-| `simulateVersionedProjectileTicks` | A name outside the family table runs as `Generic`, the thrown item's tick, on the unchecked entry points | differs | `docs/projectile-capabilities.md` |
-| `simulateVersionedMobTravel` | `entityTravelSupport` says `unknown` for a kind with no override: it travels as `living`. The family says nothing of a match | untested | `docs/mob-travel.md`, `native/src/entity_travel.rs` |
+| `simulateVersionedProjectileTicks`, 1.14.4 - 1.15.2 | A rocket with explosions that collides ends on the client as well (1.14.4 FireworkRocketEntity.java:176-197, no side test). The plain flight holds no hit state, so it flies on until the server's removal | differs | `native/src/projectile.rs` `tick_firework` |
+| `simulateVersionedMobTravel` | A `mob` kind outside the table of `docs/mob-travel.md` travels as `living`, which holds because no such class overrides `travel`; the family says nothing of a match, and only the `me_mob*` kinds are recorded. The dragon and the shulker are refused | untested | `docs/mob-travel.md`, `native/src/entity_travel.rs` |
 | Vehicle phases | A vehicle has no trace inside its tick. Captured, not compared | not implemented | `recorder/README.md` |
 | Minecarts | Rail and subtype physics are not complete. The experiment needs `minecart_improvements` | not implemented | B189, `docs/parity-contract.md` |
 | A live bot through mineflayer's plugin | The plugin does not yet call `MinecartTracker`, `pushByMovingPiston` for a vehicle, or fill `nearbyEntities` for vehicles | not implemented | B312 |
-| Adapter and bot replay layers | Done in part: movement only, hands not driven | untested | `recorder/README.md`, B221 |
+| Adapter and bot replay layers | Done in part: the bot drives movement, the keys of the hands (Minecraft.handleKeybinds) and the clicks on a container's screen through the fork; what the client sent of chat, signs, books and commands is counted, not driven | untested | `recorder/README.md`, B221 |
+| Bot replay, a passenger in nether lava | A passenger in lava takes the lava's current from mineflayer-physics-utils' fluid probe, which pushes at the overworld's 0.0023333333333333335 only (its ultra-warm 0.007 is a TODO there): in an ultra-warm dimension the fork leaves the push out | not implemented | `lib/plugins/physics.js` riderInLava, mineflayer-physics-utils botcraft.ts fluidPhysics |
+| Bot replay, `--bot-carts` and pistons | `--bot-carts` runs the recording's packets through MinecartTracker alone, with no world: a moving piston that pushes the ridden cart on the client (PistonMovingBlockEntity.moveCollidedEntities asks every entity) has nothing to push it in, so `pm_ride_minecart_lifted` stays 0.51 low there. `--bot` runs the fork with its world and pushes the cart (physics.js pushRiderAndCart), and matches the case | not implemented | `recorder/replay/bot-carts.ts` |
+| Bot replay, a horse's random rear | 1.9 - 1.19.2 a horse the client controls rears on its own now and then: Mob.baseTick plays its ambient sound when the client's own Random says so, and AbstractHorse.getAmbientSound stands it one time in ten (1.16.5 AbstractHorse.java:395-399, 714-718). The entity's Random is the client's alone, which no packet carries, so neither the bot nor the harness can tell when it rears: `v_horse_jump_full_charge`, `v_horse_turn`, `v_horse_into_lava`, `v_horse_step_up_block`, `v_swim_*` on those releases diverge from the rear on | cannot | vanilla client randomness |
+| Bot replay, a mount's walk animation | A strider seats its rider by its walk animation (Strider.getPassengerAttachmentPoint). The rows do not carry it: the harness seeds it from the mount's one move of a first tick (age 1), and an older mount starts it at rest | not implemented | `recorder/replay/bot.ts` |
 | `state-bridge` equivalence | Checked on listed fixtures, not over the state space. Vehicles are not classified there | untested | `docs/state-bridge.md` |
 | World sync | A chunk the caller never wrote reads as air, not as an error | differs | `docs/synchronization.md` |
 | `NativeWorldSync.refused` | A block the engine refuses stays a gap. The caller must read this map | differs | `src/mineflayer/world.ts`, `test/chunk-lifecycle.test.cjs` |
@@ -90,55 +92,13 @@ Dated 2026-11-06, commit `0eaaa0d`. The final pass is still running, so nothing 
 not an active defect census. Each row below is a source argument: read from vanilla's code, with no trace or regression
 that shows the difference. They were dispositioned once, under B233, and were not each re-read for this page.
 `recorder/replay/test/evidence.test.ts` holds that file's counts. An entry leaves this table when its disposition changes.
-
-D-212 is listed as active in that file, but `todo.md` records its fix as B311 with `bs_just_past_a_set_border`. The file has
-not caught up, so read that row with this note.
+Each active or fixed-not-validated row keeps the families its scope touches incomplete in `docs/subsystem-matrix.md`, however
+their replays went: no recorded case differs there, and these say the code differs where nothing was recorded.
 
 ### Active: the code differs by the source
 
 | Finding | Releases | Scope | Title | Tickets |
 | --- | --- | --- | --- | --- |
-| D-165 | 1.8.8-1.14.4 | client/player/Entity.move stepOn (slime, magma) | Pre-1.15 stepOn runs for a flying player | B083 |
-| D-166 | 26.3 | client/player and ridden mob/fluid hop free-space test | 26.3 containsAnyLiquid scans inclusive cells | B140 |
-| D-172 | 1.21.2-26.3 | client/player/piston push | Piston move limited to zero skips block effects | B088, B162 |
-| D-173 | 1.13.2 | client/boat/floatBoat | 1.13 getWaterLevelAbove adds y inside the max | B186 |
-| D-174 | 1.13.2 | client/boat/status scans | 1.13 boat scans use the water-above height | B186 |
-| D-175 | 1.17-1.19.3 (camel 1.19.3 only) | client/horse family and 1.19.3 camel/ridden travel | Ridden horses and camel skip the extra inside-block pass | B187 |
-| D-177 | arrows and tridents 1.13.2-26.3; hurting projectiles 1.16.2-26.3 | client/arrow, trident, fireball family, shulker bullet | Bubble columns never push arrows or hurting projectiles | B144, B198 |
-| D-179 | 1.14.4-1.16.1 | client/thrown items and llama spit/block_hit via adapter world sync | 1.14-1.16.1 throwables clip outlines | B200 |
-| D-180 | 1.8.8-1.13.2 | client/arrows, thrown items, fireballs, llama spit/block clip | Pre-1.14 projectiles clip the wrong block shape | B198, B200 |
-| D-183 | 1.8.8-26.3 (powder snow shape 1.17-26.3) | client/boat (ridden mobs now covered)/vehicle move | Boats and ridden mobs never add fallDistance | B184, B186 |
-| D-184 | 1.21.2-26.1.2 | client/remote entity/N-API controlled_by_local_instance=false | Non-local entity still gets landing velocity update | M21, B151, B083 |
-| D-187 | 1.8.8-26.1.2 | client/player/check_fall_damage | Ceiling hit over slime resets fall distance | B097 |
-| D-189 | 1.21.5-26.3 | client/player/riptide launch block effects | Riptide lift missing from movementThisTick | B057 |
-| D-190 | 1.21.4 | client/player and entities/inside-block traversal | 1.21.4 traversal keeps the 1e-7 nudge | B083 |
-| D-191 | 1.13.2 | client/player/water travel | 1.13.2 water snap uses pre-move falling flag | B141 |
-| D-192 | 1.14.4 | client/spectator player/adapter input | 1.14 spectator sneak input slowed then undone | B113 |
-| D-194 | all, direct N-API callers omitting movement speed | client/player/N-API default PhysicsConfig | Default movement speed is double 0.1 | B105 |
-| D-195 | 1.10.2-1.12.2 | client/LocalPlayer/updateAutoJump | 1.10-1.12 auto-jump obstacle order | B104 |
-| D-196 | 1.10.2-1.12.2 | client/LocalPlayer/updateAutoJump | 1.10-1.12 auto-jump probes full collision shape | B104 |
-| D-197 | 1.13.2-26.3 | client/player/check_auto_spin_attack, adapter entity kinds | Spectator in the sweep keeps the riptide spin | B168 |
-| D-200 | 1.13.2-26.3 | client/projectiles/clip_block | Projectile inside test uses world coordinates | B200 |
-| D-202 | 1.13.2 | client/player, boats/block collision shape data | 1.13.2 bed and cauldron shapes are 1.14's | B073, B152 |
-| D-204 | 1.9.4-26.3 (shulker); 1.21.6-26.3 (happy ghast) | client/player/entity colliders | Dying shulker or happy ghast still collides | B052, B168 |
-| D-206 | 1.9.4-26.3 | client/player/entity push | Player carrying passengers still pushed | B168 |
-| D-207 | 1.8.8 | client/player/piston push before 1.9 | 1.8 pushed-block area not normalised | B162 |
-| D-208 | 1.21.5-26.3 | client/boat/block effects | 1.21.5+ boat effect pass starts before the snap | B186 |
-| D-209 | 1.20-26.3 | client/camel/ridden tick | Sitting camel in water does not stand | B187 |
-| D-210 | 26.3 | client/fishing hook/Entity.move restitution | 26.3 fishing hook gravity and restitution | B198 |
-| D-211 | 1.13.2-26.1.2 | client/player/riptide launch | Riptide lift ignores slime or bed on ceiling hit | B083 |
-| D-212 | 1.16.2-1.17.1 | client/LocalPlayer/moveTowardsClosestSpace | 1.16.2-1.17.1 suffocatesAt ignores the border offer | B087 |
-| D-214 | 1.13.2-26.3 | client/player/tick order | Riptide launch runs after pre-player boosts and pushes | B057 |
-| D-215 | 1.19.1-26.3 | client/LocalPlayer/removal tick | Removed player skips the base tick | B057 |
-| D-216 | 1.8.8 | client/player/N-API simulateVersionedTick family | Generic state has no yaw in degrees | B051 |
-| D-218 | 1.9.4-1.12.2 | client/player/adapter EYE_HEIGHT | 1.9-1.12 eye height ignores the glide case | B120 |
-| D-219 | 1.13.2 | client/player/adapter updateFluids | 1.13 fluid probe uses a pose-sized box | B120, B140 |
-| D-220 | 1.13.2-1.21.11 (26.1+ now uses ceil) | client/player/adapter updateFluids | In-water scan includes floor(max) cell | B140 |
-| D-221 | 1.19-1.20.4 | client/player/maybeBackOffFromEdge | 1.19-1.20.4 rising guard with NaN | B056 |
-| D-222 | 1.11.2 | client/player/attached rocket boost | 1.11 rocket before player boosts along head yaw | B178 |
-| D-225 | 1.21.9-26.3 | client/player and entities/inside-block traversal | 1.21.9+ corner walk step vector | B083 |
-| D-227 | 1.19.3 | client/camel/ridden travel | 1.19.3 refusing camel uses own input branch | B187 |
-| D-228 | 1.17-1.21.1 | client/player/riptide launch | 1.17-1.21.1 riptide lift skips fire part of move | B092, B177 |
 
 ### Fixed, not validated
 
@@ -146,15 +106,19 @@ The code was changed. Nothing yet shows the change against vanilla.
 
 | Finding | Releases | Title | Tickets |
 | --- | --- | --- | --- |
-| D-161 | 1.21-1.21.11, 26.1 (audit scope; 26.2 and 26.3 read the same way) | Synced attribute keys missed on 1.21+ | B124, B125 |
-| D-167 | 1.20.5-1.20.6 | 1.20.5 attributes unresolved on 1.20.5-1.20.6 | B124, B125 |
-| D-186 | 1.20.5-26.3 | Landing computed damage at fall_distance 0 | B098 |
-| D-226 | 1.13.2-1.16.5 | Boat waterLevel start value | B186 |
-| D-229 | 26.3 | 26.3 elytra start read a stale lava flag | B136, B174 |
+
+## Excluded on purpose
+
+Behaviour left outside the requested scope, so that no matrix cell counts it as verified. The subsystem matrix
+(`docs/subsystem-matrix.md`) lists each beside the families it touches; the replays compare everything up to it and stop there.
+
+| Behaviour | Cases and modes | Why it is left out | Source | What is verified instead |
+| --- | --- | --- | --- | --- |
+| The fishing hook's bite, and its rod's retrieve | every fishing hook (`m_fishing`, `m_flow_fish`); projectiles | The bite is the server's random: `catchingFish` draws `timeUntilLured`, `timeUntilHooked` and `nibble` from the hook's `random`, and the client's `DATA_BITING` update pulls the hook by `-0.4F * Mth.nextFloat(syncronizedRandom, 0.6F, 1.0F)`, each biting tick by `-0.1 * nextFloat() * nextFloat()` of `syncronizedRandom`, a random seeded from the UUID and the game time. No recording holds either random's state, and the engine has no bite. The retrieve is the rod's use (`FishingRodItem.use` calls `FishingHook.retrieve`), a player's action that ends the hook, not the hook's physics. | 26.3 `FishingHook.java:123-136` (onSyncedDataUpdated), `:145` (the seed), `:205-218`, `:285-331` (catchingFish; the bite's `FISHING_BOBBER_SPLASH` at `:326`, `DATA_BITING` at `:331`), `:417` (retrieve), `FishingRodItem.java:27`; 1.8.8 `FishingHook.java:333-347` (`random.splash` at `:343`), `:446` | The hook's flight, its bobbing (the one `nextFloat` of each pull read back from the motion, k / 2^24) and its drag, every tick up to the bite or the retrieve, on all 50 releases: `recorder/replay/projectile.ts` stops a hook at the row whose packets bring the bite's splash (`random.splash` before 1.9, `entity.bobber.splash` to 1.12.2, `entity.fishing_bobber.splash` after) or after the player's use of an item, and says where it stopped. |
 
 ## Keeping this page
 
-- A limitation leaves this page only with a current trace or test. `test/limitations.test.cjs` holds the two tables above to
+- A limitation leaves this page only with a current trace or test. `test/limitations.test.cjs` holds the two finding tables to
   `docs/parity-dispositions.json`, and the first tables to the repository's own files.
 - The older report `parity-deviations.md` stays as history. Its counts are of that audit, not of today.
 - The audit folder `audit/physics-version-review-20261104/` is gone from this machine (`docs/finding-ledger.md`). M01 to

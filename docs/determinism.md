@@ -8,10 +8,14 @@ which is why cosmetic events cannot shift it: particles and sounds never reach t
 | consumer | authority | distribution | place in the tick | how it reaches the engine |
 |---|---|---|---|---|
 | `BaseFireBlock.fireIgnite`, a ServerPlayer's ignition, 1.21.2+ (26.3 `BaseFireBlock.java`) | server | `nextInt(1, 3)`: 1 or 2 | inside-block effects, one per ignition that reaches it | `serverFireIncrements`, ordered; or `serverFireIncrement`, one fixed value, an approximation |
+| an item or orb thrown in lava, or out of a block | both | `nextFloat`, 2 or 4 a tick | its tick | `MovingEntityInputs.random`, ordered. A tick short of draws uses 0 and says so in `randomMissing` |
+| a fishing hook's bob | both | `nextFloat` | its tick | `bob_random`, one value |
+| a projectile let go of a block, or deflected | server | `nextFloat` | its tick | its ground release, `deflect_random` |
 | a projectile's spread at `shoot` | server | the level's gaussian | before its first tick | the motion the caller hands in |
 
-`docs/random-consumers.md` is the audit from the 26.3 source. No other draw reaches the player's movement: `Entity.push`,
-friction, jumps and the fall have none. A LocalPlayer's ignition has no draw, and consumes none (`test/lifecycle.test.cjs`).
+`docs/random-consumers.md` is the audit of all 50 releases' source. No other draw reaches a player's movement: `Entity.push`,
+friction, jumps and the fall have none. A LocalPlayer's ignition has no draw, and consumes none, in any release
+(`test/random-draws.test.cjs`).
 
 ## Exact server randomness is excluded
 
@@ -22,9 +26,12 @@ a run replays exactly. Without them `serverFireIncrement` is an approximation an
 |---|---|
 | same draws | the same run, through repeated calls, a clone and a checkpoint |
 | clone or restore | the unread draws go with the state |
-| a draw the stream lacks | refused, or with the state marked so the result is known to be no exact replay |
-| a value other than 1 or 2 | refused |
-| a release before 1.21.2 | the stream stays unread: the release has no such draw |
+| a fire draw the stream lacks | refused |
+| a moving entity's draw the stream lacks | 0, with `randomMissing` set, so the result is known to be no exact replay |
+| a fire value other than 1 or 2 | refused |
+| a release before 1.21.2 | the fire stream stays unread: the release has no such draw |
+| a checkpoint restored into another release | refused |
+| a cosmetic event | no effect: particles and sounds never reach the engine, and an edit elsewhere or a client's prediction reads nothing |
 
 ## Food and exhaustion
 
@@ -63,9 +70,11 @@ crowd, a boat, arrows and snowballs, 5000 ticks each. That is 600 runs and 3,000
 | target | build | runtime | differences from Windows |
 | --- | --- | --- | --- |
 | x86_64-pc-windows-msvc | rustc 1.95.0 | Node 24.15 | reference |
-| x86_64-unknown-linux-gnu | rustc 1.95.0 | Node 24.21 | 0 |
-| wasm32-wasip1 | rustc 1.99.1 | Node 24.15 WASI | 0 |
-| wasm32-wasip1-threads | rustc 1.99.1 | Node 24.15 WASI | 0 |
+| wasm32-wasip1 | rustc 1.95.0 | Node 24.15 WASI | 0 |
+
+x86_64-unknown-linux-gnu and wasm32-wasip1-threads gave 0 differences with the earlier `trig.rs`, and their whole builds have not
+replayed this corpus since it became Intel LIBM's port, so their digests are out of this file. The port alone is covered on
+wasm32-wasip1-threads in `docs/numeric-contract.md`. The port moved 28 of the 600 runs, all `empty/glide`: `Math.cos` of the pitch.
 
 No run ended in a refusal. Corrupting one mark makes `compare.cjs` report that run and exit 1.
 

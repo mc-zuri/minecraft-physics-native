@@ -1,16 +1,4 @@
 import { isSupportedVersion, type SupportedVersion } from '../versions';
-import DATA_ALIASES from './data-aliases.json';
-
-/**
- * The release whose registry data a release has, where it is not its own to declare: minecraft-data has no table of its
- * own for these, and an alias stands on the vanilla data generator's output and the classes of both jars being compared
- * (scripts/generate-data-aliases.cjs). `undefined` for every other release, which only its own data can serve.
- */
-export function dataReleaseOf(release: unknown): string | undefined {
-    return typeof release === 'string' && Object.prototype.hasOwnProperty.call(DATA_ALIASES.aliases, release)
-        ? DATA_ALIASES.aliases[release as keyof typeof DATA_ALIASES.aliases].data
-        : undefined;
-}
 
 /**
  * Resolve one exact release before touching a binding or creating a world. The caller's registry declaration is
@@ -29,10 +17,8 @@ export function resolveRegistryRelease(registry: unknown, requested?: unknown): 
     if (typeof selected !== 'string' || !isSupportedVersion(selected)) {
         throw new Error(`unsupported decompiled Minecraft version: ${String(selected)}`);
     }
-    const dataRelease = dataReleaseOf(selected);
-    if (declared !== selected && declared !== dataRelease) {
-        const accepted = dataRelease === undefined ? 'the selected exact release' : `${dataRelease}, whose data it has`;
-        throw new Error(`registry release ${declared} cannot serve Minecraft ${selected}: supply a registry declaring ${accepted}`);
+    if (declared !== selected) {
+        throw new Error(`registry release ${declared} cannot serve Minecraft ${selected}: supply a registry declaring the selected exact release`);
     }
     // Some data providers retain the requested release in their comparison callbacks while exposing a fallback
     // release in minecraftVersion. Equality can reject that contradiction, but never approve a different release.

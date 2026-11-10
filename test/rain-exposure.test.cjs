@@ -47,7 +47,7 @@ function playerState(x, y, z, fields = {}) {
             isInWater: false, isUnderWater: false, isInLava: false, isInWeb: false, isCollidedHorizontally: false,
             isCollidedHorizontallyMinor: false, isCollidedVertically: false, fallDistance: 0, scale: 1, isInPowderSnow: false,
             wasInPowderSnow: false, keptBoundingBox: null, stuckSpeedMultiplier: new Vec3(0, 0, 0), nearbyEntities: [],
-            pistonDeltas: [0, 0, 0], pistonDeltasTick: -1, jumpTicks: 0, sprintTriggerTime: 0, prevForwardImpulse: 0,
+            jumpTicks: 0, sprintTriggerTime: 0, prevForwardImpulse: 0,
             autoJumpEnabled: false, autoJumpTime: 0, autoJumping: false, flyJumpTriggerTime: 0, attributes: {}, yaw: Math.PI,
             yawDegrees: 0, pitch: 0, control: controls(), prevControl: controls(), heading: { forward: 0, strafe: 0 },
             prevHeading: { forward: 0, strafe: 0 }, isUsingItem: false, effects: {}, jumpBoost: 0, speed: 0, slowness: 0,

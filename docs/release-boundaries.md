@@ -84,10 +84,11 @@ Selection: `physrec/wa_*`, `wh_*`, `pm_*`, `ph_*`, `fj_*`, `v_boat*`, `v_camel*`
 
 `data` is the admission dimension: each release's tables hold what its own running client's registry dump holds.
 
-26.1.1 and 26.1.2 replay on 26.1's registry through a proved alias (`src/mineflayer/data-aliases.json`, `docs/registry-release-contract.md`).
-The proof is B302's: the vanilla data generator of all three server jars gives the same 8594 files, byte for byte, and each
-differing client class has a reason read from a bytecode diff. Their data versions stay different (4786, 4788, 4790), and an
-alias covers registry data, never physics. 26.1.1 differs from 26.1 in 3 of 10682 classes: the version constants and one
+26.1.1 and 26.1.2 replay on their own registries, exact releases of minecraft-data that read 26.1's tables by path
+(`generated/data-aliases.json`, `docs/registry-release-contract.md`). The proof is B302's: the vanilla data generator of all
+three server jars gives the same 8594 files, byte for byte, their `en_us.json` is the same, and each differing client class
+has a reason read from a bytecode diff. Their data versions stay different (4786, 4788, 4790), and shared tables cover
+registry data, never physics. 26.1.1 differs from 26.1 in 3 of 10682 classes: the version constants and one
 branch of the social screen. 26.1.2 differs in 9: those, a checkbox tooltip on the report screen, and `handleAttack`
 refusing a spectator's attack, which is a server packet handler and no movement or registry.
 

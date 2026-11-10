@@ -25,7 +25,7 @@ const FLAGS = {
 /** Fields a NativePlayer keeps from setState and hands back from state(). */
 const KEPT = [
   "entityBounciness", "blockBounciness", "blockFallCallback", "ultraWarm", "isPlayer", "controlledByLocalInstance", "canSimulateMovement",
-  "nonLiving", "passenger", "boatVehicle", "inWeb", "weaving", "frostWalker", "sweetBerryBushImmune", "powderSnowImmune",
+  "nonLiving", "passenger", "isVehicle", "boatVehicle", "inWeb", "weaving", "frostWalker", "sweetBerryBushImmune", "powderSnowImmune",
   "powderSnowWalkable", "fireImmune", "fireResistance", "onFireFlag", "inRain", "stabHit", "fireProtection", "burningTime",
   "remainingFireTicks", "serverFireIncrement", "serverFireIncrements", "ticksFrozen", "ticksRequiredToFreeze", "tickCount",
   "freezeDamage", "contactDamage", "wallDamage", "insideWall", "eyeInWater", "eyeInLava", "slowFalling", "levitation",
@@ -34,7 +34,7 @@ const KEPT = [
   "movementSpeedValue", "jumpStrength", "speedEffectAmplifier", "slownessEffectAmplifier", "jumpBoostAmplifier", "dolphinsGrace",
   "depthStrider", "soulSpeed", "waterMovementEfficiency", "movementEfficiency", "airDragModifier", "frictionModifier",
   "sneakingSpeed", "fallDamage", "fireworkBoost", "boundingBox", "supportingBlock", "supportingBlockKept", "onGroundNoBlocks",
-  "outsideBorder", "movementSpeedAttribute", "fireworkRocketTicks",
+  "outsideBorder", "movementSpeedAttribute", "fireworkRocketTicks", "pendingMovements",
 ];
 
 /** Fields of a tick's scene: passed with that tick (entities as packed numbers), never kept. */

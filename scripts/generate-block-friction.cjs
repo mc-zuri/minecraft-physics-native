@@ -1,15 +1,15 @@
 // Writes generated/block-friction.json: for every registered release, the friction of its blocks out of its own
-// block registry source. Each release takes the first of MC_SOURCE_ROOT (26.2, 26.3), its pinned client's decompile
-// under MC_SOURCE_CACHE, MC_DECOMPILED_ROOT and the origin/client<release> branch of MC_DATA_REPO; a release with
-// none is listed as unverified, and its previous entry stays. A source that does not resolve fails the run (scripts/block-friction.cjs).
+// block registry source: a legacy release's decompiled jar under MC_LEGACY_SOURCES, a modern release's exact tree
+// (scripts/source-roots.cjs: MC_SOURCE_ROOT for 26.2 and 26.3, else its pinned commit or client under MC_SOURCE_CACHE),
+// all Mojang-named; a release with none is listed as unverified, and its previous entry stays. A source that does not resolve fails the run (scripts/block-friction.cjs).
 // Pass --check to compare instead of writing: it fails when the output differs.
 
 const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { registeredReleases } = require("./registered-releases.cjs");
-const { PINNED_CLIENTS, sourceCache } = require("./source-pins.cjs");
-const { directoryIdentity } = require("./source-identity.cjs");
+const { PINNED_CLIENTS, PINNED_SOURCES, NAMED_JARS } = require("./source-pins.cjs");
+const { modernTree, legacyTree } = require("./source-roots.cjs");
 const {
   parseDefaultFriction, parseRegistryFriction, parseLegacyFriction, parseLegacyClass, sha256,
 } = require("./block-friction.cjs");
@@ -17,13 +17,8 @@ const {
 const repositoryRoot = path.resolve(__dirname, "..");
 const outputPath = path.join(repositoryRoot, "generated", "block-friction.json");
 const sourceRoot = process.env.MC_SOURCE_ROOT ?? path.join(repositoryRoot, "..", "..", "pr", "mc-source");
-const decompiledRoot = process.env.MC_DECOMPILED_ROOT ?? path.join(repositoryRoot, "..", "..", "pr", "mc-decompiled");
-const dataRepository = process.env.MC_DATA_REPO ?? "D:/projects/mc-zuri/mc-data/extracted_minecraft_data";
-
-// a registered release read from another's source: exact 1.8.8 is unavailable (VERSION-REFERENCES.md)
-const STAND_INS = { "1.8.8": "1.8.9" };
-// a branch that is not its release: origin/client1.16.4 embeds 20w45a (VERSION-REFERENCES.md)
-const REJECTED = new Set(["1.16.4"]);
+// a registered release read from another's source: none since 1.8.8 is decompiled from its own jar
+const STAND_INS = {};
 
 const read = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : undefined);
 
@@ -44,46 +39,15 @@ function directoryTree(root, identity, label) {
   return { identity, label, root, read: files, list, grep };
 }
 
-function gitTree(release) {
-  const ref = `origin/client${release}`;
-  const git = (...args) => childProcess.execFileSync("git", ["-C", dataRepository, ...args], { encoding: "utf8", maxBuffer: 1 << 28, stdio: ["ignore", "pipe", "ignore"] });
-  let commit;
-  try {
-    commit = git("rev-parse", ref).trim();
-  } catch {
-    return undefined;
-  }
-  return {
-    identity: `${ref} ${commit}`,
-    label: `git ${ref}`,
-    read: (relative) => {
-      try {
-        return git("show", `${commit}:client/${relative.replaceAll("\\", "/")}`);
-      } catch {
-        return undefined;
-      }
-    },
-    list: (relative) => git("ls-tree", "--name-only", `${commit}:client/${relative.replaceAll("\\", "/")}`).split("\n").filter((name) => name.endsWith(".java")).map((name) => path.join(relative, name)),
-    grep: (pattern, relative) => {
-      const found = childProcess.spawnSync("git", ["-C", dataRepository, "grep", "-l", "-E", pattern, commit, "--", `client/${relative.replaceAll("\\", "/")}`], { encoding: "utf8", maxBuffer: 1 << 26 });
-      if (found.status !== 0 && found.status !== 1) throw new Error(`git ${ref}: git grep failed: ${found.stderr}`);
-      return found.stdout.split("\n").filter(Boolean).map((name) => name.slice(`${commit}:client/`.length));
-    },
-  };
-}
-
 function treeOf(release) {
-  const source = path.join(sourceRoot, release, "client");
-  if (fs.existsSync(path.join(source, "net", "minecraft"))) return directoryTree(source, `mc-source ${release}`, `mc-source/${release}/client`);
-  const pinned = path.join(sourceCache(), release);
-  if (PINNED_CLIENTS[release] && fs.existsSync(path.join(pinned, "client", "net", "minecraft")) && directoryIdentity(pinned) === release) {
-    return directoryTree(path.join(pinned, "client"), `client ${PINNED_CLIENTS[release].client}`, `client/${release}`);
-  }
-  if (REJECTED.has(release)) return undefined;
-  const name = STAND_INS[release] ?? release;
-  const decompiled = path.join(decompiledRoot, name);
-  if (fs.existsSync(path.join(decompiled, "net", "minecraft"))) return directoryTree(decompiled, `mc-decompiled ${name}`, `mc-decompiled/${name}`);
-  return gitTree(release);
+  const legacy = legacyTree(release);
+  if (legacy) return directoryTree(legacy, `legacy ${NAMED_JARS[release]}`, `legacy/${release}`);
+  const tree = modernTree(release);
+  if (!tree) return undefined;
+  const fromRoot = path.relative(sourceRoot, tree);
+  if (!fromRoot.startsWith("..") && !path.isAbsolute(fromRoot)) return directoryTree(tree, `mc-source ${release}`, `mc-source/${release}/client`);
+  if (PINNED_CLIENTS[release]) return directoryTree(tree, `client ${PINNED_CLIENTS[release].client}`, `client/${release}`);
+  return directoryTree(tree, `origin/client${release} ${PINNED_SOURCES[release]}`, `commit/${release}`);
 }
 
 const MOJANG = path.join("net", "minecraft", "world", "level", "block");
@@ -108,17 +72,20 @@ function frictionOf(tree, release) {
   let frictions;
   if (legacy) {
     // the classes that set it, and down the classes that extend them
+    // (the recorder's mapping leaves a legacy block class without a Mojang name in net/minecraft/block, so the whole
+    // of net/minecraft is searched)
+    const scope = path.join("net", "minecraft");
     const classes = {};
-    let found = tree.grep("this\.slipperiness *=", family);
+    let found = tree.grep("this\\.(friction|slipperiness) *=", scope);
     while (found.length > 0) {
       for (const file of found) {
         const parsed = parseLegacyClass(tree.read(file) ?? "");
         if (parsed) classes[parsed.name] = parsed;
       }
       const names = Object.keys(classes).join("|");
-      found = tree.grep(`class +[A-Za-z0-9_]+ +extends +(${names})( |$)`, family).filter((file) => !classes[path.basename(file, ".java")]);
+      found = tree.grep(`class +[A-Za-z0-9_]+ +extends +(${names})( |$)`, scope).filter((file) => !classes[path.basename(file, ".java")]);
     }
-    const declared = new Set(tree.list(family).map((file) => path.basename(file, ".java")));
+    const declared = new Set(tree.grep("^(public |abstract |final )*class ", scope).map((file) => path.basename(file, ".java")));
     declared.add("Block");
     frictions = parseLegacyFriction(registry, classes, (name) => declared.has(name), release);
   } else {
@@ -141,7 +108,7 @@ function generate() {
     const tree = treeOf(version);
     if (tree) {
       releases[version] = frictionOf(tree, version);
-    } else if (previous[version] && !REJECTED.has(version)) {
+    } else if (previous[version]) {
       releases[version] = previous[version];
     } else {
       unverified.push(version);

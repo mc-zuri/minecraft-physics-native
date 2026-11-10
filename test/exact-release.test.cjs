@@ -72,13 +72,14 @@ describe('parity admission at construction', () => {
         assert.equal(physics.releaseStatus('1.20.7'), undefined);
         assert.equal(physics.releaseStatus('constructor'), undefined);
         assert.equal(physics.releaseStatus('26.3').admitted, false);
-        assert.equal(physics.releaseStatus('1.12.2').source.status, 'blocked');
-        assert.equal(physics.releaseStatus('1.8.8').source.status, 'alias');
+        // (the legacy releases are read from their own decompiled jars: exact, as the later ones)
+        assert.equal(physics.releaseStatus('1.12.2').source.status, 'exact');
+        assert.equal(physics.releaseStatus('1.8.8').source.status, 'exact');
     });
 
     it('refuses a release not admitted when parity is required, naming what it lacks, before reading the binding', () => {
         assert.throws(() => physics.createNativePhysics(registry('26.3'), { requireParity: true, binding: unloadable }), /26\.3 is not admitted for parity: conformance unverified/);
-        assert.throws(() => physics.createNativePhysics(registry('1.12.2'), { requireParity: true, binding: unloadable }), /source blocked \(.*cannot be reproduced\), conformance/);
+        assert.throws(() => physics.createNativePhysics(registry('1.12.2'), { requireParity: true, binding: unloadable }), /1\.12\.2 is not admitted for parity: conformance unverified/);
         assert.throws(() => new physics.NativePhysics_1_20_4(registry('1.20.4'), { requireParity: true, binding: unloadable }), /1\.20\.4 is not admitted/);
         assert.throws(() => physics.createNativeBoatPhysics(registry('1.20.4'), { requireParity: true, binding: unloadable }), /1\.20\.4 is not admitted/);
         assert.throws(() => physics.assertReleaseAdmitted('1.20.7'), /1\.20\.7 is not a registered release/);

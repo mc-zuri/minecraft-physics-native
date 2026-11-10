@@ -8,6 +8,7 @@ use crate::world::shape_meets_query;
 pub const VANILLA_EQUAL_EPSILON: f64 = 9.999999747378752e-6;
 const COLLISION_EPSILON: f64 = 1.0e-7;
 
+/// Mth#equal: the two differ by less than 1.0E-5F.
 #[must_use]
 pub fn vanilla_equal(left: f64, right: f64) -> bool {
     (left - right).abs() < VANILLA_EQUAL_EPSILON
@@ -21,6 +22,8 @@ pub enum Axis {
 }
 
 impl Axis {
+    /// The two axes across a move along this one, whose overlap VoxelShape#collideX tests (its
+    /// AxisCycle turns of X, Y and Z).
     const fn others(self) -> [Self; 2] {
         match self {
             Self::X => [Self::Y, Self::Z],
@@ -68,32 +71,8 @@ fn clip_box(entity: Aabb, obstacle: Aabb, delta: f64, axis: Axis) -> f64 {
     delta
 }
 
-#[must_use]
-pub fn resolve_motion(entity: Aabb, desired: Vec3, obstacles: &[Aabb]) -> (Vec3, [bool; 3]) {
-    let mut resolved = Vec3::ZERO;
-    let mut collided = [false; 3];
-    let axes = if desired.x.abs() < desired.z.abs() {
-        [Axis::Y, Axis::Z, Axis::X]
-    } else {
-        [Axis::Y, Axis::X, Axis::Z]
-    };
-
-    for axis in axes {
-        let mut delta = component(desired, axis);
-        for obstacle in obstacles {
-            let clipped = clip_axis(entity.translated(resolved), *obstacle, delta, axis);
-            if clipped != delta {
-                collided[axis_index(axis)] = true;
-                delta = clipped;
-            }
-        }
-        resolved = set_component(resolved, axis, delta);
-    }
-
-    (resolved, collided)
-}
-
-/// Whether a box reaches more than 1.0E-7 into another on every axis.
+/// Whether a box reaches more than 1.0E-7 into another on every axis: the box's cell range that
+/// VoxelShape#collideX takes, its faces 1.0E-7 in, meets the other's.
 #[must_use]
 pub fn reaches_into(entity: Aabb, bounds: Aabb) -> bool {
     [Axis::X, Axis::Y, Axis::Z].into_iter().all(|axis| {
@@ -113,6 +92,9 @@ pub struct BlockVoxelShape {
     pub local_boxes: Vec<Aabb>,
     /// The shape is the Shapes.block() object: a whole-cell box alone (WorldSnapshot::is_shapes_block).
     pub shapes_block: bool,
+    /// The block is Blocks.MOVING_PISTON, whose shape is its block entity's: Shapes.collide's walk
+    /// reads it in a cell on two edges of the walk (1.14.4 Shapes.java:239, 1.17.1 :268).
+    pub moving_piston: bool,
 }
 
 fn is_whole_cell(local_boxes: &[Aabb]) -> bool {
@@ -120,7 +102,8 @@ fn is_whole_cell(local_boxes: &[Aabb]) -> bool {
 }
 
 impl BlockVoxelShape {
-    /// The shape of the block at `origin` from its boxes in the block.
+    /// The shape of the block at `origin` from its boxes in the block, moved there as
+    /// VoxelShape#move moves them.
     #[must_use]
     pub fn new(origin: Vec3, local_boxes: Vec<Aabb>) -> Self {
         let boxes = local_boxes.iter().map(|bounds| bounds.translated(origin)).collect();
@@ -129,11 +112,18 @@ impl BlockVoxelShape {
             boxes,
             shapes_block: is_whole_cell(&local_boxes),
             local_boxes,
+            moving_piston: false,
         }
     }
 
-    /// Whether BlockCollisions gives the shape to a query: `shape_meets_query`, or the boxes' strict
-    /// overlap without a release.
+    /// The shape as one of a moving piston block's, or not.
+    #[must_use]
+    pub fn moving_piston(self, moving_piston: bool) -> Self {
+        Self { moving_piston, ..self }
+    }
+
+    /// Whether BlockCollisions gives the shape to a query (BlockCollisions#computeNext):
+    /// `shape_meets_query`, or the boxes' strict overlap without a release.
     fn meets(&self, query: Aabb, release: Option<MinecraftVersion>) -> bool {
         self.boxes.iter().any(|bounds| match release {
             Some(release) => shape_meets_query(*bounds, self.shapes_block, query, release),
@@ -154,9 +144,12 @@ impl BlockVoxelShape {
             boxes,
             shapes_block: is_whole_cell(&local_boxes),
             local_boxes,
+            moving_piston: false,
         }
     }
 
+    /// Whether the box reaches into a box of the shape, so that VoxelShape#collideX finds it
+    /// within the shape's cells (`reaches_into`).
     fn is_entered_by(&self, entity: Aabb) -> bool {
         self.boxes
             .iter()
@@ -169,6 +162,7 @@ impl BlockVoxelShape {
         grid_lines(self.boxes.iter().map(|bounds| (*bounds, self.origin)), axis, test)
     }
 
+    /// VoxelShape#collide of the block's shape: one walk of its grid (VoxelShape.collideX).
     fn collide(&self, axis: Axis, entity: Aabb, delta: f64, test: GridTest) -> f64 {
         let grids = [Axis::X, Axis::Y, Axis::Z].map(|axis| self.grid(axis, test));
         collide_over_grid(&grids, &self.boxes, axis, entity, delta)
@@ -208,7 +202,7 @@ impl BlockVoxelShape {
 
     /// VoxelShape.calculateMaxDistance of the shape in its block against the box moved by minus
     /// the block's position, as 1.14 - 1.17's single-axis walk takes it (`box.offset(-x, -y,
-    /// -z)`, 1.16.5 VoxelShapes.java:290-291): the gaps are taken in block coordinates.
+    /// -z)`, 1.16.5 Shapes.java:281-281): the gaps are taken in block coordinates.
     fn collide_local(&self, axis: Axis, entity: Aabb, delta: f64, test: GridTest) -> f64 {
         if self.local_boxes.is_empty() {
             return delta;
@@ -229,7 +223,7 @@ impl BlockVoxelShape {
 }
 
 /// Puts block shapes in the order BlockCollisions walks their cells (Cursor3D: x fastest, then y,
-/// then z; client1.21.11 Cursor3D.java:30-40). Cursor3D over any box gives its cells in this same
+/// then z; client1.21.11 Cursor3D.java:31-40). Cursor3D over any box gives its cells in this same
 /// order, so the shapes of a larger query keep it for every smaller one.
 pub fn sort_in_cursor_order(blocks: &mut [BlockVoxelShape]) {
     blocks.sort_by(|left, right| {
@@ -243,7 +237,7 @@ pub fn sort_in_cursor_order(blocks: &mut [BlockVoxelShape]) {
 
 /// VoxelShape.collide of a shape of these boxes that a box is not inside: an empty shape passes
 /// the movement on; a non-empty one drops a movement under 1.0E-7 (VoxelShape.collideX,
-/// client1.21.11 VoxelShape.java:258-265) and clips the rest by each box in turn.
+/// client1.21.11 VoxelShape.java:207-212) and clips the rest by each box in turn.
 fn clip_boxes(boxes: &[Aabb], entity: Aabb, delta: f64, axis: Axis) -> f64 {
     if boxes.is_empty() {
         return delta;
@@ -291,6 +285,7 @@ enum Collider<'a> {
 }
 
 impl Collider<'_> {
+    /// VoxelShape#collide of one collider: a box's clip, the border's grid, a block's shape.
     fn collide(self, axis: Axis, entity: Aabb, delta: f64) -> f64 {
         match self {
             Self::Box(bounds) => clip_axis(entity, bounds, delta, axis),
@@ -302,34 +297,52 @@ impl Collider<'_> {
 }
 
 /// The colliders of a move as Entity.collectColliders lists them: the entity colliders, then the
-/// world border's shape, then the blocks (client1.21.11 Entity.java:1116-1130; 1.14.4 - 1.17.1
+/// world border's shape, then the blocks (client1.21.11 Entity.java:1146-1160; 1.14.4 - 1.17.1
 /// put the entity colliders and the border before getBlockCollisions too, 1.16.5
 /// Entity.java:790-795, 830-832).
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Default)]
 pub struct Colliders<'a> {
     /// Level.getEntityCollisions of the whole move, each a shape of its own. Vanilla collects
-    /// them once for the move and every step-up attempt (client1.21.11 Entity.java:1066).
+    /// them once for the move and every step-up attempt (client1.21.11 Entity.java:1096).
     pub entities: &'a [Aabb],
     /// The world border's shape where it is among the colliders.
     pub border: Option<&'a [Aabb]>,
+    /// From 1.18 whether the border is among the colliders is asked again of each collideBoundingBox
+    /// and collectColliders, of its own box: `isInsideCloseToBorder(entity, box)`, whose margin is the
+    /// box's size (1.18 Entity.java:800-801, 1.20.6 :913, 1.21.11 :1126). Where it is set, `border`
+    /// is the border's shape and this says which attempts take it.
+    pub border_near: Option<BorderNear<'a>>,
     /// Boxes each a shape of its own (a flat obstacle list), after the border.
     pub boxes: &'a [Aabb],
     /// The border's shape getBlockCollisions offers again at the head of the blocks, for an
-    /// entity whose box touches it from within (1.14 - 1.17.1: 1.15 CollisionView.java:80-88,
-    /// 1.16.5 BlockCollisionSpliterator.java:56-58, 100-112; WorldSnapshot::
+    /// entity whose box touches it from within (1.14 - 1.17.1: 1.15 CollisionGetter.java:80-88,
+    /// 1.16.5 CollisionSpliterator.java:56-58, 100-112; WorldSnapshot::
     /// block_collisions_offer_world_border).
     pub block_border: Option<&'a [Aabb]>,
     /// The blocks' shapes in BlockCollisions' order (Cursor3D: x fastest, then y, then z,
-    /// client1.21.11 Cursor3D.java:30-40), last; each attempt takes those meeting its box.
+    /// client1.21.11 Cursor3D.java:31-40), last; each attempt takes those meeting its box.
     pub blocks: &'a [BlockVoxelShape],
     /// The release whose BlockCollisions tests the blocks (`shape_meets_query`); strict overlap
     /// without one.
     pub release: Option<MinecraftVersion>,
 }
 
+/// The test of whether the world border is among a collision attempt's colliders, of its box.
+pub type BorderNear<'a> = &'a dyn Fn(Aabb) -> bool;
+
 impl<'a> Colliders<'a> {
+    /// The colliders of an attempt whose box is `query`: without the border where border_near says
+    /// it is not close to it (WorldBorder#isInsideCloseToBorder of the box Entity#collideBoundingBox
+    /// and Entity#collectColliders give it).
+    fn border_for(self, query: Aabb) -> Self {
+        match self.border_near {
+            Some(near) if !near(query) => Colliders { border: None, ..self },
+            _ => self,
+        }
+    }
+
     /// The shapes of an attempt sweeping `query`: every entity collider and the border, and the
-    /// boxes and blocks meeting the query.
+    /// boxes and blocks meeting the query (Entity#collectColliders).
     fn listed(self, query: Aabb) -> Vec<Collider<'a>> {
         let test = GridTest::of(self.release);
         self.entities
@@ -382,7 +395,7 @@ pub(crate) fn grid_lines(
         return lines;
     }
     // IndirectMerger: a coordinate joins the last kept when `d >= e - 1.0E-7` (1.21.11
-    // IndirectMerger.java:52, 1.16.5 SimplePairList.java:37; 1.13.2's `>` differs on equality alone)
+    // IndirectMerger.java:53, 1.16.5 IndirectMerger.java:37; 1.13.2's `>` differs on equality alone)
     lines.dedup_by(|line, kept| *kept >= *line - COLLISION_EPSILON);
     lines
 }
@@ -474,51 +487,17 @@ pub struct CollisionRules {
     pub step_up: StepUp,
     /// Until 1.17 the world border's shape is a collider wherever the entity is inside it, so
     /// a movement always meets a collider, even one that sweeps no block.
-    pub border_always_collides: bool,
     /// 1.14.4 - 1.17.1: a movement along one axis (two components zero) walks the blocks cell by
     /// cell in block coordinates (Entity.collideBoundingBoxHeuristically, client1.14.4
-    /// Entity.java:725-735; 1.16.5 Entity.java:823-837, VoxelShapes.java:239-306; 1.17
-    /// VoxelShapes.java:232-294; gone in 1.18).
+    /// Entity.java:725-735; 1.16.5 Entity.java:824-836, Shapes.java:232-296; 1.17
+    /// Shapes.java:223-283; gone in 1.18).
     pub single_axis_walk: bool,
-}
-
-/// Entity.collide: the movement collided with the obstacles, stepping up when a grounded or
-/// landing entity runs into something. `obstacles` are boxes each a shape of its own (blocks'
-/// boxes, the world border's), `entities` the entity colliders, which vanilla keeps in a list of
-/// their own and lists first, and `entered` the shapes of the blocks among the obstacles the
-/// entity is inside, which collide as whole shapes after the rest.
-#[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn collide(
-    bounds: Aabb,
-    movement: Vec3,
-    obstacles: &[Aabb],
-    entities: &[Aabb],
-    entered: &[BlockVoxelShape],
-    on_ground: bool,
-    max_step: f32,
-    rules: CollisionRules,
-) -> Vec3 {
-    let boxes: Vec<Aabb> = obstacles
-        .iter()
-        .copied()
-        .filter(|obstacle| !entered.iter().any(|shape| shape.boxes.contains(obstacle)))
-        .collect();
-    let colliders = Colliders {
-        entities,
-        border: rules.border_always_collides.then_some(&[][..]),
-        boxes: &boxes,
-        block_border: None,
-        blocks: entered,
-        release: None,
-    };
-    collide_shapes(bounds, movement, colliders, on_ground, max_step, rules)
 }
 
 /// Entity.collide over the colliders as shapes: each VoxelShape of the list, entity collider,
 /// world border or block, drops a movement under 1.0E-7 before it collides (Shapes.collide,
-/// client1.21.11 Shapes.java:207-217), and a block's shape resolves in one walk of its grid
-/// (VoxelShape.collideX, VoxelShape.java:258-265), so the check falls between whole shapes in the
+/// client1.21.11 Shapes.java:175-185), and a block's shape resolves in one walk of its grid
+/// (VoxelShape.collideX, VoxelShape.java:207-212), so the check falls between whole shapes in the
 /// order Entity.collectColliders lists them, not between their boxes.
 #[must_use]
 pub fn collide_shapes(
@@ -552,6 +531,8 @@ pub fn collide_shapes(
     }
 }
 
+/// Entity#collide's step up until 1.20.6: the move lifted by the step height, or the horizontal
+/// move after the highest lift the swept box allows, whichever goes further, lowered back.
 fn lifted_step_up(
     bounds: Aabb,
     movement: Vec3,
@@ -598,6 +579,7 @@ fn candidate_step_up(
     if !landing {
         query = query.expand_towards(Vec3::new(0.0, -9.999999747378752e-6, 0.0));
     }
+    let colliders = colliders.border_for(query);
     // a flat list's boxes bring the whole shape of their block (BlockCollisions)
     let test = GridTest::of(colliders.release);
     let boxes = block_shapes_in(colliders.boxes, query);
@@ -628,7 +610,7 @@ fn candidate_step_up(
     let listed = step_colliders.listed(query);
     for height in heights {
         let lifted = Vec3::new(movement.x, f64::from(height), movement.z);
-        let stepped = collide_with_shapes(lifted, grounded, &listed);
+        let stepped = collide_with_shapes(lifted, grounded, &listed, colliders.release);
         if stepped.horizontal_length_squared() > collided.horizontal_length_squared() {
             let distance_to_ground = bounds.min.y - grounded.min.y;
             return stepped + Vec3::new(0.0, -distance_to_ground, 0.0);
@@ -637,6 +619,9 @@ fn candidate_step_up(
     collided
 }
 
+/// Entity#collectCandidateStepUpHeights: each collider's y coordinates as heights above the box,
+/// those under zero or equal to the collided y skipped, a collider's walk ending past the step,
+/// sorted.
 fn candidate_step_heights(
     grounded: Aabb,
     entities: &[Aabb],
@@ -699,14 +684,15 @@ fn entity_y_coordinates(collider: Aabb, test: GridTest) -> Vec<f64> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum GridTest {
     /// abs(f - floor(f)) < 1.0E-7 of the scaled coordinate, before 1.17: a coordinate just under
-    /// a line is off the grid (1.13.2 VoxelShapes.java:108, 1.16.5 :112).
+    /// a line is off the grid (1.13.2 Shapes.java:99, 1.16.5 :113).
     Floor,
-    /// abs(f - round(f)) < 1.0E-7 * 2^n, from 1.17 (1.17 VoxelShapes.java:109).
+    /// abs(f - round(f)) < 1.0E-7 * 2^n, from 1.17 (1.17 Shapes.java:107).
     Round,
 }
 
 impl GridTest {
-    /// The test of a release, the current one without a release.
+    /// The test of a release, the current one without a release (1.16.5 Shapes.java:113-114
+    /// floor; 1.17 Shapes.java:107-108 round).
     pub(crate) fn of(release: Option<MinecraftVersion>) -> Self {
         match release {
             Some(release) if !release.at_least(1, 17, 0) => Self::Floor,
@@ -715,6 +701,7 @@ impl GridTest {
     }
 }
 
+/// Shapes#findBits: the least n of 0 to 3 that puts both coordinates on a 1/2^n grid.
 pub(crate) fn grid_bits(min: f64, max: f64, test: GridTest) -> Option<u32> {
     if min < -1.0e-7 || max > 1.0000001 {
         return None;
@@ -740,7 +727,8 @@ fn block_origin(collider: Aabb) -> Vec3 {
     )
 }
 
-/// BlockCollisions: the whole shape of every block with a box meeting the query.
+/// BlockCollisions: the whole shape of every block with a box meeting the query
+/// (BlockCollisions#computeNext).
 fn block_shapes_in(obstacles: &[Aabb], query: Aabb) -> Vec<Aabb> {
     let blocks: Vec<Vec3> = obstacles
         .iter()
@@ -769,19 +757,35 @@ fn collide_bounding_box(
     if rules.single_axis_walk && zeros >= 2 {
         return collide_single_axis(bounds, movement, colliders);
     }
-    let listed = colliders.listed(bounds.expand_towards(movement));
-    collide_with_shapes(movement, bounds, &listed)
+    let query = bounds.expand_towards(movement);
+    let colliders = colliders.border_for(query);
+    let listed = colliders.listed(query);
+    collide_with_shapes(movement, bounds, &listed, colliders.release)
 }
 
 /// Entity.collideWithShapes: no collision without a collider, else y, then the larger of x and z
 /// after the smaller (Direction.axisStepOrder).
-fn collide_with_shapes(movement: Vec3, bounds: Aabb, colliders: &[Collider<'_>]) -> Vec3 {
+///
+/// From 1.21.5 the result starts from Vec3.ZERO and takes only the axes that moved, so an axis of
+/// -0.0 comes back +0.0 (1.21.5 Entity.java:1059-1069); before, `new Vec3(d, e, f)` of the movement
+/// keeps it (1.21.4 Entity.java:1011-1035). No collider gives the movement itself on both sides.
+fn collide_with_shapes(
+    movement: Vec3,
+    bounds: Aabb,
+    colliders: &[Collider<'_>],
+    release: Option<MinecraftVersion>,
+) -> Vec3 {
     if colliders.is_empty() {
         return movement;
     }
-    collide_axes(movement, bounds, |axis, entity, delta| {
+    let collided = collide_axes(movement, bounds, |axis, entity, delta| {
         shapes_collide(axis, entity, colliders, delta)
-    })
+    });
+    if !release.is_some_and(|release| release.at_least(1, 21, 5)) {
+        return collided;
+    }
+    let moved = |delta: f64, value: f64| if delta == 0.0 { 0.0 } else { value };
+    Vec3::new(moved(movement.x, collided.x), moved(movement.y, collided.y), moved(movement.z, collided.z))
 }
 
 /// The movement collided on y, then on the larger of x and z after the smaller, the box moved
@@ -823,7 +827,7 @@ fn collide_axes(
 }
 
 /// Shapes.collide: before each shape a movement under 1.0E-7 is dropped, then the shape collides
-/// it (client1.21.11 Shapes.java:207-217).
+/// it (client1.21.11 Shapes.java:175-185).
 fn shapes_collide(axis: Axis, entity: Aabb, colliders: &[Collider<'_>], mut delta: f64) -> f64 {
     for collider in colliders {
         if delta.abs() < COLLISION_EPSILON {
@@ -859,14 +863,16 @@ fn collide_single_axis(bounds: Aabb, movement: Vec3, colliders: Colliders<'_>) -
     })
 }
 
-/// VoxelShapes.calculatePushVelocity (1.16.5 VoxelShapes.java:243-306, client1.14.4
+/// Shapes.collide (1.16.5 Shapes.java:235-296, client1.14.4
 /// Shapes.collide(AABB, LevelReader, ...)): a box under 1.0E-6 on an axis passes the movement on;
 /// else a movement under 1.0E-7 is dropped, and the cells around the box are walked layer by layer
 /// along the movement (the movement axis outermost, then the axes AxisCycle puts after it), up to
-/// the layer the movement reaches. A cell on one face of the walk counts only for a large shape
-/// and one on an edge only for a moving piston (MovingPistonBlock's shape comes from its block
-/// entity, which the world does not hold: the moving-piston push models it, so no edge cell
-/// collides here); each block's shape collides the box in block coordinates, and a movement it
+/// the layer the movement reaches. A cell on one face of the walk counts only for a large shape,
+/// which a moving piston's always is (its dynamicShape leaves the state no cache, and
+/// hasLargeCollisionShape is then true: 1.17.1 Blocks.java:360-371, BlockBehaviour.java:435-437;
+/// 1.14.4 BlockState.java:96-98), and one on an edge only for a moving piston (1.14.4
+/// Shapes.java:239, 1.17.1 :268 `s != 2 || is(Blocks.MOVING_PISTON)`), whose shape is its
+/// block entity's at its progress; each block's shape collides the box in block coordinates, and a movement it
 /// leaves under 1.0E-7 is dropped at once. The entity colliders and the border collide the rest,
 /// each with only its own check.
 fn walk_axis(
@@ -884,7 +890,7 @@ fn walk_axis(
     if delta.abs() < COLLISION_EPSILON {
         return 0.0;
     }
-    // AxisCycleDirection.between(axis, Z).opposite() cycles X, Y onto the axes after the movement's
+    // AxisCycle.between(axis, Z).opposite() cycles X, Y onto the axes after the movement's
     let (first, second) = match axis {
         Axis::X => (Axis::Y, Axis::Z),
         Axis::Y => (Axis::Z, Axis::X),
@@ -919,7 +925,7 @@ fn walk_axis(
                 let faces = i32::from(q == i || q == j)
                     + i32::from(r == k || r == l)
                     + i32::from(p == m || p == n);
-                if faces >= 2 {
+                if faces >= 3 {
                     continue;
                 }
                 let mut cell = [0; 3];
@@ -929,7 +935,10 @@ fn walk_axis(
                 let Some(shape) = blocks.get(&(cell[0], cell[1], cell[2])) else {
                     continue;
                 };
-                if faces == 1 && !shape.is_large() {
+                if faces == 2 && !shape.moving_piston {
+                    continue;
+                }
+                if faces == 1 && !shape.moving_piston && !shape.is_large() {
                     continue;
                 }
                 delta = shape.collide_local(axis, entity, delta, test);
@@ -1056,7 +1065,8 @@ struct LegacyColliders {
 }
 
 impl LegacyColliders {
-    /// The VoxelShapes in the order 1.13's getCollisionBoxes streams them.
+    /// The VoxelShapes in the order 1.13's getCollisionBoxes streams them (LevelReader#method_16378:
+    /// the blocks' shapes, then the full cubes' joined shape; the entity boxes after).
     fn listed(&self) -> Vec<Collider<'_>> {
         self.blocks
             .iter()
@@ -1067,14 +1077,14 @@ impl LegacyColliders {
     }
 }
 
-/// World.getCollisionBoxes before 1.14, the entity colliders after the blocks. From 1.13 the
+/// Level.doesBoxCollide before 1.14, the entity colliders after the blocks. From 1.13 the
 /// query is LevelReader.method_16365: the box swept and grown by 1.0E-7, less the box moved 1.0E-7
 /// back along the move (an L of the leading faces, and of the low faces on an axis it does not
 /// move on), and each join is on the merged grid (legacy_shapes.rs). Over the cells around that
 /// shape, x fastest, but those on two faces of the range, it leaves out the blocks the box is in,
 /// gives each other block's shape that meets it, then the full cubes joined in one shape if that
-/// meets it, then the entity boxes meeting its bounds (1.13.2 RenderBlockView.java:113-165, 171-178,
-/// EntityView:22-37).
+/// meets it, then the entity boxes meeting its bounds (1.13.2 LevelReader.java:113-167, 173-180,
+/// EntityView:24-37).
 fn legacy_colliders(
     obstacles: &[Aabb],
     entities: &[Aabb],
@@ -1156,7 +1166,8 @@ fn legacy_colliders(
     colliders
 }
 
-/// AxisAlignedBB.calculateX/Y/ZOffset: exact overlaps, no tolerance.
+/// AxisAlignedBB.calculateX/Y/ZOffset (AABB#method_583, AABB#method_589 and AABB#method_594 of the
+/// legacy trees, which the mapping leaves unnamed): exact overlaps, no tolerance.
 fn aabb_offset(entity: Aabb, obstacle: Aabb, delta: f64, axis: Axis) -> f64 {
     let overlaps = |other: Axis| {
         component(entity.max, other) > component(obstacle.min, other)
@@ -1188,6 +1199,7 @@ fn axis_index(axis: Axis) -> usize {
     }
 }
 
+/// Vec3#get: the vector's coordinate on the axis.
 fn component(value: Vec3, axis: Axis) -> f64 {
     match axis {
         Axis::X => value.x,
@@ -1196,6 +1208,7 @@ fn component(value: Vec3, axis: Axis) -> f64 {
     }
 }
 
+/// Vec3#with: the vector with its coordinate on the axis replaced.
 fn set_component(value: Vec3, axis: Axis, component: f64) -> Vec3 {
     match axis {
         Axis::X => Vec3::new(component, value.y, value.z),
@@ -1207,21 +1220,53 @@ fn set_component(value: Vec3, axis: Axis, component: f64) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::{
-        block_shapes_in, candidate_step_heights, clip_axis, collide, collide_legacy,
-        collide_shapes, entity_y_coordinates, resolve_motion, sort_in_cursor_order, vanilla_equal,
+        block_shapes_in, candidate_step_heights, clip_axis, collide_legacy,
+        collide_shapes, entity_y_coordinates, sort_in_cursor_order, vanilla_equal,
         collide_border, y_coordinates, Axis, BlockVoxelShape, Colliders, CollisionRules, GridTest,
         StepUp,
     };
+
+    /// (a test's) Entity.collide: the movement collided with the obstacles, stepping up when a grounded or
+    /// landing entity runs into something. `obstacles` are boxes each a shape of its own (blocks'
+    /// boxes, the world border's), `entities` the entity colliders, which vanilla keeps in a list of
+    /// their own and lists first, and `entered` the shapes of the blocks among the obstacles the
+    /// entity is inside, which collide as whole shapes after the rest.
+    #[allow(clippy::too_many_arguments)]
+    fn collide(
+        bounds: Aabb,
+        movement: Vec3,
+        obstacles: &[Aabb],
+        entities: &[Aabb],
+        entered: &[BlockVoxelShape],
+        on_ground: bool,
+        max_step: f32,
+        rules: CollisionRules,
+    ) -> Vec3 {
+        let boxes: Vec<Aabb> = obstacles
+            .iter()
+            .copied()
+            .filter(|obstacle| !entered.iter().any(|shape| shape.boxes.contains(obstacle)))
+            .collect();
+        let colliders = Colliders {
+            entities,
+            border: None,
+            border_near: None,
+            boxes: &boxes,
+            block_border: None,
+            blocks: entered,
+            release: None,
+        };
+        collide_shapes(bounds, movement, colliders, on_ground, max_step, rules)
+    }
+
     use crate::math::{Aabb, Vec3};
 
     const LIFTED: CollisionRules = CollisionRules {
         step_up: StepUp::Lifted,
-        border_always_collides: false,
         single_axis_walk: false,
     };
     const CANDIDATE_HEIGHTS: CollisionRules = CollisionRules {
         step_up: StepUp::CandidateHeights,
-        border_always_collides: false,
         single_axis_walk: false,
     };
 
@@ -1243,26 +1288,6 @@ mod tests {
         let obstacle = box_at(0.0, 0.0, 0.0);
 
         assert_eq!(clip_axis(entity, obstacle, -2.5, Axis::X), -1.0);
-    }
-
-    #[test]
-    fn resolves_multiple_axes_in_order() {
-        let entity = box_at(0.0, 0.0, 0.0);
-        let obstacle = box_at(2.0, 0.0, 2.0);
-        let (motion, collided) = resolve_motion(entity, Vec3::new(2.5, 0.0, 2.5), &[obstacle]);
-
-        assert_eq!(motion, Vec3::new(2.5, 0.0, 1.0));
-        assert_eq!(collided, [false, false, true]);
-    }
-
-    #[test]
-    fn follows_vanilla_axis_order_when_z_dominates() {
-        let entity = box_at(0.0, 0.0, 0.0);
-        let obstacle = box_at(0.0, 0.0, 2.0);
-        let (motion, collided) = resolve_motion(entity, Vec3::new(1.0, 0.0, 2.5), &[obstacle]);
-
-        assert_eq!(motion, Vec3::new(1.0, 0.0, 1.0));
-        assert_eq!(collided, [false, false, true]);
     }
 
     fn half_block_step() -> Aabb {
@@ -1388,7 +1413,7 @@ mod tests {
 
     #[test]
     fn an_entity_collider_is_a_shape_in_world_coordinates() {
-        // 1.21 VoxelShapes.java:52-63, 95-109: cuboid(entity box) is a grid only for a box on a
+        // 1.21 Shapes.java:47-52, 75-89: cuboid(entity box) is a grid only for a box on a
         // 1/2^n grid of the cube at the origin; elsewhere its coordinates are its bounds.
         let near_origin = Aabb::new(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.5, 1.0));
         let elsewhere = Aabb::new(Vec3::new(3.0, 64.0, 5.0), Vec3::new(4.0, 64.5, 6.0));
@@ -1400,8 +1425,8 @@ mod tests {
 
     #[test]
     fn step_heights_of_an_entity_collider_are_its_world_shape_coordinates() {
-        // 1.21 Entity.java:885, 898-900, 913-933: collectStepHeights takes getPointPositions(Y) of
-        // each entity collider as VoxelShapes.cuboid made it, not as a block shape of the cell of
+        // 1.21 Entity.java:911, 924-926, 942-964: collectStepHeights takes getPointPositions(Y) of
+        // each entity collider as Shapes.box made it, not as a block shape of the cell of
         // its minimum corner.
         let grounded = box_at(0.0, 0.0, 0.0);
         let collider = Aabb::new(Vec3::new(1.0, 0.0, 0.0), Vec3::new(1.5, 0.25, 1.0));
@@ -1419,7 +1444,7 @@ mod tests {
     #[test]
     fn voxel_collision_of_1_13_leaves_out_only_blocks_the_box_reaches_into() {
         // 1.13.2 IWorldReaderBase.java:112-156 skips a block position whose shape the box meets,
-        // for blocks only; World.java:1914-1916 appends the entity shapes after them.
+        // for blocks only; Level.java:1903-1905 appends the entity shapes after them.
         let carpet = Aabb::new(Vec3::new(0.0, 64.0, 0.0), Vec3::new(1.0, 64.0625, 1.0));
         let boat = Aabb::new(
             Vec3::new(0.2, 64.0625, 0.2),
@@ -1590,16 +1615,36 @@ mod tests {
     }
 
     #[test]
+    fn each_attempt_asks_whether_the_border_is_close_to_its_own_box_from_1_18() {
+        // isInsideCloseToBorder(entity, box) of each collideBoundingBox's box (1.18 Entity.java:800-801,
+        // 1.20.6 :913): the margin is the box's size, so a wide attempt can take the border a narrow one does not
+        let border = [Aabb::new(Vec3::new(10.0, -100.0, -100.0), Vec3::new(20.0, 100.0, 100.0))];
+        let near = |query: Aabb| query.max.x - query.min.x > 1.0;
+        let colliders = Colliders { border: Some(&border), border_near: Some(&near), ..Colliders::default() };
+        let wide = Aabb::new(Vec3::ZERO, Vec3::new(2.0, 1.0, 1.0));
+        let narrow = Aabb::new(Vec3::ZERO, Vec3::new(0.6, 1.0, 0.6));
+        assert!(colliders.border_for(wide).border.is_some());
+        assert!(colliders.border_for(narrow).border.is_none());
+        let fixed = Colliders { border: Some(&border), ..Colliders::default() };
+        assert!(fixed.border_for(narrow).border.is_some());
+    }
+
+    #[test]
     fn the_world_border_drops_a_negligible_movement_until_1_18() {
         let entity = box_at(0.0, 0.0, 0.0);
         let movement = Vec3::new(0.5e-7, 0.0, 0.0);
-        let bordered = CollisionRules {
-            border_always_collides: true,
-            ..LIFTED
+        let bordered = Colliders {
+            entities: &[],
+            border: Some(&[]),
+            border_near: None,
+            boxes: &[],
+            block_border: None,
+            blocks: &[],
+            release: None,
         };
 
         assert_eq!(
-            collide(entity, movement, &[], &[], &[], false, 0.6, bordered),
+            collide_shapes(entity, movement, bordered, false, 0.6, LIFTED),
             Vec3::ZERO
         );
         assert_eq!(
@@ -1656,16 +1701,6 @@ mod tests {
         assert_eq!(clip_axis(entity, obstacle, -0.5e-7, Axis::X), 0.0);
     }
 
-    #[test]
-    fn reports_collision_when_vanilla_resolves_sub_epsilon_motion_to_zero() {
-        let entity = box_at(0.0, 0.0, 0.0);
-        let obstacle = box_at(1.0, 0.0, 0.0);
-        let (motion, collided) = resolve_motion(entity, Vec3::new(0.5e-7, 0.0, 0.0), &[obstacle]);
-
-        assert_eq!(motion.x, 0.0);
-        assert!(collided[0]);
-    }
-
     const WALK: CollisionRules = CollisionRules {
         single_axis_walk: true,
         ..LIFTED
@@ -1692,8 +1727,8 @@ mod tests {
     #[test]
     fn the_border_offered_again_by_the_block_stream_is_another_check() {
         // 1.14 - 1.17.1 getBlockCollisions with the entity offers the border's shape first when
-        // the entity's box touches it from within (1.15 CollisionView.java:80-88, 1.16.5
-        // BlockCollisionSpliterator.java:56-58, 100-112), after the border Entity.collide put
+        // the entity's box touches it from within (1.15 CollisionGetter.java:80-88, 1.16.5
+        // CollisionSpliterator.java:56-58, 100-112), after the border Entity.collide put
         // among the colliders (1.16.5 Entity.java:787-795, 831): the border clips a box 5e-8
         // inside it to 5e-8, which the second border's check drops
         let entity = Aabb::new(Vec3::new(9.0, 0.0, 0.0), Vec3::new(10.0 - 5.0e-8, 1.0, 1.0));
@@ -1712,7 +1747,7 @@ mod tests {
             ..once
         };
         assert_eq!(collide_shapes(entity, push, twice, false, 0.6, WALK).x, 0.0);
-        // a single-axis move walks the cells itself (VoxelShapes.calculatePushVelocity), with no
+        // a single-axis move walks the cells itself (Shapes.collide), with no
         // block stream
         let along = Vec3::new(0.5, 0.0, 0.0);
         assert_eq!(collide_shapes(entity, along, twice, false, 0.6, WALK).x, 10.0 - (10.0 - 5.0e-8));
@@ -1721,8 +1756,8 @@ mod tests {
     #[test]
     fn the_sub_epsilon_check_falls_between_whole_shapes() {
         // Shapes.collide drops a movement under 1.0E-7 before each VoxelShape of the list
-        // (client1.21.11 Shapes.java:207-217), and a shape resolves in one walk of its grid
-        // (VoxelShape.java:258-265, no check between its boxes): pressing 5e-8 short of a lone
+        // (client1.21.11 Shapes.java:175-185), and a shape resolves in one walk of its grid
+        // (VoxelShape.java:207-212, no check between its boxes): pressing 5e-8 short of a lone
         // stair keeps the 5e-8 its first box leaves, though the stair has a second box.
         let entity = Aabb::new(Vec3::new(0.4, 0.0, 0.0), Vec3::new(1.0 - 5.0e-8, 1.0, 1.0));
         let push = Vec3::new(0.7, 0.0, 0.0);
@@ -1753,7 +1788,7 @@ mod tests {
     #[test]
     fn colliders_go_entities_border_then_blocks_in_cursor_order() {
         // Entity.collectColliders: entity colliders, the border, then BlockCollisions in Cursor3D
-        // order, x fastest, then y, then z (client1.21.11 Entity.java:1116-1130, Cursor3D.java:
+        // order, x fastest, then y, then z (client1.21.11 Entity.java:1146-1160, Cursor3D.java:
         // 30-40). Only a residual the last shape leaves survives: with the stair last in that
         // order the 5e-8 stays; with a block of a later row after it, it is dropped.
         let entity = Aabb::new(Vec3::new(0.4, 0.0, 0.0), Vec3::new(1.0 - 5.0e-8, 1.0, 1.0));
@@ -1817,8 +1852,8 @@ mod tests {
     fn a_one_axis_move_of_1_14_to_1_17_walks_the_blocks_and_drops_their_residuals() {
         // Entity.collideBoundingBoxHeuristically: a movement with two zero components goes
         // through Shapes.collide(AABB, LevelReader, ...) (client1.14.4 Entity.java:725-735,
-        // 1.16.5 Entity.java:823-837), which returns 0 as soon as a block leaves the movement
-        // under 1.0E-7 (1.16.5 VoxelShapes.java:290-294) where the shape list keeps the residual
+        // 1.16.5 Entity.java:824-836), which returns 0 as soon as a block leaves the movement
+        // under 1.0E-7 (1.16.5 Shapes.java:281-284) where the shape list keeps the residual
         // of its last shape.
         let floor = [BlockVoxelShape::new(
             Vec3::new(0.0, 0.0, 0.0),
@@ -1841,7 +1876,7 @@ mod tests {
             collide_shapes(entity, slide, blocks_only(&floor), false, 0.6, WALK).y,
             residual
         );
-        // the walk drops a negligible movement with nothing around (VoxelShapes.java:250-252)
+        // the walk drops a negligible movement with nothing around (1.16.5 Shapes.java:241-243)
         let negligible = Vec3::new(0.0, 5.0e-8, 0.0);
         assert_eq!(
             collide_shapes(entity, negligible, Colliders::default(), false, 0.6, WALK),
@@ -1851,7 +1886,7 @@ mod tests {
             collide_shapes(entity, negligible, Colliders::default(), false, 0.6, LIFTED),
             negligible
         );
-        // and passes any movement of a box under 1.0E-6 thick on an axis (VoxelShapes.java:246-248)
+        // and passes any movement of a box under 1.0E-6 thick on an axis (1.16.5 Shapes.java:237-239)
         let flat = Aabb::new(Vec3::new(0.2, 1.1, 0.2), Vec3::new(0.8, 1.1 + 5.0e-7, 0.8));
         assert_eq!(
             collide_shapes(flat, fall, blocks_only(&floor), false, 0.6, WALK),
@@ -1873,7 +1908,7 @@ mod tests {
     #[test]
     fn the_one_axis_walk_takes_the_gap_in_block_coordinates() {
         // The walk collides each block's shape with the box moved by minus the block's position
-        // (`box.offset(-x, -y, -z)`, 1.16.5 VoxelShapes.java:290-291): 0.25 - (0.078 - 1.0) is
+        // (`box.offset(-x, -y, -z)`, 1.16.5 Shapes.java:281-281): 0.25 - (0.078 - 1.0) is
         // one ulp above (1.0 + 0.25) - 0.078.
         let wall = [BlockVoxelShape::new(
             Vec3::new(1.0, 0.0, 0.0),
@@ -1947,11 +1982,11 @@ mod tests {
 
     #[test]
     fn the_merge_boundary_of_exactly_1e_7_keeps_a_shape_from_the_move() {
-        // A query 1e-7 past the slab's face merges into it (26.3 IndirectMerger.java, 1.14
-        // SimpleDoubleListPair.java:37): no shape is listed and collideWithShapes passes the move
+        // A query 1e-7 past the slab's face merges into it (26.3 IndirectMerger.java, 1.14.4
+        // IndirectMerger.java:46): no shape is listed and collideWithShapes passes the move
         // on, a sub-1e-7 axis too (26.3 Entity.collideWithShapes); one more ulp lists the shape and
         // Shapes.collide drops that axis (26.3 Shapes.java:176-186). 1.14.4 - 1.17.1 take this path
-        // for a move along two axes (1.16.5 Entity.java:835-866), the list path from 1.18
+        // for a move along two axes (1.16.5 Entity.java:834-865), the list path from 1.18
         let slab = [BlockVoxelShape::new(
             Vec3::ZERO,
             vec![Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.5, 1.0))],
@@ -1984,9 +2019,28 @@ mod tests {
     }
 
     #[test]
+    fn an_axis_that_does_not_move_comes_back_positive_zero_from_1_21_5() {
+        // 1.21.5 collideWithShapes starts from Vec3.ZERO and sets the axes that moved (Entity.java:1059-1069);
+        // 1.21.4 builds the result from the movement's own -0.0 (Entity.java:1011-1035)
+        let slab = [BlockVoxelShape::new(Vec3::ZERO, vec![Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.5, 1.0))])];
+        let bounds = Aabb::new(Vec3::new(0.2, 0.6, 0.2), Vec3::new(0.8, 2.4, 0.8));
+        let movement = Vec3::new(-0.0, -0.3, -0.0);
+        let version = crate::version::MinecraftVersion::new;
+        let moved = |release| {
+            let colliders = Colliders { blocks: &slab, release: Some(release), ..Colliders::default() };
+            collide_shapes(bounds, movement, colliders, false, 0.6, CANDIDATE_HEIGHTS)
+        };
+        let older = moved(version(1, 21, 4));
+        let newer = moved(version(1, 21, 5));
+        assert_eq!(older.y, newer.y);
+        assert!(older.x.is_sign_negative() && older.z.is_sign_negative());
+        assert!(newer.x.is_sign_positive() && newer.z.is_sign_positive());
+    }
+
+    #[test]
     fn the_single_axis_walk_never_lists_a_shape_and_drops_a_tiny_move_itself() {
-        // VoxelShapes.calculatePushVelocity drops a movement under 1e-7 before it walks a cell
-        // (1.16.5 VoxelShapes.java:250-251), whatever the overlap; from 1.18 there is no such walk
+        // Shapes.collide drops a movement under 1e-7 before it walks a cell
+        // (1.16.5 Shapes.java:241-242), whatever the overlap; from 1.18 there is no such walk
         let slab = [BlockVoxelShape::new(
             Vec3::ZERO,
             vec![Aabb::new(Vec3::ZERO, Vec3::new(1.0, 0.5, 1.0))],
@@ -2009,7 +2063,7 @@ mod tests {
     #[test]
     fn the_identity_of_the_full_block_and_an_empty_shape_keep_their_own_answers() {
         // Shapes.block() meets by AABB.intersects from 1.16 and merges like any shape in 1.14 - 1.15
-        // (1.16.5 BlockCollisionSpliterator.java:74-75); an empty shape meets nothing (26.3
+        // (1.16.5 CollisionSpliterator.java:74-75); an empty shape meets nothing (26.3
         // BlockCollisions.java:91-103)
         let cube = [BlockVoxelShape::new(
             Vec3::ZERO,
@@ -2035,7 +2089,7 @@ mod tests {
 
     #[test]
     fn grid_lines_merge_as_the_indirect_merger_at_its_tolerance() {
-        // `d >= e - 1.0E-7`: inclusive, in that form (1.21.11 IndirectMerger.java:52). The sum
+        // `d >= e - 1.0E-7`: inclusive, in that form (1.21.11 IndirectMerger.java:53). The sum
         // here rounds so that e - d is above 1.0E-7 while d >= e - 1.0E-7 still holds.
         let boxes = |top: f64| {
             vec![(Aabb::new(Vec3::ZERO, Vec3::new(1.0, top, 1.0)), Vec3::ZERO)]
@@ -2164,5 +2218,76 @@ mod tests {
             }
         }
         assert!(told_apart > 100, "{told_apart}");
+    }
+
+    /// Touching planes, gaps either side of 1.0E-7, negative cells and diagonals whose axis order
+    /// decides the end, against each jar (scripts/java-oracle/OracleEdgeCollide.java).
+    #[test]
+    fn the_edges_of_a_move_are_each_jars() {
+        use super::{aabb_offset, shapes_collide, Collider};
+
+        let same = |a: f64, b: f64| a.to_bits() == b.to_bits() || (a == 0.0 && b == 0.0);
+        let box_at = |values: &[f64]| {
+            Aabb::new(
+                Vec3::new(values[0], values[1], values[2]),
+                Vec3::new(values[3], values[4], values[5]),
+            )
+        };
+        let axis_of = |name: &str| match name {
+            "x" => Axis::X,
+            "y" => Axis::Y,
+            _ => Axis::Z,
+        };
+        let cells = |numbers: &[f64]| -> Vec<BlockVoxelShape> {
+            numbers
+                .chunks(9)
+                .map(|cell| {
+                    BlockVoxelShape::new(Vec3::new(cell[0], cell[1], cell[2]), vec![box_at(&cell[3..9])])
+                })
+                .collect()
+        };
+        let text = include_str!("../fixtures/java-oracle-edge-collide.txt");
+        let (mut compared, mut wrong) = (0, Vec::new());
+        for line in text.lines() {
+            let (left, right) = line.split_once(" = ").unwrap();
+            let tokens: Vec<&str> = left.split(' ').collect();
+            let numbers = |from: usize| -> Vec<f64> {
+                tokens[from..].iter().map(|token| token.parse().unwrap()).collect()
+            };
+            let expected: Vec<f64> = right.split(' ').map(|token| token.parse().unwrap()).collect();
+            let matched = match tokens[0] {
+                "edge" => {
+                    let values = numbers(2);
+                    let blocks = cells(&values[10..]);
+                    let release = crate::version::MinecraftVersion::parse(tokens[1]);
+                    let colliders = Colliders { blocks: &blocks, release, ..Colliders::default() };
+                    let movement = Vec3::new(values[6], values[7], values[8]);
+                    // (a shape the release's walk does not offer this sweep cannot be in its list)
+                    let swept = box_at(&values).expand_towards(movement);
+                    if !blocks.iter().all(|shape| shape.meets(swept, release)) {
+                        continue;
+                    }
+                    let moved = collide_shapes(box_at(&values), movement, colliders, false, 0.0, LIFTED);
+                    same(moved.x, expected[0]) && same(moved.y, expected[1]) && same(moved.z, expected[2])
+                }
+                "axis" => {
+                    let values = numbers(3);
+                    let blocks = cells(&values[8..]);
+                    let listed: Vec<Collider<'_>> =
+                        blocks.iter().map(|shape| Collider::Block(shape, GridTest::Floor)).collect();
+                    same(shapes_collide(axis_of(tokens[2]), box_at(&values), &listed, values[6]), expected[0])
+                }
+                _ => {
+                    let values = numbers(3);
+                    same(aabb_offset(box_at(&values), box_at(&values[6..]), values[12], axis_of(tokens[2])), expected[0])
+                }
+            };
+            compared += 1;
+            if !matched && wrong.len() < 8 {
+                wrong.push(line);
+            }
+        }
+        assert!(compared > 5000, "{compared}");
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 }

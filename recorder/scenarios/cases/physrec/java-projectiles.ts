@@ -155,10 +155,16 @@ const out = [
 
 // ---- Bubble columns, first tick and after (B198). Summoned still in the column: `--projectiles` starts them from the summon. --
 const still = '{Motion:[0.0d,0.0d,0.0d]}'
-const inColumn = (area: string, entity: string, y: number) =>
-  kase(`pj_${entity}_bubble_${area === 'bubbleUpColumn' ? 'up' : 'down'}_${y < -1 ? 'inside' : 'surface'}`, { area, at: [-3.5, 0, 0.5], yaw: 270, tier: 3, tags: ['projectile', 'bubble_column'], since: '1.13' },
-    ...fly(25, thing(entity, still, 5.5, y)))
+const inColumn = (area: string, entity: string, y: number, extra: Partial<KaseSpec> = {}, nbt = still) =>
+  kase(`pj_${entity}_bubble_${area === 'bubbleUpColumn' ? 'up' : 'down'}_${y < -1 ? 'inside' : 'surface'}`, { area, at: [-3.5, 0, 0.5], yaw: 270, tier: 3, tags: ['projectile', 'bubble_column'], since: '1.13', ...extra },
+    ...fly(25, thing(entity, nbt, 5.5, y)))
 for (const area of ['bubbleUpColumn', 'bubbleDownColumn']) for (const entity of ['snowball', 'ender_pearl']) for (const y of [-3, -0.1]) out.push(inColumn(area, entity, y))
+// An arrow's, a hurting projectile's and a shulker bullet's blocks push them too: an arrow's from 1.13, the others' from
+// 1.16.2 (D-177; 1.16.2 AbstractHurtingProjectile.java:74, ShulkerBullet.java:227)
+// (a shulker bullet is gone on peaceful: ShulkerBullet.checkDespawn)
+for (const entity of ['arrow', 'trident', 'small_fireball', 'shulker_bullet']) for (const y of [-3, -0.1]) out.push(inColumn('bubbleUpColumn', entity, y, entity === 'shulker_bullet' ? { difficulty: 'easy' } : {}))
+// A rocket moves by Entity.move, whose blocks act on it too; from 1.16 it puts its motion back after the move
+out.push(inColumn('bubbleUpColumn', 'firework_rocket', -3, {}, '{Motion:[0.0d,0.0d,0.0d],ShotAtAngle:1b,LifeTime:20}'))
 
 // ---- The world border, 12 either side of the player: its east edge at x=5.5 (B198). -----------------------------------------
 const border = (...shots: PhysrecAction[]) => [
@@ -235,6 +241,14 @@ out.push(
   planted('cobweb', 'cobweb', 0.5),
   planted('wheat', 'wheat[age=7]', 0.2, 'farmland'),
   // a gate between walls: its top is lower from 1.9
+  // soul sand's collision box is 14/16 high and its outline (before 1.13 its bounding box) the full block: a thrown item at
+  // 0.9 meets it until 1.16.1 and passes from 1.16.2, an arrow meets it until 1.13.2 and passes from 1.14 (D-179, D-180)
+  kase('pj_snowball_over_soul_sand', plain, ...block('soul_sand', thing('snowball', level, 0.5, 0.9))),
+  kase('pj_arrow_over_soul_sand', plain, ...block('soul_sand', arrow(0.5, 0.9, 0.5, level))),
+  // a shulker bullet's ray is the arrow's before 1.14: the bounding box of what has a collision box (D-180)
+  // HoneyBlock.entityInside slides any entity down its side from 1.15, an arrow too
+  kase('pj_arrow_slides_down_honey', { ...plain, since: '1.15' }, ...block('honey_block', arrow(5.78, 0.9, 0.5, '{Motion:[0.0d,-0.5d,0.0d]}'))),
+  kase('pj_shulker_bullet_over_soul_sand', { ...plain, since: '1.9' }, ...block('soul_sand', thing('shulker_bullet', level, 0.5, 0.9))),
   kase('pj_snowball_over_gate_in_wall', plain, ticks(3), server(setBlock([6, 1, -1], 'cobblestone_wall'), setBlock([6, 1, 1], 'cobblestone_wall'), setBlock([6, 1, 0], 'oak_fence_gate[facing=east,open=true]')), ...fly(12, thing('snowball', level, 0.5, 0.9))),
 )
 

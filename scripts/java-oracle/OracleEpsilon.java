@@ -153,10 +153,49 @@ public final class OracleEpsilon {
         }
     }
 
+    /**
+     * Diagonal travels whose leading corner crosses the grid at its corners, found by a seeded search in the engine: the
+     * walk's x and y steps tie, and the travel recomputed as toCorner - fromCorner rounds them apart. From 1.21.9 the
+     * walk takes its signs and steps from the travel itself (BlockGetter.addCollisionsAlongTravel(deltaMove)).
+     */
+    private static void cornerTies() throws ReflectiveOperationException {
+        double[][] travels = {
+            {9.409375, 35.109375, 3.409375, 7.409375, 33.109375, 1.409375},
+            {9.659375, 63.359375, 2.659375, 7.659375, 61.359375, 0.659375},
+            {8.64375, 152.34375, 2.64375, 7.64375, 151.34375, 1.64375},
+            {8.659375, 50.359375, 3.659375, 6.659375, 48.359375, 1.659375},
+            {9.190625, 112.890625, 2.190625, 7.690625, 111.390625, 0.690625},
+            {8.003125, 191.703125, 3.003125, 6.503125, 190.203125, 1.503125},
+            {8.425, 10.125, 2.425, 7.675, 9.375, 1.675},
+            {8.159375, 167.859375, 2.159375, 6.659375, 166.359375, 0.659375},
+            {9.4875, 187.1875, 2.4875, 7.4875, 185.1875, 0.4875},
+            {9.065625, 58.765625, 3.065625, 7.565625, 57.265625, 1.565625},
+            {8.971875, 93.671875, 2.971875, 7.471875, 92.171875, 1.471875},
+            {8.58125, 110.28125, 2.58125, 7.58125, 109.28125, 1.58125},
+        };
+        for (double[] travel : travels) {
+            Vec3 from = new Vec3(travel[0], travel[1], travel[2]);
+            Vec3 to = new Vec3(travel[3], travel[4], travel[5]);
+            AABB box = new AABB(to.x - 0.3, to.y, to.z - 0.3, to.x + 0.3, to.y + 1.8, to.z + 0.3);
+            List<int[]> seen = walk(from, to, box);
+            if (seen == null) {
+                return;
+            }
+            StringBuilder line = new StringBuilder("traverse ");
+            line.append(from.x).append(' ').append(from.y).append(' ').append(from.z).append(' ').append(to.x).append(' ').append(to.y).append(' ').append(to.z);
+            line.append(' ').append(box.minX).append(' ').append(box.minY).append(' ').append(box.minZ).append(' ').append(box.maxX).append(' ').append(box.maxY).append(' ').append(box.maxZ).append(" =");
+            for (int[] cell : seen) {
+                line.append(' ').append(cell[0]).append(' ').append(cell[1]).append(' ').append(cell[2]).append(' ').append(cell[3]);
+            }
+            System.out.println(line);
+        }
+    }
+
     public static void main(String[] args) throws ReflectiveOperationException {
         equals();
         traversals();
         exactly();
+        cornerTies();
     }
 
     private OracleEpsilon() {}

@@ -7,7 +7,6 @@
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { loadModules } from '../scenarios/build.ts';
-import { SAME_DATA } from '../scenarios/dsl/names.ts';
 
 const require = createRequire(import.meta.url);
 
@@ -46,7 +45,7 @@ export const MECHANICS: readonly Mechanic[] = [
 ];
 
 interface McData { effectsByName?: Record<string, unknown>; attributesByName?: Record<string, unknown>; enchantmentsByName?: Record<string, unknown>; entitiesByName?: Record<string, unknown> }
-const dataOf = (version: string) => require('minecraft-data')(SAME_DATA[version] ?? version) as McData | undefined;
+const dataOf = (version: string) => require('minecraft-data')(version) as McData | undefined;
 const pascal = (name: string) => name.split('_').map(p => p[0]!.toUpperCase() + p.slice(1)).join('');
 const camel = (name: string) => name.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 

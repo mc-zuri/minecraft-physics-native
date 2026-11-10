@@ -14,13 +14,13 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { registeredReleases } = require("./registered-releases.cjs");
 const { LEGACY_RELEASES } = require("./legacy-release-data.cjs");
-const { PINNED_SOURCES, PINNED_CLIENTS, TREE_CLIENTS, DECOMPILER, extractedRepo } = require("./source-pins.cjs");
+const { PINNED_SOURCES, PINNED_CLIENTS, TREE_CLIENTS, NAMED_JARS, DECOMPILER, extractedRepo } = require("./source-pins.cjs");
+const { legacyTree } = require("./source-roots.cjs");
 const { aliasDefect, evidenceHash } = require("./generate-release-aliases.cjs");
 const { refIdentity, directoryIdentity } = require("./source-identity.cjs");
 
 const repositoryRoot = path.resolve(__dirname, "..");
 const outputPath = path.join(repositoryRoot, "generated", "release-manifest.json");
-const decompiledRoot = process.env.MC_DECOMPILED_ROOT ?? path.join(repositoryRoot, "..", "..", "pr", "mc-decompiled");
 const mcSourceRoot = process.env.MC_SOURCE_ROOT ?? path.join(repositoryRoot, "..", "..", "pr", "mc-source");
 const aliasesPath = path.join(repositoryRoot, "generated", "release-aliases.json");
 const SCHEMA = 3;
@@ -75,14 +75,28 @@ function sourceRecord(version) {
     if (embedded !== version) throw new Error(`The commit pinned for ${version} embeds ${embedded}`);
     return { status: "embedded", embedded, commit: PINNED_SOURCES[version], mapping: "mojang" };
   }
-  for (const [tree, mapping] of [[path.join(mcSourceRoot, version), "mojang"], [path.join(decompiledRoot, version), null]]) {
-    if (!fs.existsSync(tree)) continue;
+  if (LEGACY_RELEASES.some((release) => release.version === version)) {
+    // the release's own client, remapped by the recorder's mapping and decompiled by the pinned Vineflower
+    const tree = legacyTree(version);
+    if (!tree) return { status: "unavailable", embedded: null };
     const embedded = directoryIdentity(tree);
-    const named = mapping ?? (fs.existsSync(path.join(tree, "net/minecraft/world/entity/Entity.java")) ? "mojang" : "yarn");
-    if (embedded === null) return { status: "directory-only", embedded: null, mapping: named };
-    if (embedded !== version) return { status: "rejected", embedded, mapping: named };
+    if (embedded !== version) return { status: embedded === null ? "directory-only" : "rejected", embedded, mapping: "recorder" };
+    return {
+      status: "embedded",
+      embedded,
+      clientJar: { sha1: TREE_CLIENTS[version], remappedSha256: NAMED_JARS[version] },
+      decompiler: `${DECOMPILER.name} ${DECOMPILER.version}`,
+      mapping: "recorder",
+      tree: treeSha256(tree),
+    };
+  }
+  const tree = path.join(mcSourceRoot, version);
+  if (fs.existsSync(tree)) {
+    const embedded = directoryIdentity(tree);
+    if (embedded === null) return { status: "directory-only", embedded: null, mapping: "mojang" };
+    if (embedded !== version) return { status: "rejected", embedded, mapping: "mojang" };
     const client = TREE_CLIENTS[version];
-    return { status: "embedded", embedded, mapping: named, ...(client ? { clientJar: { sha1: client } } : {}), tree: treeSha256(tree) };
+    return { status: "embedded", embedded, mapping: "mojang", ...(client ? { clientJar: { sha1: client } } : {}), tree: treeSha256(tree) };
   }
   return { status: "unavailable", embedded: null };
 }
@@ -120,7 +134,7 @@ function build() {
   const mojang = new Map(readJson(path.join(repositoryRoot, "generated", "mojang-releases.json")).releases.map((release) => [release.id, release]));
   const protocols = protocolTable();
   const previous = fs.existsSync(outputPath) ? readJson(outputPath).releases : {};
-  const sourcesAtHand = fs.existsSync(extractedRepo()) && fs.existsSync(decompiledRoot);
+  const sourcesAtHand = fs.existsSync(extractedRepo()) && LEGACY_RELEASES.every(({ version }) => legacyTree(version));
   const releases = {};
   for (const { version } of registeredReleases()) {
     releases[version] = joinRecord(version, {

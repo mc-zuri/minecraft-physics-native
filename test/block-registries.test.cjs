@@ -118,7 +118,7 @@ describe('a run without the sources', () => {
         const os = require('node:os');
         const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-fresh-'));
         const absent = path.join(base, 'absent');
-        const env = { ...process.env, MC_SOURCE_ROOT: absent, MC_SOURCE_CACHE: absent, MC_DECOMPILED_ROOT: absent, MC_EXTRACTED_DATA_REPO: absent };
+        const env = { ...process.env, MC_SOURCE_ROOT: absent, MC_SOURCE_CACHE: absent, MC_EXTRACTED_DATA_REPO: absent };
         const copies = { MC_BLOCK_REGISTRY_MANIFEST: 'block-registries.json', MC_BLOCK_STATE_MANIFEST: 'block-state-definitions.json' };
         for (const [variable, name] of Object.entries(copies)) {
             env[variable] = path.join(base, name);
@@ -138,7 +138,7 @@ describe('a run without the sources', () => {
         const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-kept-entries-'));
         const absent = path.join(base, 'absent');
         const copies = { MC_BLOCK_REGISTRY_MANIFEST: 'block-registries.json', MC_BLOCK_STATE_MANIFEST: 'block-state-definitions.json' };
-        const env = { ...process.env, MC_SOURCE_ROOT: absent, MC_SOURCE_CACHE: absent, MC_DECOMPILED_ROOT: absent, MC_EXTRACTED_DATA_REPO: absent };
+        const env = { ...process.env, MC_SOURCE_ROOT: absent, MC_SOURCE_CACHE: absent, MC_EXTRACTED_DATA_REPO: absent };
         for (const [variable, name] of Object.entries(copies)) {
             env[variable] = path.join(base, name);
             fs.copyFileSync(path.join(root, 'generated', name), env[variable]);

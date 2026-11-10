@@ -6,7 +6,8 @@
 //   refused     only certain values are legal: a bad one is an error, never a silent default
 //   structured  a vector, box, list or name, each with its own tests
 // A field not in `evolved`, `config`, `refused` or `structured` is kept. `zeroMatters` holds the fields whose
-// explicit zero must move the state differently from leaving them out.
+// explicit zero must move the state differently from leaving them out. `evolvedUntil` holds the kept fields a tick still
+// recomputes on the older releases, up to the last that does: measured on every release by test/field-boundaries.test.cjs.
 // The player's states are in scripts/state-bridge.cjs. Classes are what the engine does, read by a tick
 // in empty air: that a field is `kept` says it is not lost, not that its value is vanilla's.
 const position = { x: 0.5, y: 100, z: 0.5 };
@@ -15,13 +16,14 @@ const still = { x: 0, y: 0, z: 0 };
 const STATES = {
   NativeBoatState: {
     family: "boat",
-    evolved: ["yaw","deltaRotation","inWater","waterLevel","collidedHorizontally","collidedVertically","onGround","lastVerticalVelocity"],
+    evolved: ["yaw","deltaRotation","inWater","waterLevel","collidedHorizontally","collidedVertically","onGround","lastVerticalVelocity","fallDistance","lerpSteps"],
     config: [],
     refused: [],
-    structured: ["nearbyEntities","position","velocity","status","previousStatus","boundingBox","stuckSpeedMultiplier","paddlePhases"],
+    structured: ["nearbyEntities","position","velocity","status","previousStatus","boundingBox","stuckSpeedMultiplier","paddlePhases","lerpPosition"],
     zeroMatters: [],
+    evolvedUntil: { yawDegrees: "1.8.8", speedMultiplier: "1.8.8" },
     base: { position, velocity: still, yaw: 0, forward: false, left: false, right: false, inWater: false },
-    tick: (native, world, state) => native.simulateVersionedBoatTick("26.3", world, state),
+    tick: (native, world, state, version = "26.3") => native.simulateVersionedBoatTick(version, world, state),
   },
   NativeHorseState: {
     family: "mount",
@@ -31,27 +33,28 @@ const STATES = {
     structured: ["nearbyEntities","position","velocity","entityType","boundingBox","previousPosition","lerpPosition","stuckSpeedMultiplier"],
     zeroMatters: ["gravity"],
     base: { position, velocity: still, yaw: 0, forward: 0, strafe: 0, jumpRequested: false, onGround: false, inWater: false },
-    tick: (native, world, state) => native.simulateVersionedHorseTick("26.3", world, state),
+    tick: (native, world, state, version = "26.3") => native.simulateVersionedHorseTick(version, world, state),
   },
   NativeMinecartState: {
     family: "minecart",
     evolved: ["xRot","onRails","onGround","firstTick","inWater","collidedHorizontally","collidedVertically","fallDistance","tickCount","hurtTime","damage","portalCooldown"],
-    config: ["fuel","comparatorSignal","fuse","explosionPowerBase","explosionSpeedFactor","randomSeed","enabled"],
+    config: ["fuel","comparatorSignal","fuse","creativeIgnition","explosionPowerBase","explosionSpeedFactor","randomSeed","enabled","spawnDelay","minSpawnDelay","maxSpawnDelay","requiredPlayerRange"],
     refused: [],
-    structured: ["variant","position","velocity","stuckSpeedMultiplier","boundingBox","rider","push","inventory","portal","removed"],
+    structured: ["variant","position","velocity","stuckSpeedMultiplier","boundingBox","rider","push","inventory","portal","portalEntry","removed","team"],
     zeroMatters: [],
+    evolvedUntil: { insidePortal: "1.20.6", portalTime: "1.20.6" },
     base: { variant: "minecart", position, velocity: still, yRot: 0, flipped: false, onGround: false, inWater: false },
-    tick: (native, world, state) => native.simulateVersionedMinecartTick("26.3", world, state, { improvements: false }),
+    tick: (native, world, state, version = "26.3") => native.simulateVersionedMinecartTick(version, world, state, { improvements: false }),
   },
   NativeProjectileState: {
     family: "projectile",
     evolved: ["inWater","firstTick"],
     config: ["gravity","airDrag","accelerationPower","dangerous","ultraWarm","shotAtAngle","bobRandom","noPhysics"],
     refused: [],
-    structured: ["position","velocity","power","kind","boundingBox"],
+    structured: ["position","velocity","power","kind","boundingBox","stuckSpeedMultiplier"],
     zeroMatters: ["gravity"],
     base: { kind: "snowball", position, velocity: still },
-    tick: (native, world, state) => native.simulateVersionedProjectileTicks("26.3", world, [state], 1)[0],
+    tick: (native, world, state, version = "26.3") => native.simulateVersionedProjectileTicks(version, world, [state], 1)[0],
   },
   NativeArrowState: {
     family: "projectile",
@@ -61,7 +64,7 @@ const STATES = {
     structured: ["position","velocity","fallImpulse","lastBlockPosition"],
     zeroMatters: ["gravity"],
     base: { position, velocity: still },
-    tick: (native, world, state) => native.simulateVersionedArrowTicks("26.3", world, [state], 1)[0],
+    tick: (native, world, state, version = "26.3") => native.simulateVersionedArrowTicks(version, world, [state], 1)[0],
   },
   NativeTridentState: {
     family: "projectile",
@@ -71,7 +74,7 @@ const STATES = {
     structured: ["position","velocity","fallImpulse","lastBlockPosition"],
     zeroMatters: ["gravity"],
     base: { position, velocity: still },
-    tick: (native, world, state) => native.simulateVersionedTridentTicks("26.3", world, [state], 1)[0],
+    tick: (native, world, state, version = "26.3") => native.simulateVersionedTridentTicks(version, world, [state], 1)[0],
   },
   NativeMovingEntityState: {
     family: "environment",
@@ -80,8 +83,9 @@ const STATES = {
     refused: [],
     structured: ["kind","authority","position","velocity","boundingBox","stuckSpeedMultiplier","lastMovements"],
     zeroMatters: [],
+    evolvedUntil: { onGround: "1.14.4", fallDistance: "1.21.1" },
     base: { kind: "item", position, velocity: still },
-    tick: (native, world, state) => native.simulateVersionedMovingEntityTick("26.3", world, state),
+    tick: (native, world, state, version = "26.3") => native.simulateVersionedMovingEntityTick(version, world, state),
   },
 };
 

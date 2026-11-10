@@ -37,11 +37,15 @@ function pathOf({ position: p, velocity: v }: { position: NativeVec3; velocity: 
 /** A motion past what a sync reads drops, and nothing of the tick runs, as NativePhysics.simulate's: docs/numeric-contract.md. */
 const refused = (state: { position: NativeVec3; velocity: NativeVec3 }) => !syncReads(pathOf(state), PATH_MARGIN);
 
+/** AbstractHurtingProjectile.accelerationPower of a state with none: 0.1, and 0 for a wind charge (1.21.11 AbstractWindCharge.java:34-45). */
+const defaultAccelerationPower = (kind: string | undefined) => (kind?.endsWith('wind_charge') ? 0 : 0.1);
+
 /** What a tick of a refused motion leaves of a thrown item, fireball, rocket or hook. */
 const flightOf = (state: NativeProjectileState): NativeProjectileTickResult => ({
     position: state.position, velocity: AT_REST, blockHit: false, inWater: !!state.inWater, firstTick: state.firstTick ?? true,
     horizontalCollision: !!state.horizontalCollision, onGround: !!state.onGround, bobbing: !!state.bobbing, discarded: false,
     ...(state.boundingBox ? { boundingBox: state.boundingBox } : {}),
+    stuckSpeedMultiplier: state.stuckSpeedMultiplier ?? AT_REST,
 });
 
 /** What a tick of a refused motion leaves of an arrow or trident. */
@@ -75,7 +79,7 @@ export interface ProjectileScene {
     entities: readonly TargetEntity[];
     /** Projectile.getOwner: leave it out when the owner is gone, unloaded or was never known. */
     owner?: TargetEntity | null;
-    /** The owner is alive; true when absent. */
+    /** The owner is alive; the entity's own isValid when absent, and true when that is unset too. */
     ownerAlive?: boolean;
     /** The owner is a spectating player. */
     ownerSpectator?: boolean;
@@ -146,6 +150,8 @@ export class NativeProjectilePhysics extends NativeEngine {
         const owner = scene.owner;
         if (!owner) return undefined;
         const { width, height } = this.poseSize(owner);
+        // EntityDimensions.scale: the eye and the width are the SCALE attribute's too
+        const scale = f32(this.scaleOf(owner));
         const player = owner.type === 'player';
         const pose = owner.metadata?.[POSE_INDEX];
         const crouching = pose === POSE_CROUCHING && !this.lt('1.14');
@@ -155,8 +161,8 @@ export class NativeProjectilePhysics extends NativeEngine {
         return {
             id: owner.id,
             rootVehicle: this.rootOf(owner),
-            eyePosition: { x, y: y + eye, z },
-            width,
+            eyePosition: { x, y: y + f32(eye * scale), z },
+            width: f32(width * scale),
             alive: scene.ownerAlive ?? owner.isValid !== false,
             player,
             spectator: scene.ownerSpectator ?? false,
@@ -211,8 +217,9 @@ export class NativeProjectilePhysics extends NativeEngine {
         if (refused(state)) return { state: { ...state, velocity: AT_REST, moveRefused: true }, result: { ...flightOf(state), moveRefused: true } };
         const sync = this.syncAround(world, state);
         const [result] = this.binding.simulateVersionedProjectileTicks(this.version, sync.world, [state], 1);
-        const { position, velocity, inWater, firstTick, horizontalCollision, onGround, bobbing } = result;
-        return { state: { ...state, position, velocity, inWater, firstTick, horizontalCollision, onGround, bobbing, moveRefused: false }, result };
+        const { position, velocity, inWater, firstTick, horizontalCollision, onGround, bobbing, boundingBox } = result;
+        // the box a release before 1.17 keeps goes on with the state, or the next tick starts from the seeded one
+        return { state: { ...state, position, velocity, inWater, firstTick, horizontalCollision, onGround, bobbing, ...(boundingBox ? { boundingBox } : {}), moveRefused: false }, result };
     }
 
     /** One server tick of an arrow: pass the returned hitState to the next. */
@@ -230,7 +237,7 @@ export class NativeProjectilePhysics extends NativeEngine {
         if (refused(state)) {
             return {
                 projectile: flightOf(state), hitState: hits ?? {}, entityHits: [],
-                accelerationPower: state.accelerationPower ?? 0.1, power: state.power ?? AT_REST, moveRefused: true,
+                accelerationPower: state.accelerationPower ?? defaultAccelerationPower(state.kind), power: state.power ?? AT_REST, moveRefused: true,
             };
         }
         const sync = this.syncAround(world, state);

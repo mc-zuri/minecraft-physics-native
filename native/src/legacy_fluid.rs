@@ -7,12 +7,13 @@ use crate::world::{BlockState, CollisionQueryEntity, FluidContact, FluidState, W
 
 #[must_use]
 pub(crate) fn applies(release: MinecraftVersion) -> bool {
+    // (1.12.2 Entity.java:1040-1043; 1.13.2 Entity.java:1052-1055)
     !release.at_least(1, 13, 0)
 }
 
-/// Entity.handleWaterMovement: World.handleMaterialAcceleration over the box shrunk by 0.4F
+/// Entity.handleWaterMovement: Level.method_3610 over the box shrunk by 0.4F
 /// vertically and 0.001 all round. Each step builds a new AxisAlignedBB, whose constructor
-/// orders its corners (1.12.2 Box.java:43-49; 1.8.9 Box.java:22-28), so a box lower than 0.8 (a
+/// orders its corners (1.12.2 AABB.java:39-45; 1.8.8 AABB.java:23-29), so a box lower than 0.8 (a
 /// boat) is turned the right way up again after crossing over.
 pub(crate) fn handle_water_movement(
     state: &mut SimulationState,
@@ -26,8 +27,8 @@ pub(crate) fn handle_water_movement(
     }
     let bounds = state.bounds();
     let inset = f64::from(0.4_f32);
-    // expand(0.0, -0.4F, 0.0) (1.12.2 Box.java:158-166), then contract(0.001) (1.12.2
-    // Box.java:289-291) or increment(0.001, 0.001, 0.001) (1.8.9 Box.java:185-193)
+    // expand(0.0, -0.4F, 0.0) (1.12.2 AABB.java:154-162), then contract(0.001) (1.12.2
+    // AABB.java:285-287) or increment(0.001, 0.001, 0.001) (1.8.8 AABB.java:186-194)
     let shrunk = Aabb::ordered(
         Vec3::new(bounds.min.x, bounds.min.y + inset, bounds.min.z),
         Vec3::new(bounds.max.x, bounds.max.y - inset, bounds.max.z),
@@ -51,7 +52,7 @@ pub(crate) fn handle_water_movement(
     }
 }
 
-/// World.handleMaterialAcceleration: whether water reaches into `area`, and the push of its flows,
+/// Level.method_3610: whether water reaches into `area`, and the push of its flows,
 /// summed and normalized.
 pub(crate) fn material_acceleration(
     state: &mut SimulationState,
@@ -84,7 +85,7 @@ pub(crate) fn material_acceleration(
     touching
 }
 
-/// 1.13's Entity.handleFluidAcceleration: as from 1.14, but a fluid under the same fluid keeps
+/// 1.13's Entity#checkAndHandleWater (yarn's handleFluidAcceleration): as from 1.14, but a fluid under the same fluid keeps
 /// its own height.
 #[must_use]
 pub(crate) fn fluid_contact_1_13(
@@ -123,8 +124,8 @@ pub(crate) fn fluid_contact_1_13(
 }
 
 /// Entity.isInLava before 1.14: any lava in the box shrunk by 0.1F sideways and 0.4F vertically,
-/// whose corners Box's constructor orders (1.8.9 Box.java:22-29, Entity.java:927-929; 1.13.2
-/// Box.java:42-48, Entity.java:1144-1145).
+/// whose corners Box's constructor orders (1.8.8 AABB.java:23-30, Entity.java:922-924; 1.13.2
+/// AABB.java:38-44, Entity.java:1143-1144).
 #[must_use]
 pub(crate) fn touching_lava(
     world: &WorldSnapshot,
@@ -154,7 +155,7 @@ pub(crate) fn touching_lava(
 }
 
 /// Entity.isOffsetPositionInLiquid's test of the moved box: no collision for the entity
-/// (World.getCollisionBoxes(entity, box), its colliders and the border's stone among them) and no
+/// (Level.doesBoxCollide(entity, box), its colliders and the border's stone among them) and no
 /// liquid.
 #[must_use]
 pub(crate) fn is_free(
@@ -163,6 +164,7 @@ pub(crate) fn is_free(
     bounds: Aabb,
     release: MinecraftVersion,
 ) -> bool {
+    // (1.8.8 Level.java:1485-1496; 1.9.4 Level.java:1557-1568)
     if release.at_least(1, 9, 0) {
         return world.is_free_for_entity(bounds, entity, release);
     }
@@ -175,16 +177,18 @@ pub(crate) fn is_free(
     world.no_collision_for_entity(bounds, entity, release) && !liquid
 }
 
-/// LivingEntity.moveEntityWithHeading's water branch after the move: 0.8F of the vertical motion,
-/// less 0.02.
-pub(crate) fn sink_in_water(state: &mut SimulationState) {
+/// LivingEntity#travel's (MCP's moveEntityWithHeading's) water branch after the move: 0.8F of the vertical motion,
+/// less 0.02, which NoGravity keeps from 1.10 (`if (!this.isNoGravity())`, 1.10.2 LivingEntity.java:1505); 1.8.8 and 1.9.4
+/// have no NoGravity and always sink (1.8.8 LivingEntity.java:1230).
+pub(crate) fn sink_in_water(state: &mut SimulationState, release: MinecraftVersion) {
     state.velocity.y *= f64::from(0.8_f32);
-    if !state.no_gravity {
+    if !(state.no_gravity && release.at_least(1, 10, 0)) {
         state.velocity.y -= 0.02;
     }
 }
 
 fn cells(min: f64, max: f64, release: MinecraftVersion) -> Range<i32> {
+    // (1.8.8 Level.java:1533-1539; 1.9.4 Level.java:1610-1616)
     let end = if release.at_least(1, 9, 0) {
         ceil_i32(max)
     } else {
@@ -193,10 +197,13 @@ fn cells(min: f64, max: f64, release: MinecraftVersion) -> Range<i32> {
     floor_i32(min)..end
 }
 
+/// The cells Level#containsFluid scans on one axis, Mth.floor of the minimum to Mth.floor of the
+/// maximum, both included.
 fn liquid_cells(min: f64, max: f64) -> RangeInclusive<i32> {
     floor_i32(min)..=floor_i32(max)
 }
 
+/// LiquidBlock#getHeightPercent of the block's level, a falling or source liquid's taken as 0.
 fn height_percent(block: &BlockState) -> f32 {
     let level = if block.fluid_source || block.fluid_falling || block.fluid_level >= 8 {
         0
@@ -206,6 +213,8 @@ fn height_percent(block: &BlockState) -> f32 {
     f32::from(level + 1) / 9.0
 }
 
+/// The fluid's amount over 9 (vanilla: FlowingFluid#getHeight in 1.13, FluidState#getOwnHeight
+/// from 1.14): 8 for a source or a falling fluid, else 8 less the level.
 fn own_height(block: &BlockState) -> f32 {
     let amount =
         if block.fluid_source || block.fluid_falling || !(1..8).contains(&block.fluid_level) {
@@ -255,10 +264,10 @@ mod tests {
 
     #[test]
     fn one_layer_of_snow_blocks_the_hop_before_1_13() {
-        // Entity.doesNotCollide (1.12.2 Entity.java:550-552, 1.8.9 :457-458) tests
-        // World.getCollisionBoxes, which holds the box of no height of one layer of snow (1.12.2
+        // Entity.doesNotCollide (1.12.2 Entity.java:553-555, 1.8.8 :459-460) tests
+        // Level.getCollisionBoxes, which holds the box of no height of one layer of snow (1.12.2
         // SnowLayerBlock.java:75-79) when the moved box strictly meets it, and no box of a block it
-        // does not meet (Block.appendCollisionBoxes, 1.12.2 Block.java:395-399).
+        // does not meet (Block.appendCollisionBoxes, 1.12.2 Block.java:435-439).
         let shape = |height: f64| BlockState {
             id: 1,
             shape: Some(BlockShape {
@@ -303,8 +312,8 @@ mod tests {
 
     #[test]
     fn an_entity_collider_the_box_meets_blocks_the_hop_before_1_13() {
-        // World.getCollisionBoxes(entity, box) adds the boxes of the entities around that meet the
-        // box (1.8.9 World.java:1093-1101, 1.12.2 World.java:1180-1203)
+        // Level.doesBoxCollide(entity, box) adds the boxes of the entities around that meet the
+        // box (1.8.8 Level.java:1081-1089, 1.12.2 Level.java:1161-1184)
         let mut world = WorldSnapshot::new();
         world.set_entity_colliders(vec![EntityCollider {
             bounds: Aabb::new(Vec3::new(0.7, 1.0, 0.2), Vec3::new(2.075, 1.5625, 1.575)),
@@ -354,9 +363,9 @@ mod tests {
     #[test]
     fn the_lava_box_is_turned_the_right_way_up_around_a_contracted_height_of_0_8() {
         // Entity.isInLava contracts the box by 0.1F, 0.4F, 0.1F; Box's constructor orders the
-        // corners (1.8.9 Entity.java:927-929, Box.java:22-29; 1.9.4 Entity.java:1035-1036, Box.java:
-        // 24-31, 111-119; 1.13.2 Entity.java:1144-1146, Box.java:42-49, 232-234), and
-        // World.containsMaterial reads floor(min) until ceil(max) (1.13.2 World.java:1373-1395)
+        // corners (1.8.8 Entity.java:922-924, AABB.java:23-30; 1.9.4 Entity.java:1031-1032, AABB.java:
+        // 24-31, 111-119; 1.13.2 Entity.java:1143-1145, AABB.java:38-45, 228-230), and
+        // Level.containsMaterial reads floor(min) until ceil(max) (1.13.2 Level.java:1362-1384)
         let column = |y: i32| (0, y, 0);
         let around = [63, 64, 65, 66, 67].map(column);
         for release in [
@@ -406,7 +415,7 @@ mod tests {
 
     #[test]
     fn a_short_box_reads_one_cell_more_in_1_8() {
-        // 1.8.9 World.containsMaterial reads until floor(max + 1) (generic short entities: no
+        // 1.8.8 Level.containsMaterial reads until floor(max + 1) (generic short entities: no
         // registered player is this short there; 1.8.8 itself is unavailable, 1.8.9's source stands)
         let release = MinecraftVersion::new(1, 8, 8);
         let column = |y: i32| (0, y, 0);

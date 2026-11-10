@@ -54,7 +54,7 @@ function playerState(x, y, z, fields = {}) {
         isInWater: false, isUnderWater: false, isInLava: false, isInWeb: false, isCollidedHorizontally: false,
         isCollidedHorizontallyMinor: false, isCollidedVertically: false, fallDistance: 0, scale: 1, isInPowderSnow: false,
         wasInPowderSnow: false, keptBoundingBox: null, stuckSpeedMultiplier: new Vec3(0, 0, 0), nearbyEntities: [],
-        pistonDeltas: [0, 0, 0], pistonDeltasTick: -1, jumpTicks: 0, sprintTriggerTime: 0, prevForwardImpulse: 0,
+        jumpTicks: 0, sprintTriggerTime: 0, prevForwardImpulse: 0,
         autoJumpEnabled: false, autoJumpTime: 0, autoJumping: false, flyJumpTriggerTime: 0, attributes: {}, yaw: Math.PI,
         yawDegrees: 0, pitch: 0, control: controls(), prevControl: controls(), heading: { forward: 0, strafe: 0 },
         prevHeading: { forward: 0, strafe: 0 }, isUsingItem: false, effects: {}, jumpBoost: 0, speed: 0, slowness: 0,
@@ -204,16 +204,21 @@ describe('NativeWorldSync', () => {
         const rising = { x: 0, y: 1, z: 0, facing: 1, extending: true, source: false, block: stone };
         sync.setMovingBlocks([{ ...rising, progress: 0.5 }]);
         assert.deepEqual(tops(), [[0, 1], [0.5, 1.5]]);
+        // the cell's own boxes, for the adapter's own queries (a pose's fit): in the cell, and out of it
+        assert.deepEqual(sync.movingBoxesAt(0, 1, 0), [[0, -0.5, 0, 1, 0.5, 1]]);
+        assert.deepEqual(sync.boxesAt(0, 1, 0), [[0, -0.5, 0, 1, 0.5, 1]]);
         // the next tick's progress replaces it, and the block entity's end leaves the cell empty
         sync.setMovingBlocks([{ ...rising, progress: 1 }]);
         assert.deepEqual(tops(), [[0, 1], [1, 2]]);
         sync.setMovingBlocks([]);
         assert.deepEqual(tops(), [[0, 1]]);
+        assert.equal(sync.movingBoxesAt(0, 1, 0), undefined);
         // a cell with another block keeps that block's shape
         world.setBlock(0, 1, 0, registry.blocksByName.stone.defaultState);
         sync.sync(world, around, 2);
         sync.setMovingBlocks([{ ...rising, progress: 0.5 }]);
         assert.deepEqual(tops(), [[0, 1], [1, 2]]);
+        assert.equal(sync.movingBoxesAt(0, 1, 0), undefined);
     });
 
     it('follows a piston from its block event, and leaves no moving block when it settles', () => {
@@ -1284,7 +1289,7 @@ describe('NativePhysics', () => {
         physics.simulate(ctx, world);
         assert.equal(physics.carries.get(ctx.state).player.state().weaving, false);
         const weaving = registry.effectsByName.Weaving.id;
-        ctx.state.effects = { [weaving]: { id: weaving, amplifier: 0 } };
+        ctx.state.effects = { [weaving]: { amplifier: 0 } };
         physics.simulate(ctx, world);
         assert.equal(physics.carries.get(ctx.state).player.state().weaving, true);
     });
@@ -1509,6 +1514,31 @@ describe('NativePhysics', () => {
             const offHand = { heldItem: null, inventory: { slots }, getEquipmentDestSlot: destination => slotsOf[destination] };
             assert.ok(launch(offHand, { isUsingOffHand: true }) > 0);
             assert.equal(launch(offHand), 0);
+            // the fork's state always says the main hand's level, a number (playerState.ts riptide), and that is not the item in use
+            assert.ok(launch(offHand, { isUsingOffHand: true, riptide: 0 }) > 0);
+            assert.ok(launch({ heldItem: nbtItem('riptide', 3) }, { riptide: 3 }) > 0);
+            assert.equal(launch({ heldItem: nbtItem('loyalty', 3) }, { riptide: 0 }), 0);
+            const plain = [];
+            plain[45] = nbtItem('loyalty', 1);
+            const riptideInMainHand = { heldItem: nbtItem('riptide', 3), inventory: { slots: plain }, getEquipmentDestSlot: destination => slotsOf[destination] };
+            assert.equal(launch(riptideInMainHand, { isUsingOffHand: true, riptide: 3 }), 0);
+            assert.ok(launch(riptideInMainHand, { riptide: 3 }) > 0);
+        });
+
+        it('reads the eyes of a legacy release through the float getEyeHeight', () => {
+            const { registry } = worldOf('1.12.2', () => {});
+            const physics = new adapter.NativePhysics(registry);
+            // the surface of a source block at y 9 is y 10 (Entity.isSubmergedIn, 1.12.2 Entity.java:1120-1135)
+            const sync = { blockAt: (x, y) => (y === 9 ? { fluid: { type: 1, level: 0 } } : null) };
+            const under = y => {
+                const { state } = playerState(0.5, y, 0.5, {});
+                physics.updateLegacyFluids(state, sync);
+                return state.isUnderWater;
+            };
+            const eye = Math.fround(1.62);
+            assert.equal(eye, 1.6200000047683716);
+            assert.equal(under(10 - 1.62 - 2e-9), false);
+            assert.equal(under(10 - eye - 2e-9), true);
         });
     });
 
@@ -1548,6 +1578,14 @@ describe('NativePhysics', () => {
             const edge = ({ registry: r, set }) => set(1, 0, 0, r.blocksByName.honey_block.defaultState);
             assert.equal(jump('26.3', { supportingBlockPos: new Vec3(1, 0, 0) }, edge), f32(f32(0.42) * 0.5));
             assert.equal(jump('26.3', { supportingBlockPos: new Vec3(0, 0, 0) }, edge), f32(0.42));
+        });
+
+        it('reads the block under it by the offset of its release, a double before 1.20 and getOnPos(0.500001F) from it', () => {
+            // (1.19.4 Entity.java:771 0.5000001, 1.20 Entity.java:798): at this height the two fall in different cells
+            const edge = ({ registry: r, set }) => set(1, 0, 0, r.blocksByName.honey_block.defaultState);
+            const fields = { pos: new Vec3(0.5, 1.50000095, 0.5), supportingBlockPos: new Vec3(1, 0, 0) };
+            assert.equal(jump('1.19.4', fields, edge), f32(0.42));
+            assert.equal(jump('1.20', fields, edge), f32(f32(0.42) * 0.5));
         });
 
         it('reads the supporting block the engine keeps when the state has none', () => {
@@ -1716,6 +1754,19 @@ describe('NativePhysics', () => {
         assert.equal(pushed('1.21.11', { wolfTeam: { collisionRule: 'always' } }), true);
     });
 
+    it('never slows a 1.14 spectator by the sneak key, which its flight then divides by 0.3D', () => {
+        // D-192: 1.14.4 KeyboardInput.tick(var1, isSpectator()) slows by the sneak key unless spectating (:22-25); a
+        // survival player's sneak slows on 1.14.4, and from 1.15 only crouching does (LocalPlayer.isMovingSlowly)
+        const slowly = (version, fields) => {
+            const physics = new adapter.NativePhysics(worldOf(version, () => {}).registry);
+            const { state } = playerState(0.5, 10, 0.5, { control: controls({ sneak: true, forward: true }), ...fields });
+            return physics.isMovingSlowly(state);
+        };
+        assert.equal(slowly('1.14.4', { gameMode: 'spectator', flying: true, mayFly: true }), false);
+        assert.equal(slowly('1.14.4', {}), true);
+        assert.equal(slowly('1.13.2', { gameMode: 'spectator', flying: true, mayFly: true }), true);
+    });
+
     it('is pushed by no bat, parrot, ender dragon, vex or spectator', () => {
         // Bat.doPush/pushEntities are empty (1.21.11 Bat.java:91-96), Parrot.doPush skips players (Parrot.java:385-389),
         // EnderDragon.aiStep never pushes (EnderDragon.java:152), the vex has noPhysics through its tick (Vex.java:73-75)
@@ -1736,6 +1787,23 @@ describe('NativePhysics', () => {
         for (const name of ['bat', 'parrot', 'ender_dragon', 'vex']) assert.equal(pushedBy(name), false, name);
         assert.equal(pushedBy('player', bot), false);
         assert.equal(pushedBy('player', { ...bot, players: { watcher: { gamemode: 0 } } }), true);
+    });
+
+    it('sends a spectating player as one the riptide spin\'s sweep leaves out', () => {
+        // D-197: getEntities(this, minmax) is NO_SPECTATORS (26.3 LivingEntity.java:3188-3195, EntityGetter.java:29-31)
+        const physics = new adapter.NativePhysics(worldOf('1.21.1', floor).registry);
+        const bot = { entities: { 7: { type: 'player', username: 'watcher' } }, players: { watcher: { gamemode: 3 } } };
+        const flags = (name, playerBot) => {
+            const entity = {
+                id: 7, name, living: true, position: new Vec3(1, 1, 0.5),
+                boundingBox: { minX: 0.55, minY: 1, minZ: 0.05, maxX: 1.45, maxY: 2.4, maxZ: 0.95 },
+            };
+            const { state } = playerState(0.5, 1, 0.5, { nearbyEntities: [entity], bot: playerBot });
+            return physics.entitiesOf(state)[adapter.NATIVE_PLAYER_ENTITY_LENGTH - 1];
+        };
+        assert.equal(flags('player', bot) & adapter.NativePlayerEntityFlag.SPECTATOR, adapter.NativePlayerEntityFlag.SPECTATOR);
+        assert.equal(flags('player', { ...bot, players: { watcher: { gamemode: 0 } } }) & adapter.NativePlayerEntityFlag.SPECTATOR, 0);
+        assert.equal(flags('cow', bot) & adapter.NativePlayerEntityFlag.SPECTATOR, 0);
     });
 
     it('is not pushed by a mob while it sleeps or once dead', () => {
@@ -1776,6 +1844,57 @@ describe('NativePhysics', () => {
         assert.equal(still.isCollidedHorizontally, true);
         assert.equal(still.pos.x, 1 - f32(0.3));
         assert.ok(walkInto(false).pos.x > 1 - f32(0.3));
+    });
+
+    it('is not pushed while it carries passengers, which it still pushes, from 1.9 (D-206)', () => {
+        // Entity.push moves each side only where it is no vehicle (1.9.4 Entity.java:1164-1169, 26.3 :1931-1937)
+        const pushed = (version, fields) => {
+            const { registry, world } = worldOf(version, floor);
+            const physics = new adapter.NativePhysics(registry);
+            const cow = {
+                id: 7, name: 'cow', living: true, position: new Vec3(1, 1, 0.5),
+                boundingBox: { minX: 0.55, minY: 1, minZ: 0.05, maxX: 1.45, maxY: 2.4, maxZ: 0.95 },
+            };
+            const ctx = playerState(0.5, 1, 0.5, { onGround: true, nearbyEntities: [cow], ...fields });
+            physics.simulate(ctx, world);
+            return [ctx.state.vel.x < 0, ctx.state.pushedEntities.length];
+        };
+        assert.deepEqual(pushed('1.21.11', {}), [true, 1]);
+        assert.deepEqual(pushed('1.21.11', { isVehicle: true }), [false, 1]);
+        assert.deepEqual(pushed('1.21.11', { bot: { entity: { passengers: [{ id: 9 }] } } }), [false, 1]);
+        assert.deepEqual(pushed('1.9.4', { isVehicle: true }), [false, 1]);
+    });
+
+    it('walks through a dying shulker or happy ghast, which a dying mob pushes only before 1.11 (D-204)', () => {
+        // Shulker and HappyGhast.canBeCollidedWith need isAlive (1.9.4 ShulkerEntity.java:420-421, 26.3
+        // Shulker.java:439-441, HappyGhast.java:522-523); LivingEntity.isPushable wants it from 1.11 (1.10.2
+        // LivingEntity.java:1891-1892, 1.11.2 :1952-1953)
+        const walkInto = (version, name, alive) => {
+            const { registry, world } = worldOf(version, floor);
+            const physics = new adapter.NativePhysics(registry);
+            const box = name === 'shulker'
+                ? { minX: 1, minY: 1, minZ: 0, maxX: 2, maxY: 2, maxZ: 1 }
+                : { minX: 1, minY: 1, minZ: -1.5, maxX: 5, maxY: 5, maxZ: 2.5 };
+            const position = new Vec3((box.minX + box.maxX) / 2, 1, (box.minZ + box.maxZ) / 2);
+            const mob = {
+                id: 9, name, living: true, baby: false, staysStill: true, ...(alive === undefined ? {} : { alive }), position,
+                boundingBox: box, afterTick: { position, boundingBox: box },
+            };
+            const ctx = playerState(0.5, 1, 0.5, { onGround: true, vel: new Vec3(0.5, 0, 0), nearbyEntities: [mob] });
+            physics.simulate(ctx, world);
+            return ctx.state;
+        };
+        for (const [version, name] of [['1.10.2', 'shulker'], ['1.21.4', 'shulker'], ['1.21.11', 'happy_ghast']]) {
+            assert.equal(walkInto(version, name, undefined).pos.x, 1 - f32(0.3), `${version} ${name} alive`);
+            assert.equal(walkInto(version, name, true).pos.x, 1 - f32(0.3), `${version} ${name} alive`);
+            const dying = walkInto(version, name, false);
+            assert.equal(dying.isCollidedHorizontally, false, `${version} ${name} dying`);
+            assert.ok(dying.pos.x > 1 - f32(0.3), `${version} ${name} dying`);
+        }
+        // the player's box meets the dying shulker's after the move: before 1.11 it is pushed back by it
+        const pushes = version => walkInto(version, 'shulker', false).pushedEntities.length;
+        assert.equal(pushes('1.10.2'), 1);
+        assert.equal(pushes('1.11.2'), 0);
     });
 
     it('meets a boat the client ticks before the player where its tick left it', () => {
@@ -1945,6 +2064,15 @@ describe('NativePhysics', () => {
             assert.equal(eye(version, adapter.Pose.DYING), 1.62, version);
         }
         assert.equal(eye('1.12.2', adapter.Pose.SLEEPING), f32(0.2));
+        // D-218: 1.9 - 1.12 put a glider's eyes at 0.4F, after the sneak's 1.54F (1.9.4 Player.java:1733-1744,
+        // 1.12.2 :1753-1764); 1.8.8 has no glide
+        const glider = (version, fields) => new adapter.NativePhysics(worldOf(version, () => {}).registry)
+            .eyeHeight(playerState(0.5, 10, 0.5, { fallFlying: true, ...fields }).state);
+        for (const version of ['1.9.4', '1.10.2', '1.11.2', '1.12.2']) {
+            assert.equal(glider(version), f32(0.4), version);
+            assert.equal(glider(version, { control: controls({ sneak: true }), prevControl: controls({ sneak: true }) }), f32(f32(1.62) - f32(0.08)), version);
+        }
+        assert.equal(glider('1.8.8'), 1.62);
         assert.equal(eye('1.21.4', adapter.Pose.DYING, 2), 1.62);
         assert.equal(eye('1.21.4', adapter.Pose.SLEEPING, 2), f32(0.2));
         assert.equal(eye('1.21.4', adapter.Pose.STANDING, 2), f32(f32(1.62) * 2));
@@ -2005,6 +2133,83 @@ describe('NativePhysics', () => {
         assert.deepEqual(eyes('26.1', 0.5, top + 1e-9), [true, false]);
         assert.deepEqual(eyes('1.21.4', 15.5, 0.5, false), [true, true]);
         assert.deepEqual(eyes('26.1', 15.5, 0.5, false), [false, false]);
+    });
+
+    it('leaves out the cell over a box whose deflated top is a whole number (D-220)', () => {
+        // Entity.updateFluidHeightAndDoFluidPushing walks floor(min) to ceil(max), exclusive (1.13.2 Entity.java:2512-2517,
+        // 1.20.5 :3084-3090, 1.21.11 :3599-3605): water over a head whose box less 0.001 ends on 64 is not touched
+        const y = 62.20100004768371;
+        assert.equal((y + f32(1.8)) - 0.001, 64);
+        const touches = (release, at) => {
+            const { registry, world } = worldOf(release, ({ Block: B, set }) => set(0, 64, 0, B.fromProperties('water', { level: 0 }, 0).stateId));
+            const physics = new adapter.NativePhysics(registry);
+            const { state } = playerState(0.5, at, 0.5);
+            const sync = physics.syncOf(world);
+            sync.sync(world, { minX: -2, minY: 60, minZ: -2, maxX: 2, maxY: 66, maxZ: 2 }, 2);
+            physics.updateFluids(state, sync);
+            return state.isInWater;
+        };
+        for (const release of ['1.13.2', '1.16.5', '1.20.4', '1.21.11', '26.1']) {
+            assert.equal(touches(release, y), false, release);
+            assert.equal(touches(release, y + 1e-6), true, release);
+        }
+    });
+
+    it('takes the water before 1.13 with the box updateSize left, 1.65 high in a sneak (D-219)', () => {
+        // Entity.handleWaterMovement reads getEntityBoundingBox (1.12.2 Entity.java:1051), the box a sneak's updateSize
+        // made 1.65 high, not one sized from a pose: the standing box would reach the row of water over the head
+        const touches = kept => {
+            const { registry, world } = worldOf('1.12.2', ({ registry: r, set }) => set(0, 64, 0, r.blocksByName.water.id << 4));
+            const physics = new adapter.NativePhysics(registry);
+            const pos = new Vec3(0.5, 62.7, 0.5);
+            const half = f32(0.6) / 2;
+            const keptBoundingBox = kept
+                ? { bb: { minX: 0.5 - half, minY: 62.7, minZ: 0.5 - half, maxX: 0.5 + half, maxY: 62.7 + f32(1.65), maxZ: 0.5 + half }, pos: pos.clone(), width: f32(0.6), height: f32(1.65) }
+                : null;
+            const { state } = playerState(pos.x, pos.y, pos.z, { keptBoundingBox });
+            const sync = physics.syncOf(world);
+            sync.sync(world, { minX: -2, minY: 60, minZ: -2, maxX: 2, maxY: 66, maxZ: 2 }, 2);
+            physics.updateFluids(state, sync);
+            return state.isInWater;
+        };
+        assert.equal(touches(false), true);
+        assert.equal(touches(true), false);
+    });
+
+    it('takes a knockback with its resistance, and refuses the direction vanilla redraws', () => {
+        // LivingEntity.knockback by the jars from 1.17.1 (native/fixtures/java-oracle-knockback.txt): power * (1 - resistance)
+        const { registry, world } = worldOf('1.21.11', () => {});
+        const physics = new adapter.NativePhysics(registry);
+        const { state } = playerState(0.5, 1, 0.5);
+        void world;
+        state.onGround = true;
+        state.vel.set(0.2, -0.08, 0);
+        state.attributes = { [physics.attributeKey('knockbackResistance')]: { value: 0.5, modifiers: [] } };
+        assert.equal(physics.knockback(state, { strength: 0.4, x: 1, z: 0 }), true);
+        assert.deepEqual([state.vel.x, state.vel.y, state.vel.z], [0.1 - 0.2, Math.min(0.4, -0.04 + 0.2), 0]);
+        const before = state.vel.clone();
+        assert.equal(physics.knockback(state, { strength: 0.4, x: 1e-4, z: 0 }), false);
+        assert.deepEqual(state.vel.toArray(), before.toArray());
+    });
+
+    it('lags isUnderWater a tick behind the eyes, beside an unloaded chunk too', () => {
+        // Player.updateIsUnderwater reads the eyes the last tick left (26.3 Entity.java:1677-1681, Player.java:367-370): the
+        // first tick in the water has the eyes under and isUnderWater false
+        for (const [release, loaded, under] of [['1.21.4', true, true], ['26.1', true, true], ['26.1', false, false]]) {
+            const { registry, world } = worldOf(release, ({ Block: B, set }) => {
+                for (let y = 0; y < 4; y += 1) set(15, y, 0, B.fromProperties('water', { level: 0 }, 0).stateId);
+            });
+            if (!loaded) unloadedFromX16(world);
+            const physics = new adapter.NativePhysics(registry);
+            const { state } = playerState(15.5, 0.5, 0.5);
+            state.isUnderWater = false;
+            state.eyeInWater = false;
+            const sync = physics.syncOf(world);
+            sync.sync(world, { minX: 13, minY: -3, minZ: -2, maxX: 18, maxY: 6, maxZ: 2 }, 2);
+            physics.updateFluids(state, sync);
+            assert.equal(state.eyeInWater, under, `${release} ${loaded}`);
+            assert.equal(state.isUnderWater, false, `${release} ${loaded}`);
+        }
     });
 
     it('tops a water source under a block sturdy below at 1 for the eyes in 26.3', () => {
@@ -2248,6 +2453,34 @@ describe('NativePhysics', () => {
         assert.notEqual(pushFirst.x, boostFirst.x);
     });
 
+    it('boosts a 1.11 glider by a rocket before it along the yaw of its last tick (yHeadRot)', () => {
+        // D-222: 1.11.2 LivingEntity.getLookAngle is getViewVector(1.0F) of yHeadRot (LivingEntity.java:1917-1925), which the
+        // last aiStep set to that tick's yaw (Player.java:468-472); 1.12.2 Entity.getLookAngle reads the yaw (:1729-1731)
+        const glide = (version, headYawDegrees, turns) => {
+            const { registry, world } = worldOf(version, () => {});
+            const physics = new adapter.NativePhysics(registry);
+            const ctx = playerState(0.5, 30, 0.5, {
+                fallFlying: true, validElytraEquipped: true, vel: new Vec3(0, 0, 0.3), yaw: Math.PI, yawDegrees: 0,
+                fireworkRocketDuration: 2, fireworkRockets: 1, fireworkRocketsBeforePlayer: 1, headYawDegrees,
+            });
+            if (turns) {
+                // the last tick at yaw 0, this one at 90: the engine remembers the yaw of the last
+                physics.simulate(ctx, world);
+                ctx.state.vel = new Vec3(0, 0, 0.3);
+                ctx.state.pos = new Vec3(0.5, 30, 0.5);
+            }
+            ctx.state.yawDegrees = 90;
+            ctx.state.yaw = Math.PI / 2;
+            physics.simulate(ctx, world);
+            return ctx.state.vel.clone();
+        };
+        // the head yaw of the last tick, 0, given or remembered, is not this tick's 90
+        assert.notDeepEqual(glide('1.11.2', 0), glide('1.11.2', 90));
+        assert.deepEqual(glide('1.11.2', undefined, true).x, glide('1.11.2', 0).x);
+        // 1.12.2 boosts along this tick's yaw whatever the head yaw
+        assert.deepEqual(glide('1.12.2', 0), glide('1.12.2', 90));
+    });
+
     it('keeps an attached rocket through a pause in the glide, for the glide after it', () => {
         // FireworkRocketEntity.tick: not gliding, the rocket follows and boosts nothing, and only its lifetime ends it
         // (26.3 FireworkRocketEntity.java:119-133, 172-178)
@@ -2439,6 +2672,26 @@ describe('NativePhysics', () => {
                 assert.equal(start('26.2', { isInLava: true }, { held }).fallFlying, !held);
                 assert.equal(start('26.3', { isInLava: true }, { held }).fallFlying, false);
             }
+        });
+
+        it('asks the lava of this tick, not the flag the last one left (26.3)', () => {
+            // D-229: aiStep's tryToStartFallFlying reads isInLiquid() after baseTick refreshed the fluid heights of this
+            // tick (26.3 LocalPlayer.java:833, Player.java:1351-1352, Entity.java baseTick updateInWaterStateAndDoFluidPushing),
+            // so a player that came into lava starts no glide however the last tick left isInLava, and one that left it does
+            const glides = (release, lava, stale) => {
+                const { registry, world } = worldOf(release, ({ Block, set }) => {
+                    if (lava) set(0, 10, 0, Block.fromProperties('lava', { level: 0 }, 0).stateId);
+                });
+                const physics = new adapter.NativePhysics(registry);
+                const ctx = playerState(0.5, 10.2, 0.5, { validElytraEquipped: true, isInLava: stale, vel: new Vec3(0, -0.1, 0) });
+                ctx.state.control = controls({ jump: true });
+                physics.simulate(ctx, world);
+                return ctx.state.fallFlying;
+            };
+            assert.equal(glides('26.3', true, false), false);
+            assert.equal(glides('26.3', false, true), true);
+            // 26.2 asks the water only (Player.java:1366)
+            assert.equal(glides('26.2', true, false), true);
         });
 
         it('leaves a press that toggled creative flight, and a flying player, alone', () => {
@@ -4319,7 +4572,8 @@ describe('BlockMapper', () => {
         // (a wall or gate also carries WALL_OR_GATE, which Entity.getOnPos stops at for any offset)
         assert.equal(updatesOf('1.20.4', 'oak_fence_gate', { open: 'true' })[0]?.tags, 48);
         assert.equal(updatesOf('1.20.4', 'cobblestone_wall')[0]?.tags, 48);
-        assert.equal(updatesOf('1.12.2', 'fence')[0]?.tags, 16);
+        // (and before 1.13 LEGACY_PROBE_OUTLINE, 64: its getCollisionBoundingBox is its outline, D-196)
+        assert.equal(updatesOf('1.12.2', 'fence')[0]?.tags, 16 | 64);
         assert.equal(updatesOf('1.12.2', 'fence_gate')[0]?.tags, 48);
         for (const name of ['stone', 'oak_sign', 'oak_wall_sign', 'rail']) assert.equal((updatesOf('1.20.4', name)[0]?.tags ?? 0) & 16, 0, name);
         // (the bit is the fence's alone: minecart.rs reads 1, 2, 4 and 8 as rails and conductors)
@@ -4445,7 +4699,21 @@ describe('the entities through fluids', () => {
         for (const type of ridden) assert.equal(support('26.3', type).family, 'ridden', type);
         for (const type of boats) assert.equal(support('26.3', type).family, 'boat', type);
         assert.equal(support('26.3', 'player').family, 'player');
-        assert.equal(support('26.3', 'minecart').family, 'unknown');
+        assert.equal(support('26.3', 'minecart').family, 'entity');
+        for (const version of ['1.8.8', '1.16.5', '26.3']) assert.equal(support(version, 'ender_dragon').family, 'dragon', version);
+        for (const version of ['1.9.4', '1.16.5', '26.3']) assert.equal(support(version, 'shulker').family, 'unsupported', version);
+        assert.equal(support('26.3', 'no_such_kind').family, 'unknown');
+    });
+
+    it('names every kind of every release: nothing the game has goes as unknown', () => {
+        const entityData = require('../generated/entity-data.json').releases;
+        for (const version of require('../scripts/release-inventory.cjs').canonicalReleases()) {
+            // (a client's own dump where there is one, the registries for the legacy six)
+            const names = entityData[version]?.entities ? Object.keys(entityData[version].entities) : Object.keys(require('prismarine-registry')(version).entitiesByName);
+            // (Mob and Monster are EntityList's abstract classes of 1.8 to 1.10: nothing spawns as them)
+            const wrong = names.filter(name => { if (name === 'Mob' || name === 'Monster') return false; const found = support(version, name); return found.family === 'unknown' || !found.available; });
+            assert.deepEqual(wrong, [], version);
+        }
     });
 
     it('knows the releases from their registries, on both sides of each first release', () => {
@@ -4490,6 +4758,7 @@ describe('the entities through fluids', () => {
         assert.throws(() => binding.simulateVersionedTick('26.3', native, state('strider'), {}), /simulateVersionedHorseTick/);
         assert.throws(() => binding.simulateVersionedTick('26.3', native, state('oak_boat'), {}), /simulateVersionedBoatTick/);
         assert.throws(() => binding.simulateVersionedTick('26.3', native, state('minecart'), {}), /inventory/);
+        assert.throws(() => binding.simulateVersionedTick('26.3', native, state('no_such_kind'), {}), /inventory/);
         // a named player and a state that names nothing go on as they did
         const named = binding.simulateVersionedTick('26.3', native, state('player'), {});
         const unnamed = binding.simulateVersionedTick('26.3', native, state(undefined), {});
@@ -4588,6 +4857,11 @@ describe('NativeMovingEntityPhysics', () => {
         assert.equal(moved.position.x, 0.75);
         assert.equal(moved.kind, 'squid');
         assert.throws(() => physics.travelMob({ ...moved, kind: 'minecart' }, world), /no travel of its own/);
+        // (EnderDragon.aiStep never calls travel, 26.3 EnderDragon.java:146-231; a shulker holds no motion, 26.3
+        // Shulker.java:295-300, and before that its tick puts it back on its block, 1.16.5 Shulker.java:257)
+        assert.throws(() => physics.travelMob({ ...moved, kind: 'ender_dragon' }, world), /simulateVersionedDragonTick/);
+        assert.throws(() => physics.travelMob({ ...moved, kind: 'shulker' }, world), /no travel simulation for shulker/);
+        assert.equal(physics.travelMob({ ...moved, kind: 'creeper' }, world).kind, 'creeper');
     });
 
     it('flies a dragon from what its phase decided, and gives its parts to the wings and to arrows', () => {
@@ -4920,6 +5194,40 @@ describe('falls, jumps, poses and borders through each surface', () => {
         assert.equal(crouching('26.3', 2.6, 'happy_ghast', { baby: false, staysStill: true }), true);
         assert.equal(crouching('26.3', 2.6, 'happy_ghast', { baby: false, staysStill: false }), false);
         assert.equal(crouching('26.3', 2.6, 'cow'), false);
+    });
+
+    it('keeps the box the size update refitted through the pushes after the tick', () => {
+        // Player.tick's updateSize sets the bounds to a new box from minX to minX + width (1.12.2 Player.java:324, 386-392,
+        // Entity.java:382-394 in legacy-src), not the moved box's maxX: the moving pistons that push after the entities
+        // (mineflayer's tickMovingPistons, every tick, with no piston too) meet that box and leave it. The tick that
+        // stands up from s_sneak_ice's sneak on 1.12.2 (its box and motion then), where minX + 0.6F is one ulp under the
+        // moved maxX: mineflayer-replay's bot layer was an ulp off on the tick after
+        for (const version of ['1.9.4', '1.12.2', '1.13.2']) {
+            const { registry, world } = worldOf(version, floor);
+            const physics = new adapter.NativePhysics(registry);
+            const standing = () => {
+                const pos = new Vec3(1.8733437433633933, 1, 0.5);
+                const bb = { minX: 1.573343731442464, minY: 1, minZ: 0.5 - f32(0.6) / 2, maxX: 2.173343755284322, maxY: 1 + f32(1.65), maxZ: 0.5 + f32(0.6) / 2 };
+                return playerState(pos.x, 1, 0.5, {
+                    onGround: true, vel: new Vec3(0.05381995340346649, 0, 0), prevControl: controls({ sneak: true }),
+                    keptBoundingBox: { bb, pos: pos.clone(), width: f32(0.6), height: f32(1.65) },
+                });
+            };
+            const pushed = standing();
+            const plain = standing();
+            for (let tick = 0; tick < 3; tick++) {
+                for (const ctx of [pushed, plain]) physics.simulate(ctx, world);
+                physics.pushByMovingPistons(pushed, world, []);
+                const at = `${version} tick ${tick}`;
+                const { bb } = pushed.state.keptBoundingBox;
+                if (tick === 0) {
+                    assert.equal(pushed.state.keptBoundingBox.height, f32(1.8), at);
+                    assert.equal(bb.maxX, bb.minX + f32(0.6), at);
+                }
+                assert.deepEqual({ ...bb }, { ...plain.state.keptBoundingBox.bb }, at);
+                assert.deepEqual(pushed.state.pos.toArray(), plain.state.pos.toArray(), at);
+            }
+        }
     });
 
     it('updates the size before 1.14 whatever the entities', () => {

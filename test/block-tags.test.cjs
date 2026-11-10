@@ -181,3 +181,18 @@ describe('the audit\'s 808 differences', () => {
         }
     });
 });
+
+describe('the tag audit the dispositions classify', () => {
+    const { auditProblem, AUDIT } = require('../scripts/classify-tag-audit.cjs');
+    const record = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'generated', 'tag-audit-dispositions.json'), 'utf8')).audit;
+
+    it('is the pinned audit', () => {
+        assert.deepEqual(record, AUDIT);
+    });
+
+    it('refuses an audit of other bytes before classifying it, unless that digest is accepted', () => {
+        const other = Buffer.from('[]');
+        assert.match(auditProblem(other), /^the audit is [0-9a-f]{64}, pinned 35811f16[0-9a-f]+: review it/);
+        assert.equal(auditProblem(other, require('node:crypto').createHash('sha256').update(other).digest('hex')), null);
+    });
+});

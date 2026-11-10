@@ -27,6 +27,8 @@ import type {
 import type { ExpandedRow, Recording, Snapshot } from '../schema/recording.ts';
 import { versionAtLeast } from '../scenarios/dsl/names.ts';
 import { BorderTracker } from './border.ts';
+import { decodeClientbound } from './packets.ts';
+import { packetBytes } from './load.ts';
 import { nativeBinding, worldSync } from './engine.ts';
 
 type Vec = readonly [number, number, number];
@@ -70,6 +72,8 @@ export interface ProjectileReplay {
     /** What the server's health of the player did in each tick it fell, and the engine's hit on it there. */
     readonly playerHealth: readonly { readonly t: number; readonly before: number; readonly after: number; readonly reaction?: string; readonly damage?: number }[];
     readonly projectiles: number;
+    /** Where a fishing hook's comparison stopped, and why: its bite or its rod's retrieve (docs/limitations.md). */
+    readonly stopped: readonly { readonly t: number; readonly projectile: number; readonly why: 'bite' | 'retrieve' }[];
     readonly first?: ProjectileDivergence;
     readonly divergences: readonly ProjectileDivergence[];
 }
@@ -310,6 +314,24 @@ function seedFamily(e: ServerEntity, entities: readonly ServerEntity[], playerId
 
 const thrown = (e: ServerEntity) => /snowball|egg|pearl|potion|bottle/i.test(e.type);
 
+/**
+ * Whether a projectile the last view showed as `last` has left the server's view at `position`: the view is the entities
+ * whose box meets the area's, from y -256 to its top (BridgeImpl.serverTicked, AABB.intersects), and the box goes with the
+ * position as the last view had it.
+ */
+export function outOfView(recording: Pick<Recording, 'header'>, last: Pick<ServerEntity, 'pos' | 'box'> | undefined, position: NativeVec3): boolean {
+    const box = (recording.header.world as { area?: { box?: readonly number[] } }).area?.box;
+    if (!last || !box || box.length !== 6) return false;
+    const [ox, oy, oz] = recording.header.world.origin;
+    const dx = position.x - last.pos[0];
+    const dy = position.y - last.pos[1];
+    const dz = position.z - last.pos[2];
+    const meets = last.box[0] + dx < ox + box[3]! + 1 && last.box[3] + dx > ox + box[0]!
+        && last.box[1] + dy < oy + box[4]! + 1 && last.box[4] + dy > -256
+        && last.box[2] + dz < oz + box[5]! + 1 && last.box[5] + dz > oz + box[2]!;
+    return !meets;
+}
+
 /** The summons of a case's body: a thrown item's first tick has run by the row that first shows it, and these say where it began. */
 function summonsOf(header: Recording['header']): { type: string; pos: readonly [number, number, number]; nbt: string | undefined }[] {
     const [x, y, z] = header.world.origin;
@@ -337,6 +359,26 @@ const bulletHits = (e: ServerEntity) => {
     const bulletDeltaNow = bulletDelta(e);
     return bulletDeltaNow ? { bulletDelta: bulletDeltaNow } : {};
 };
+
+interface FluidReader { fluidAt(x: number, y: number, z: number): number; fluidHeightAt(x: number, y: number, z: number): number }
+
+/**
+ * Entity.updateFluidHeightAndDoFluidPushing(WATER)'s answer for a box: water in a cell of the box less 0.001 whose surface
+ * (the cell's y plus FluidState.getHeight) reaches the box's bottom (1.21.3 Entity.java, 26.3 Entity.java
+ * updateFluidHeightAndDoFluidPushing). The fluid codes are the engine's: 1 water, 3 waterlogged.
+ */
+function touchingWater(world: FluidReader, box: readonly number[]): boolean {
+    const [x0, y0, z0, x1, y1, z1] = box.map((v, i) => (i < 3 ? v + 0.001 : v - 0.001)) as [number, number, number, number, number, number];
+    for (let x = Math.floor(x0); x < Math.ceil(x1); x++) {
+        for (let y = Math.floor(y0); y < Math.ceil(y1); y++) {
+            for (let z = Math.floor(z0); z < Math.ceil(z1); z++) {
+                const fluid = world.fluidAt(x, y, z);
+                if ((fluid === 1 || fluid === 3) && y + world.fluidHeightAt(x, y, z) >= y0) return true;
+            }
+        }
+    }
+    return false;
+}
 
 function seed(e: ServerEntity): Flying {
     const nbt = e.nbt;
@@ -368,6 +410,26 @@ function seed(e: ServerEntity): Flying {
     };
 }
 
+/** The sound a hook's bite plays: random.splash before 1.9, entity.bobber.splash to 1.12.2, entity.fishing_bobber.splash after. */
+/**
+ * Whether the row's packets bring a hook's bite: the splash the server plays for it at the hook, the one sound it plays at a
+ * volume of exactly 0.25F (26.3 FishingHook.java:326, 1.8.8 FishingHook.java:343). The volume, not the sound's name: the
+ * sound ids are the registry's of each release, which minecraft-data does not hold for every one.
+ */
+function bites(mc: string, row: ExpandedRow, at: { x: number; y: number; z: number }): boolean {
+    for (const packet of row.s2c) {
+        if (!/^Clientbound(Custom)?Sound(Entity)?Packet$/.test(packet.name)) continue;
+        const sound = decodeClientbound(mc, packetBytes(packet.b)).params as { x?: number; y?: number; z?: number; volume?: number };
+        if (sound.volume !== 0.25 || sound.x === undefined || sound.y === undefined || sound.z === undefined) continue;
+        // (the position is in eighths of a block)
+        if (Math.hypot(sound.x / 8 - at.x, sound.y / 8 - at.y, sound.z / 8 - at.z) <= 2) return true;
+    }
+    return false;
+}
+
+/** Whether the player used an item in the row: a rod's use retrieves its hook (before 1.9 the use was the block placement packet). */
+const retrieves = (row: ExpandedRow): boolean => (row.c2s ?? []).some(packet => /^Serverbound(UseItem|UseItemOn)Packet$/.test(packet.name));
+
 export function replayProjectiles(recording: Recording): ProjectileReplay {
     const binding = nativeBinding();
     const mc = recording.header.mc;
@@ -375,6 +437,7 @@ export function replayProjectiles(recording: Recording): ProjectileReplay {
     const { sync, area } = worldSync(recording);
     const flying = new Map<number, Flying>();
     const divergences: ProjectileDivergence[] = [];
+    const stopped: { t: number; projectile: number; why: 'bite' | 'retrieve' }[] = [];
     const hits: { t: number; projectile: number; target: number; reaction: string }[] = [];
     const blockHits: (readonly [number, number, number, number, number, string])[] = [];
     const playerHealth: { t: number; before: number; after: number; reaction?: string; damage?: number }[] = [];
@@ -408,6 +471,19 @@ export function replayProjectiles(recording: Recording): ProjectileReplay {
         for (const p of flying.values()) {
             if (p.done || !lastRow) continue;
             const seen = byId.get(p.id);
+            // a fishing hook is the engine's until its bite or its rod's retrieve, neither of them its physics: the bite is the
+            // server's random (catchingFish's timers and the syncronizedRandom's pulls, which no recording holds), the retrieve the
+            // rod's use. The server's bite plays the hook's splash, which the row's packets bring; the rod's use is the player's
+            // packet of the row before, which the server handles in this row's tick
+            const hook = /bobber|hook|fish/i.test((seen ?? entitiesOf(lastRow).find(e => e.id === p.id))?.type ?? '');
+            if (hook) {
+                const why = bites(mc, row, (p.flight ?? p.state).position) ? 'bite' : retrieves(lastRow) ? 'retrieve' : undefined;
+                if (why) {
+                    p.done = true;
+                    stopped.push({ t: row.t, projectile: p.id, why });
+                    continue;
+                }
+            }
             const { position: at, velocity: motion } = p.flight ?? p.state;
             const reach = 6;
             sync.sync(area, {
@@ -461,6 +537,16 @@ export function replayProjectiles(recording: Recording): ProjectileReplay {
                         groundRelease: { x: axis(seen.pos[0], was.x, seen.vel[0], v.x, false), y: axis(seen.pos[1], was.y, seen.vel[1], v.y, true), z: axis(seen.pos[2], was.z, seen.vel[2], v.z, false) },
                     };
                 }
+                // a bobbing hook's pull towards the surface draws the server's random (26.3 FishingHook.java:204, a nextFloat), which
+                // no recording holds: the motion vanilla's tick left states it, as above. The pull is linear in the draw, and a draw
+                // is k / 2^24: one that lands on none (a bite's pull besides, the syncronizedRandom's) is left at 0
+                if (p.flight.bobbing && seen && /bobber|hook/i.test(seen.type)) {
+                    const at = (bobRandom: number) => binding.simulateVersionedProjectileHitTick(mc, sync.world as never, { ...p.flight!, bobRandom }, p.hits, targets, shooter).projectile.velocity.y;
+                    const [low, high] = [at(0), at(1)];
+                    const draw = high === low ? undefined : (seen.vel[1] - low) / (high - low);
+                    const k = draw === undefined ? NaN : Math.round(draw * 2 ** 24);
+                    p.flight = { ...p.flight, bobRandom: k >= 0 && k < 2 ** 24 && Math.abs(draw! * 2 ** 24 - k) < 1e-3 ? k / 2 ** 24 : 0 };
+                }
                 const t = binding.simulateVersionedProjectileHitTick(mc, sync.world as never, p.flight, p.hits, targets, shooter);
                 tick = t;
                 familyTick = t;
@@ -505,7 +591,10 @@ export function replayProjectiles(recording: Recording): ProjectileReplay {
                 p.done = true;
                 // a player picks up what stopped flying (AbstractArrow.playerTouch), which the engine leaves to the caller
                 const pickedUp = !p.flight && (result.inGround || noPhysics);
-                if (!result.discarded && !pickedUp) out('discarded', true, false);
+                // (the server's view holds what meets the area's box, down to y -256 (BridgeImpl.serverTicked): what the engine
+                // flew out of it is out of the view, not gone)
+                const left = outOfView(recording, entitiesOf(lastRow).find(e => e.id === p.id), result.position);
+                if (!result.discarded && !pickedUp && !left) out('discarded', true, false);
                 continue;
             }
             if (result.discarded) {
@@ -540,6 +629,7 @@ export function replayProjectiles(recording: Recording): ProjectileReplay {
                     velocity: t.projectile.velocity,
                     ...(t.projectile.boundingBox ? { boundingBox: t.projectile.boundingBox } : {}),
                     inWater: t.projectile.inWater,
+                    stuckSpeedMultiplier: t.projectile.stuckSpeedMultiplier,
                     firstTick: t.projectile.firstTick,
                     horizontalCollision: t.projectile.horizontalCollision,
                     onGround: t.projectile.onGround,
@@ -558,12 +648,33 @@ export function replayProjectiles(recording: Recording): ProjectileReplay {
             p.hits = tick.hitState;
         }
         for (const e of now) {
-            if (isProjectile(e) && !flying.has(e.id)) flying.set(e.id, isArrow(e) ? seed(e) : seedFamily(e, now, recording.header.player.id, mc));
+            if (isProjectile(e) && !flying.has(e.id)) {
+                const p = isArrow(e) ? seed(e) : seedFamily(e, now, recording.header.player.id, mc);
+                // from 1.21.2 the base tick that sets isInWater closes the tick, so the next one flies by what the last left
+                // (1.21.3 PersistentProjectileEntity.java:243 super.tick() after the flight): the water the box is in now
+                if (versionAtLeast(mc, '1.21.2')) {
+                    const [x0, y0, z0, x1, y1, z1] = e.box;
+                    sync.sync(area, { minX: x0 - 1, minY: y0 - 1, minZ: z0 - 1, maxX: x1 + 1, maxY: y1 + 1, maxZ: z1 + 1 }, 2);
+                    const wet = touchingWater(sync.world as unknown as FluidReader, e.box);
+                    p.state = { ...p.state, inWater: wet };
+                    if (p.flight) p.flight = { ...p.flight, inWater: wet };
+                }
+                // an arrow first seen in the ground keeps the block it hit, which it holds on to until 1.13 (xTile, yTile, zTile):
+                // before 1.11 any change of that block frees it (1.10.2 EntityArrow.onUpdate), and the engine asks for the block too
+                const tile = [nbtNumber(e.nbt, 'xTile'), nbtNumber(e.nbt, 'yTile'), nbtNumber(e.nbt, 'zTile')];
+                if (isArrow(e) && p.state && (p.state as { inGround?: boolean }).inGround && !versionAtLeast(mc, '1.13') && tile.every(n => n !== undefined)) {
+                    const [x, y, z] = tile as number[];
+                    sync.sync(area, { minX: x! - 1, minY: y! - 1, minZ: z! - 1, maxX: x! + 2, maxY: y! + 2, maxZ: z! + 2 }, 4);
+                    const id = (sync.world as unknown as { blockAt(x: number, y: number, z: number): { id: number } }).blockAt(x!, y!, z!).id;
+                    Object.assign(p.state, { lastBlockPosition: { x, y, z }, lastBlockId: id });
+                }
+                flying.set(e.id, p);
+            }
         }
         lastRow = row;
     }
     return {
-        id: recording.header.scenario.id, compared, hits, blockHits, playerHealth, projectiles: flying.size, divergences,
+        id: recording.header.scenario.id, compared, hits, blockHits, playerHealth, projectiles: flying.size, stopped, divergences,
         ...(divergences.length > 0 ? { first: divergences[0]! } : {}),
     };
 }

@@ -9,6 +9,7 @@
     "DragonFlightMixin",
     "AnimalExperienceMixin",
     "CollisionLockMixin",
+    "BlockBoundsInvoker",
     "FocusMixin",
     "FurnaceExperienceMixin",
     "KeepChunksMixin",

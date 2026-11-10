@@ -12,6 +12,10 @@ path = "src/main.rs"
 name = "oracle-engine"
 path = "src/engine.rs"
 
+[[bin]]
+name = "trig-digest"
+path = "src/trig_digest.rs"
+
 [dependencies]
 libm = "0.2.16"
 minecraft-physics-native = { path = "../../../native", default-features = false }

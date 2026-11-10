@@ -23,56 +23,56 @@ const engine = createNativePhysics(registry, { version: '1.20.4' });
 Previously accepted same-era overrides now fail. To migrate, provide a coherent
 registry for the selected release or select the registry's coherent release.
 Matching protocol IDs or being on the same side of the 1.13 flattening does not
-establish compatibility: the verified aliases below do, and only they.
+establish compatibility, and no release is served on another's registry.
 Do not relabel old data to bypass the check. Callers deliberately supplying fully
 normalized world/state data can use the raw native API, which has no prismarine
 registry input.
 
-## Installed data aliases
+## Releases on their pair's tables
 
-In the inspected local minecraft-data 3.117.0 checkout, the following requests
-return a different declared release. They also retain comparison/feature behavior
-from the request, so selecting their older declaration by default is inconsistent,
-and a registry made by the requested name stays refused.
+minecraft-data (`E:/mc-physics-demo/minecraft-data` at `d0658d9`, its data at
+`e0313e69`) has an exact entry for each of the fifty releases. Six of them declare
+their own release (their own `version.json`, with the protocol and name of their
+jar) and read every other table, by path, from the release of the same protocol.
+They were aliases of the adapter until that data existed; now a registry made by
+their own name serves them, and the registry of their pair is refused like any
+other release's.
 
-| Requested release | Declared registry release | Data accepted |
-| --- | --- | --- |
-| 1.19.1 | 1.19 | 1.19.2 |
-| 1.21.2 | 1.21 | 1.21.3 |
-| 1.21.7 | 1.21 | 1.21.8 |
-| 1.21.10 | 1.21.9 | 1.21.9 |
-| 26.1.1 | 26.1 | 26.1 |
-| 26.1.2 | 26.1 | 26.1 |
+| Release | Protocol | Data version | Tables by path from | Own tables |
+| --- | --- | --- | --- | --- |
+| 1.19.1 | 760 | 3117 | 1.19.2 | version, language |
+| 1.21.2 | 768 | 4080 | 1.21.3 | version |
+| 1.21.7 | 772 | 4438 | 1.21.8 | version |
+| 1.21.10 | 773 | 4556 | 1.21.9 | version |
+| 26.1.1 | 775 | 4788 | 26.1 | version |
+| 26.1.2 | 775 | 4790 | 26.1 | version |
 
-## Verified data aliases
+`generated/data-aliases.json`, written by `scripts/generate-data-aliases.cjs`, is the
+proof that the shared tables are theirs. For each pair the vanilla data generator of
+both real server jars gives the same bytes for every report and data file (4473 to
+8594 files: blocks and states, items, registries, packets, commands, tags, recipes,
+loot tables, biomes, dimensions); each client class that differs, in intermediary or
+as 26.x ships it, has a reviewed reason; and both clients' `en_us.json` is compared,
+which neither of the others holds. Only 1.19.1's differs from its pair's, by three
+keys (1.19.2 added two messages of an expired profile key and dropped
+`invalid_public_key`), so it alone has a language table of its own, and every
+release's table must equal its own jar's. The script also holds minecraft-data's
+entries to this: every table its pair's but the version, and the language where the
+jars differ. For 26.1.1 and 26.1.2 the classes are 3 and 9 differing of 10682, read
+in a bytecode diff: version constants, GUI, and on 26.1.2 `handleAttack` refusing a
+spectator, which is an attack packet and not data or movement.
 
-The third column is a verified compatibility mechanism, `src/mineflayer/data-aliases.json`,
-written by `scripts/generate-data-aliases.cjs`. Each pair has one protocol number, and
-for each the vanilla data generator of both real server jars gives the same bytes
-for every report and data file (4473 to 6319 files: blocks and states, items,
-registries, packets, commands, tags, recipes, biomes, dimensions), and each client
-class that differs, in intermediary or as 26.x ships it, has a reviewed reason. For 26.1.1 and 26.1.2 that is 8594
-identical files, and 3 and 9 differing classes of 10682, read in a bytecode diff: version constants, GUI, and on 26.1.2
-`handleAttack` refusing a spectator, which is an attack packet and not data or movement. Neither one's jars
-differ in a registry or in a block's shape. 1.19 and 1.21 are not these releases'
-data, so a registry declaring them stays refused, as does any release not listed.
+The tables minecraft-data-generator writes for each pair (blocks, collision shapes,
+entities, items, effects, biomes, enchantments, materials, foods, particles, sounds,
+tints, attributes, instruments) are equal, but for a block's `drops`, one roll of its
+loot table in the generator's own world, whose seed differs per release (the loot
+tables themselves are byte-identical above), recipes listed in another order on
+1.19.1, and the language above. 1.21.7's generator wrote every shapeless recipe
+without ingredients; fixed in minecraft-data-generator `0c1154c`, its recipes equal
+1.21.8's.
 
-An alias covers registry data, never physics, which each release takes from its
-own sources: select the exact release and give the registry of its data:
-
-```js
-const { dataReleaseOf, createNativePhysics } = require('...');
-const registry = require('prismarine-registry')(dataReleaseOf('1.21.2') ?? '1.21.2');
-const engine = createNativePhysics(registry, { version: '1.21.2' });
-```
-
-Without `version` such a registry selects its own release, 1.21.3. A live bot needs
-the same data for its own packets, as mineflayer looks up `bot.version` itself: give
-it the registry of the data release before `createBotPhysics(bot)`, which then takes
-the release from `bot.version`.
-
-The local minecraft-data checkout itself is unchanged; exact entries for these
-there would make the alias unnecessary.
+An exact release covers registry data, never physics, which each release takes from
+its own sources.
 
 ## Why the check matters
 
